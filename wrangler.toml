@@ -1,0 +1,32 @@
+name = "lantern"
+main = "worker/index.ts"
+compatibility_date = "2026-10-01"
+
+# Only reachable through the custom domain, which sits behind Cloudflare Access.
+workers_dev = false
+preview_urls = false
+
+routes = [
+  { pattern = "lantern.bkbuilds.dev", custom_domain = true }
+]
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "lantern-manuscripts"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lantern-db"
+database_id = "084c5c28-3355-4ef9-89f9-f9eac612ea13"
+migrations_dir = "migrations"
+
+[vars]
+# Fill these in after creating the Access application (see README).
+# e.g. ACCESS_TEAM_DOMAIN = "yourteam.cloudflareaccess.com"
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
