@@ -26,7 +26,7 @@ database_id = "084c5c28-3355-4ef9-89f9-f9eac612ea13"
 migrations_dir = "migrations"
 
 [vars]
-# Fill these in after creating the Access application (see README).
-# e.g. ACCESS_TEAM_DOMAIN = "yourteam.cloudflareaccess.com"
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
+# Cloudflare Access identifiers (not secrets). The Worker verifies every
+# API request's Access token against these and refuses all requests if blank.
+ACCESS_TEAM_DOMAIN = "brendonking.cloudflareaccess.com"
+ACCESS_AUD = "1e574ca60c92c7dc4f16d769c40c82f2b3636c2dcb0061e6248b2e27d077d2a3"
