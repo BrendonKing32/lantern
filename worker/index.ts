@@ -74,7 +74,9 @@ async function authorize(req: Request, env: Env): Promise<string> {
 
 async function getChapterRow(env: Env, id: string): Promise<ChapterMeta> {
   const row = await env.DB.prepare(
-    `SELECT ${CHAPTER_COLS} FROM chapters WHERE id = ? AND deleted_at IS NULL`,
+    `SELECT ${CHAPTER_COLS} FROM chapters
+      WHERE id = ? AND deleted_at IS NULL
+        AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)`,
   )
     .bind(id)
     .first<ChapterMeta>();
@@ -83,7 +85,7 @@ async function getChapterRow(env: Env, id: string): Promise<ChapterMeta> {
 }
 
 async function requireProject(env: Env, id: string) {
-  const row = await env.DB.prepare("SELECT id, title, created_at, updated_at FROM projects WHERE id = ?")
+  const row = await env.DB.prepare("SELECT id, title, created_at, updated_at FROM projects WHERE id = ? AND deleted_at IS NULL")
     .bind(id)
     .first<{ id: string; title: string; created_at: string; updated_at: string }>();
   if (!row) throw new HttpError(404, "Project not found");
@@ -121,10 +123,11 @@ type Handler = (req: Request, env: Env, p: Params) => Promise<Response>;
 
 const listProjects: Handler = async (_req, env) => {
   const { results } = await env.DB.prepare(
-    `SELECT p.id, p.title, p.created_at, p.updated_at,
+    `SELECT p.id, p.title, p.created_at, p.updated_at, p.archived_at,
             COUNT(c.id) AS chapter_count, COALESCE(SUM(c.word_count), 0) AS word_count
        FROM projects p
        LEFT JOIN chapters c ON c.project_id = p.id AND c.deleted_at IS NULL
+      WHERE p.deleted_at IS NULL
       GROUP BY p.id
       ORDER BY p.updated_at DESC`,
   ).all();
@@ -154,13 +157,26 @@ const getProject: Handler = async (_req, env, p) => {
 };
 
 const updateProject: Handler = async (req, env, p) => {
-  await requireProject(env, p.id);
-  const b = await body<{ title?: string }>(req);
+  const project = await requireProject(env, p.id);
+  const b = await body<{ title?: string; archived?: unknown }>(req);
+  if (b.archived !== undefined) {
+    if (typeof b.archived !== "boolean") throw new HttpError(400, "archived must be true or false");
+    // Archiving leaves updated_at alone so the novel keeps its place on the shelf.
+    const archivedAt = b.archived ? now() : null;
+    await env.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(archivedAt, p.id).run();
+    if (b.title === undefined) return json({ id: p.id, title: project.title, archived_at: archivedAt });
+  }
   const title = cleanTitle(b.title, "Untitled novel");
   await env.DB.prepare("UPDATE projects SET title = ?, updated_at = ? WHERE id = ?")
     .bind(title, now(), p.id)
     .run();
   return json({ id: p.id, title });
+};
+
+const deleteProject: Handler = async (_req, env, p) => {
+  await requireProject(env, p.id);
+  await env.DB.prepare("UPDATE projects SET deleted_at = ? WHERE id = ?").bind(now(), p.id).run();
+  return json({ ok: true });
 };
 
 const createChapter: Handler = async (req, env, p) => {
@@ -266,6 +282,7 @@ const routes: Array<[string, string, Handler]> = [
   ["POST", "/api/projects", createProject],
   ["GET", "/api/projects/:id", getProject],
   ["PATCH", "/api/projects/:id", updateProject],
+  ["DELETE", "/api/projects/:id", deleteProject],
   ["POST", "/api/projects/:id/chapters", createChapter],
   ["PUT", "/api/projects/:id/order", reorderChapters],
   ["GET", "/api/chapters/:id", getChapter],

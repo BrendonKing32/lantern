@@ -43,6 +43,9 @@ export const api = {
   getProject: (id: string) => request<ProjectDetail>("GET", `/api/projects/${id}`),
   renameProject: (id: string, title: string) =>
     request<{ id: string; title: string }>("PATCH", `/api/projects/${id}`, { title }),
+  setArchived: (id: string, archived: boolean) =>
+    request<{ id: string; archived_at: string | null }>("PATCH", `/api/projects/${id}`, { archived }),
+  deleteProject: (id: string) => request<{ ok: true }>("DELETE", `/api/projects/${id}`),
   createChapter: (projectId: string, title: string) =>
     request<ChapterMeta>("POST", `/api/projects/${projectId}/chapters`, { title }),
   reorder: (projectId: string, chapterIds: string[]) =>

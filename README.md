@@ -84,6 +84,10 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 - **Two devices:** if a chapter was saved somewhere else while you were writing,
   Lantern stops and asks which version to keep instead of overwriting either one.
 - **Deleted chapters** leave the book, but their text stays in R2.
+- **Archive a novel:** on the shelf, hover it and use the box button. Archived novels
+  move to the **Archived** section at the bottom, where the arrow button puts them back.
+- **Delete a novel:** the trash button, on the shelf or in Archived. It leaves the
+  shelf for good, but its chapter text stays in R2.
 
 ## What's next
 

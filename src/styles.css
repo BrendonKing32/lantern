@@ -194,6 +194,44 @@ input {
 .book-edited {
   text-align: right;
 }
+.book-item {
+  position: relative;
+}
+.book-tools {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.25rem;
+  display: flex;
+  gap: 0.15rem;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.book-item:hover .book-tools,
+.book-item:focus-within .book-tools {
+  opacity: 1;
+}
+@media (hover: none) {
+  .book-tools {
+    opacity: 1;
+  }
+}
+.book-item .book-name {
+  padding-right: 4rem;
+}
+.archive {
+  margin-top: 3rem;
+}
+.archive summary {
+  color: var(--text-soft);
+  cursor: pointer;
+  margin-bottom: 1rem;
+}
+.archive summary:hover {
+  color: var(--wick);
+}
+.archive .book-name {
+  color: var(--text-soft);
+}
 .shelf-empty,
 .shelf-error {
   color: var(--text-soft);

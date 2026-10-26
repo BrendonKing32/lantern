@@ -3,6 +3,7 @@ export interface ProjectSummary {
   title: string;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
   chapter_count: number;
   word_count: number;
 }
