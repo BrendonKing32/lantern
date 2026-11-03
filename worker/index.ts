@@ -50,7 +50,7 @@ function cleanTitle(value: unknown, fallback: string): string {
 
 // ---------- auth (Cloudflare Access) ----------
 
-let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 async function authorize(req: Request, env: Env): Promise<string> {
   if (env.DEV_BYPASS === "true") return "dev@localhost";
@@ -61,8 +61,12 @@ async function authorize(req: Request, env: Env): Promise<string> {
   const token = req.headers.get("Cf-Access-Jwt-Assertion");
   if (!token) throw new HttpError(401, "Not signed in");
   const issuer = `https://${env.ACCESS_TEAM_DOMAIN}`;
-  jwks ??= createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
   try {
+    let jwks = jwksByIssuer.get(issuer);
+    if (!jwks) {
+      jwks = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
+      jwksByIssuer.set(issuer, jwks);
+    }
     const { payload } = await jwtVerify(token, jwks, { issuer, audience: env.ACCESS_AUD });
     return typeof payload.email === "string" ? payload.email : "unknown";
   } catch {
