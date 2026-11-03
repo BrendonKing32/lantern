@@ -41,7 +41,7 @@ while those two values are empty, so a deploy before this step stays locked.
 npm run deploy
 ```
 
-This builds the app and publishes it at `lantern.bkbuilds.dev`. The custom
+This builds the app, applies any new database migrations to `lantern-db`, and publishes it at `lantern.bkbuilds.dev`. The custom
 domain is created automatically because bkbuilds.dev is on Cloudflare.
 The `workers.dev` URL is turned off, so Access is the only way in.
 
