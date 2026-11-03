@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { countWords } from "../shared/wordcount";
-import type { ChapterMeta } from "../shared/types";
+import type { ChapterMeta, Snapshot, SnapshotReason } from "../shared/types";
 
 export interface Env {
   DB: D1Database;
@@ -12,6 +12,8 @@ export interface Env {
 }
 
 const MAX_CHAPTER_BYTES = 5 * 1024 * 1024;
+// While someone keeps writing, keep at most one automatic snapshot per window.
+const SNAPSHOT_INTERVAL_MS = 10 * 60 * 1000;
 const CHAPTER_COLS =
   "id, project_id, title, synopsis, position, word_count, version, updated_at";
 
@@ -33,6 +35,9 @@ const now = () => new Date().toISOString();
 const newId = () => crypto.randomUUID();
 const chapterKey = (projectId: string, chapterId: string) =>
   `projects/${projectId}/chapters/${chapterId}.md`;
+const snapshotKey = (projectId: string, chapterId: string, snapshotId: string) =>
+  `projects/${projectId}/chapters/${chapterId}/history/${snapshotId}.md`;
+const MARKDOWN = { httpMetadata: { contentType: "text/markdown; charset=utf-8" } };
 
 async function body<T>(req: Request): Promise<T> {
   try {
@@ -105,9 +110,7 @@ async function insertChapter(env: Env, projectId: string, title: string): Promis
   const id = newId();
   const ts = now();
   const position = (max?.m ?? -1) + 1;
-  await env.BUCKET.put(chapterKey(projectId, id), "", {
-    httpMetadata: { contentType: "text/markdown; charset=utf-8" },
-  });
+  await env.BUCKET.put(chapterKey(projectId, id), "", MARKDOWN);
   await env.DB.batch([
     env.DB.prepare(
       "INSERT INTO chapters (id, project_id, title, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -118,6 +121,32 @@ async function insertChapter(env: Env, projectId: string, title: string): Promis
     id, project_id: projectId, title, synopsis: "", position,
     word_count: 0, version: 0, updated_at: ts,
   };
+}
+
+/**
+ * Copy the chapter's current text into its history before it's overwritten.
+ * Automatic snapshots are rate-limited; restores and conflict overwrites always
+ * keep a copy. Empty text is never worth keeping.
+ */
+async function snapshotBeforeSave(env: Env, row: ChapterMeta, reason: SnapshotReason) {
+  if (reason === "auto") {
+    const last = await env.DB.prepare(
+      "SELECT created_at FROM chapter_snapshots WHERE chapter_id = ? ORDER BY created_at DESC LIMIT 1",
+    )
+      .bind(row.id)
+      .first<{ created_at: string }>();
+    if (last && Date.now() - Date.parse(last.created_at) < SNAPSHOT_INTERVAL_MS) return;
+  }
+  const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+  const text = obj ? await obj.text() : "";
+  if (!text.trim()) return;
+  const id = newId();
+  await env.BUCKET.put(snapshotKey(row.project_id, row.id, id), text, MARKDOWN);
+  await env.DB.prepare(
+    "INSERT INTO chapter_snapshots (id, chapter_id, version, word_count, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  )
+    .bind(id, row.id, row.version, countWords(text), reason, now())
+    .run();
 }
 
 // ---------- handlers ----------
@@ -222,8 +251,10 @@ const getChapter: Handler = async (_req, env, p) => {
 };
 
 const saveChapter: Handler = async (req, env, p) => {
-  const b = await body<{ content?: unknown; baseVersion?: unknown }>(req);
+  const b = await body<{ content?: unknown; baseVersion?: unknown; snapshot?: unknown }>(req);
   if (typeof b.content !== "string") throw new HttpError(400, "content must be a string");
+  const reason: SnapshotReason =
+    b.snapshot === "restore" || b.snapshot === "conflict" ? b.snapshot : "auto";
   if (typeof b.baseVersion !== "number") throw new HttpError(400, "baseVersion must be a number");
   if (new TextEncoder().encode(b.content).length > MAX_CHAPTER_BYTES) {
     throw new HttpError(413, "Chapter is too large (5 MB limit)");
@@ -244,10 +275,15 @@ const saveChapter: Handler = async (req, env, p) => {
     throw new HttpError(409, "conflict", { version: current.version });
   }
 
+  // History is a safety net, so a failure here never blocks the save itself.
   try {
-    await env.BUCKET.put(chapterKey(row.project_id, row.id), b.content, {
-      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
-    });
+    await snapshotBeforeSave(env, row, reason);
+  } catch (e) {
+    console.error("snapshot failed", e);
+  }
+
+  try {
+    await env.BUCKET.put(chapterKey(row.project_id, row.id), b.content, MARKDOWN);
   } catch (e) {
     // Roll the version back so the client's next attempt still lines up.
     await env.DB.prepare(
@@ -279,6 +315,30 @@ const deleteChapter: Handler = async (_req, env, p) => {
   return json({ ok: true });
 };
 
+const listHistory: Handler = async (_req, env, p) => {
+  const row = await getChapterRow(env, p.id);
+  const { results } = await env.DB.prepare(
+    `SELECT id, version, word_count, reason, created_at FROM chapter_snapshots
+      WHERE chapter_id = ? ORDER BY created_at DESC LIMIT 500`,
+  )
+    .bind(row.id)
+    .all<Snapshot>();
+  return json(results);
+};
+
+const getSnapshot: Handler = async (_req, env, p) => {
+  const row = await getChapterRow(env, p.id);
+  const snap = await env.DB.prepare(
+    "SELECT id, version, word_count, reason, created_at FROM chapter_snapshots WHERE id = ? AND chapter_id = ?",
+  )
+    .bind(p.snapshotId, row.id)
+    .first<Snapshot>();
+  if (!snap) throw new HttpError(404, "That version wasn't found");
+  const obj = await env.BUCKET.get(snapshotKey(row.project_id, row.id, snap.id));
+  if (!obj) throw new HttpError(404, "That version's text is missing from storage");
+  return json({ ...snap, content: await obj.text() });
+};
+
 // ---------- router ----------
 
 const routes: Array<[string, string, Handler]> = [
@@ -293,6 +353,8 @@ const routes: Array<[string, string, Handler]> = [
   ["PUT", "/api/chapters/:id", saveChapter],
   ["PATCH", "/api/chapters/:id", updateChapter],
   ["DELETE", "/api/chapters/:id", deleteChapter],
+  ["GET", "/api/chapters/:id/history", listHistory],
+  ["GET", "/api/chapters/:id/history/:snapshotId", getSnapshot],
 ];
 
 const compiled = routes.map(([method, path, handler]) => {
