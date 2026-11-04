@@ -118,7 +118,10 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   of earlier chapters. Claude returns contradictions with the bible or earlier chapters,
   places the chapter contradicts itself, and new facts worth adding to the bible, each
   quoting the passage; click a quote to jump to it. The panel shows what will be sent and
-  the estimated cost first. Needs Claude set up (see below); until then it says so.
+  the estimated cost first. For a new-fact finding, **Draft Bible entry** suggests a concise
+  reference note from the chapter and selected passage. Review and edit the name, category,
+  aliases and notes before adding it; nothing is saved automatically, and Claude never writes
+  or changes the chapter. Needs Claude set up (see below); until then it says so.
 - **Whole-book check:** the **Whole book** tab in the same panel sends every chapter in
   order (unsaved writing included) with the whole bible, and reports contradictions between
   chapters, timeline problems, and where the bible has fallen behind. Findings are grouped by
@@ -159,7 +162,3 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   move to the **Archived** section at the bottom, where the arrow button puts them back.
 - **Delete a novel:** the trash button, on the shelf or in Archived. It moves to **Deleted**
   at the bottom of the shelf, where the arrow button restores it with all its chapters.
-
-## What's next
-
-- **Milestone 4 (remaining):** drafting bible entries from chapters

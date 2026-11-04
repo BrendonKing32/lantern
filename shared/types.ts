@@ -22,6 +22,18 @@ export interface BibleEntry {
   updated_at: string;
 }
 
+/** An AI-suggested Bible entry, shown for author review before it is saved. */
+export interface BibleEntryDraft {
+  name: string;
+  kind: BibleKind;
+  aliases: string[];
+  body: string;
+  source_quote: string;
+  rationale: string;
+  model: string;
+  cost_usd: number;
+}
+
 export interface DeletedProject {
   id: string;
   title: string;
