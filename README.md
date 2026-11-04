@@ -119,6 +119,12 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   places the chapter contradicts itself, and new facts worth adding to the bible, each
   quoting the passage; click a quote to jump to it. The panel shows what will be sent and
   the estimated cost first. Needs Claude set up (see below); until then it says so.
+- **Whole-book check:** the **Whole book** tab in the same panel sends every chapter in
+  order (unsaved writing included) with the whole bible, and reports contradictions between
+  chapters, timeline problems, and where the bible has fallen behind. Findings are grouped by
+  chapter; click a quote to open that chapter at it. A run takes a few minutes, so keep the
+  page open; the last result is saved and shows again on any device. Books up to about
+  160,000 words fit in one check.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
   full glow when you meet the goal; without one, at 1,000 words in a session.
@@ -156,4 +162,4 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 
 ## What's next
 
-- **Milestone 4 (remaining):** whole-book continuity checks, drafting bible entries from chapters
+- **Milestone 4 (remaining):** drafting bible entries from chapters

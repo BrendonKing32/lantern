@@ -14,7 +14,7 @@ import { cache } from "../local";
 import { entryIndex, linkKey } from "../../shared/wikilinks";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
-import { CheckPanel } from "./CheckPanel";
+import { CheckPanel, type CheckTab } from "./CheckPanel";
 import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
 
 type View = "write" | "board" | "bible";
@@ -98,6 +98,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, []);
   // The continuity check panel reads the editor's text and points into it.
   const [checkOpen, setCheckOpen] = useState(false);
+  const [checkTab, setCheckTab] = useState<CheckTab>("chapter");
   const editorControls = useRef<EditorControls | null>(null);
   const closeCheck = useCallback(() => setCheckOpen(false), []);
   const closePeek = useCallback(() => setPeek(null), []);
@@ -146,10 +147,23 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const chapters = detail?.chapters ?? [];
   const selected = chapters.find((c) => c.id === chapterId) ?? chapters[0];
 
-  useEffect(() => {
-    setHistoryOpen(false);
-    setCheckOpen(false);
-  }, [selected?.id]);
+  // History belongs to one chapter; the check panel follows you between chapters.
+  useEffect(() => setHistoryOpen(false), [selected?.id]);
+
+  // Open a chapter and select a passage in it, waiting for the editor to load.
+  const openQuote = (chapterId: string, quote: string): Promise<boolean> => {
+    if (selected?.id !== chapterId) navigate(projectId, chapterId);
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const attempt = () => {
+        const ready = editorControls.current;
+        if (ready && ready.reveal(quote)) return resolve(true);
+        if (Date.now() - started > 4000) return resolve(false);
+        window.setTimeout(attempt, 120);
+      };
+      window.setTimeout(attempt, selected?.id === chapterId ? 0 : 150);
+    });
+  };
 
   // Keep the URL pointing at a real chapter.
   useEffect(() => {
@@ -506,12 +520,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
         {view === "write" && checkOpen && selected && (
           <CheckPanel
-            key={selected.id}
+            projectId={projectId}
             chapter={selected}
-            earlier={chapters.slice(0, chapters.findIndex((c) => c.id === selected.id))}
+            chapters={chapters}
+            wordsFor={wordsFor}
             entries={entries}
             controls={editorControls}
             offline={offline}
+            tab={checkTab}
+            onTab={setCheckTab}
+            onOpenQuote={openQuote}
             onClose={closeCheck}
           />
         )}

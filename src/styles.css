@@ -1780,3 +1780,34 @@ body.dusk .card {
     border-top-left-radius: 12px;
   }
 }
+
+.check-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.6rem 1rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+.check-tab {
+  padding: 0.4rem 0.7rem 0.55rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-faint);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.check-tab:hover {
+  color: var(--text-soft);
+}
+.check-tab.is-on {
+  color: var(--wick);
+  border-bottom-color: var(--lamp);
+}
+.check-running {
+  color: var(--text-soft);
+}
+.finding-chapter {
+  margin: 0 0 0.5rem !important;
+  color: var(--wick);
+  font: 600 0.9375rem/1.3 var(--font-prose) !important;
+}

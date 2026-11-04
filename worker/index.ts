@@ -3,12 +3,15 @@ import { countWords } from "../shared/wordcount";
 import { BIBLE_KINDS } from "../shared/types";
 import { AiError, aiStatus, guardedMessage, type AiEnv } from "./ai";
 import { checkChapter } from "./check";
+import { prepareBookCheck } from "./bookCheck";
 import type {
   BibleEntry,
   BibleKind,
   ChapterMeta,
   DeletedChapter,
   DeletedProject,
+  BookCheckEvent,
+  BookCheckResult,
   ProjectInfo,
   ProjectSummary,
   Snapshot,
@@ -700,6 +703,75 @@ const checkChapterHandler: Handler = async (req, env, p) => {
   return json(result);
 };
 
+// Whole-book check. The app sends the text of any chapter it has unsaved
+// writing for; every other chapter is read from storage. Limits are checked
+// before anything streams, so those refusals are ordinary error replies. Then
+// the reply streams one JSON line per event, with a progress line every ten
+// seconds so the connection stays open while Claude reads the book.
+const checkBook: Handler = async (req, env, p) => {
+  const project = await requireProject(env, p.id);
+  const b = await body<{ overrides?: unknown }>(req);
+  const overrides = new Map<string, string>();
+  if (b.overrides && typeof b.overrides === "object") {
+    for (const [id, text] of Object.entries(b.overrides as Record<string, unknown>)) {
+      if (typeof text === "string") overrides.set(id, text);
+    }
+  }
+  const [rows, bible] = await env.DB.batch([
+    env.DB.prepare("SELECT id, title FROM chapters WHERE project_id = ? AND deleted_at IS NULL ORDER BY position").bind(p.id),
+    env.DB.prepare(`SELECT ${BIBLE_COLS} FROM bible_entries WHERE project_id = ? AND deleted_at IS NULL ORDER BY name COLLATE NOCASE`).bind(p.id),
+  ]);
+  const chapters = await Promise.all(
+    ((rows.results ?? []) as { id: string; title: string }[]).map(async (c) => {
+      const text = overrides.get(c.id) ?? (await (await env.BUCKET.get(chapterKey(p.id, c.id)))?.text()) ?? "";
+      return { ...c, content: text };
+    }),
+  );
+  const prepared = await prepareBookCheck(env, {
+    projectTitle: project.title,
+    chapters,
+    entries: ((bible.results ?? []) as BibleRow[]).map(toEntry),
+  });
+
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const enc = new TextEncoder();
+  // Writes fail once the browser goes away; the check still settles its cost.
+  const send = (e: BookCheckEvent) => writer.write(enc.encode(JSON.stringify(e) + "\n")).catch(() => {});
+
+  const started = Date.now();
+  void (async () => {
+    await send({ type: "started", reserved_usd: prepared.call.reservedUsd, chapters: prepared.chapters, words: prepared.words });
+    const tick = setInterval(() => void send({ type: "progress", seconds: Math.round((Date.now() - started) / 1000) }), 10_000);
+    try {
+      const result = await prepared.finish();
+      await env.DB.prepare("INSERT INTO book_checks (id, project_id, result, created_at) VALUES (?, ?, ?, ?)")
+        .bind(newId(), p.id, JSON.stringify(result), result.checked_at)
+        .run();
+      await send({ type: "result", result });
+    } catch (e) {
+      const err = e instanceof AiError ? e : new AiError(500, "Something went wrong checking the book.", "unknown");
+      if (!(e instanceof AiError)) console.error(e);
+      await send({ type: "error", status: err.status, code: err.code, error: err.message });
+    } finally {
+      clearInterval(tick);
+      await writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(readable, {
+    headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
+  });
+};
+
+const lastBookCheck: Handler = async (_req, env, p) => {
+  await requireProject(env, p.id);
+  const row = await env.DB.prepare("SELECT result FROM book_checks WHERE project_id = ? ORDER BY created_at DESC LIMIT 1")
+    .bind(p.id)
+    .first<{ result: string }>();
+  return json(row ? (JSON.parse(row.result) as BookCheckResult) : null);
+};
+
 // ---------- router ----------
 
 const routes: Array<[string, string, Handler]> = [
@@ -708,6 +780,8 @@ const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/ai/status", getAiStatus],
   ["POST", "/api/ai/test", testAi],
   ["POST", "/api/chapters/:id/check", checkChapterHandler],
+  ["POST", "/api/projects/:id/check-book", checkBook],
+  ["GET", "/api/projects/:id/check-book", lastBookCheck],
   ["GET", "/api/projects/:id/bible", listBible],
   ["POST", "/api/projects/:id/bible", createEntry],
   ["PATCH", "/api/bible/:id", updateEntry],
