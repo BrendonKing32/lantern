@@ -1,2 +1,8 @@
 # Copy to .dev.vars for local development only. Never deploy with this set.
 DEV_BYPASS=true
+
+# Optional, for trying Claude features locally. Use a key with a low spend limit.
+# ANTHROPIC_API_KEY=sk-ant-...
+# Override the limits from wrangler.toml for local testing:
+# AI_DAILY_LIMIT=5
+# AI_MONTHLY_BUDGET_USD=1

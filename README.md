@@ -62,6 +62,31 @@ The values in `wrangler.toml` (database ID, Access team domain, and AUD tag) are
 identifiers, not secrets, so they're fine to commit. Real secrets go in
 GitHub secrets or `wrangler secret put`, never in the repo.
 
+## Claude (optional)
+
+Lantern can call Claude for writing help. It needs an Anthropic API key, which is
+billed by use, separately from any claude.ai subscription.
+
+1. At [console.anthropic.com](https://console.anthropic.com), add billing and set a
+   monthly spend limit, then create a key under **API Keys**.
+2. Run `npx wrangler secret put ANTHROPIC_API_KEY` and paste the key. Cloudflare
+   stores it encrypted; it never goes in the repo, and it survives deploys.
+3. On the shelf, open **Claude** and use **Test connection**.
+
+Every call goes through the same safeguards (`worker/ai.ts`):
+
+- **Daily limit:** at most `AI_DAILY_LIMIT` calls in any 24 hours (30 by default).
+- **Monthly budget:** `AI_MONTHLY_BUDGET_USD` per calendar month, UTC ($10 by default).
+  The most a call could cost is reserved before it's made, and the call is refused
+  if that could pass the budget, so the limit holds even with calls running at once.
+- **Size caps** on what's sent and on how long a reply can be.
+- **A log** of every call with its tokens and estimated cost, shown in the Claude
+  panel. Calls Anthropic rejects aren't counted; interrupted ones count at their maximum.
+
+The model and both limits are in `wrangler.toml` under `[vars]`. Costs shown are
+estimates from published prices; the Anthropic Console has the actual bill, and its
+spend limit is a second, independent cap.
+
 ## Local development
 
 ```sh

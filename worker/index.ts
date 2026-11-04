@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { countWords } from "../shared/wordcount";
 import { BIBLE_KINDS } from "../shared/types";
+import { AiError, aiStatus, guardedMessage, type AiEnv } from "./ai";
 import type {
   BibleEntry,
   BibleKind,
@@ -14,7 +15,7 @@ import type {
   Stats,
 } from "../shared/types";
 
-export interface Env {
+export interface Env extends AiEnv {
   DB: D1Database;
   BUCKET: R2Bucket;
   ASSETS: Fetcher;
@@ -640,11 +641,37 @@ const setGoal: Handler = async (req, env) => {
   return json({ daily_goal: goal });
 };
 
+// ---------- Claude ----------
+
+const getAiStatus: Handler = async (_req, env) => json(await aiStatus(env));
+
+// A tiny call to confirm the key works. It goes through every safeguard and
+// counts toward the limits like any other call.
+const testAi: Handler = async (_req, env) => {
+  const started = Date.now();
+  const r = await guardedMessage(env, {
+    purpose: "Connection test",
+    system: "You are checking that a connection works.",
+    prompt: "Reply with exactly the word: ready",
+    maxTokens: 1024,
+    effort: "low",
+  });
+  return json({
+    ok: r.stopReason !== "refusal" && r.text.length > 0,
+    reply: r.text.slice(0, 200),
+    model: r.model,
+    ms: Date.now() - started,
+    cost_usd: r.costUsd,
+  });
+};
+
 // ---------- router ----------
 
 const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/projects", listProjects],
   ["GET", "/api/stats", getStats],
+  ["GET", "/api/ai/status", getAiStatus],
+  ["POST", "/api/ai/test", testAi],
   ["GET", "/api/projects/:id/bible", listBible],
   ["POST", "/api/projects/:id/bible", createEntry],
   ["PATCH", "/api/bible/:id", updateEntry],
@@ -696,6 +723,7 @@ export default {
       return json({ error: "Not found" }, 404);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message, ...e.extra }, e.status);
+      if (e instanceof AiError) return json({ error: e.message, code: e.code }, e.status);
       console.error(e);
       return json({ error: "Server error" }, 500);
     }

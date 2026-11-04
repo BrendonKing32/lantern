@@ -3,6 +3,7 @@ import { api, describeError } from "../api";
 import { navigate } from "../router";
 import { loadShelf } from "../sync";
 import { TodayPanel } from "./TodayPanel";
+import { ClaudePanel } from "./ClaudePanel";
 import { LanternMark } from "./ProjectView";
 import { ago } from "../when";
 import type { DeletedProject, ProjectSummary } from "../../shared/types";
@@ -15,6 +16,7 @@ export function ProjectList() {
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [offline, setOffline] = useState(false);
+  const [claudeOpen, setClaudeOpen] = useState(false);
   const [deleted, setDeleted] = useState<DeletedProject[]>([]);
 
   useEffect(() => {
@@ -83,7 +85,14 @@ export function ProjectList() {
       <header className="shelf-head">
         <LanternMark />
         <h1 className="shelf-name">Lantern</h1>
+        <span className="desk-spacer" />
+        {!offline && (
+          <button className="btn btn-quiet" onClick={() => setClaudeOpen(true)}>
+            Claude
+          </button>
+        )}
       </header>
+      {claudeOpen && <ClaudePanel onClose={() => setClaudeOpen(false)} />}
 
       {!offline && <TodayPanel />}
 

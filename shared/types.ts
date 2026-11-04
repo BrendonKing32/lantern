@@ -102,3 +102,26 @@ export interface Snapshot {
 export interface SnapshotWithContent extends Snapshot {
   content: string;
 }
+
+export interface AiCall {
+  id: string;
+  purpose: string;
+  model: string;
+  status: "pending" | "done" | "failed" | "unknown";
+  input_tokens: number;
+  output_tokens: number;
+  /** Estimated; for a call that may or may not have been billed, the most it could have cost. */
+  cost_usd: number;
+  error: string | null;
+  created_at: string;
+}
+
+export interface AiStatus {
+  configured: boolean;
+  model: string;
+  daily_limit: number;
+  used_last_24h: number;
+  monthly_budget_usd: number;
+  spent_this_month_usd: number;
+  recent: AiCall[];
+}
