@@ -28,8 +28,10 @@ export interface AiEnv {
 export const DEFAULT_MODEL = "claude-opus-5-5";
 const DEFAULT_DAILY_LIMIT = 30;
 const DEFAULT_MONTHLY_BUDGET_USD = 10;
-/** About 150,000 tokens of English: a long novel's worth of chapters and notes. */
+/** About 150,000 tokens of English. Book-length requests may ask for more, up to the hard cap. */
 export const MAX_INPUT_CHARS = 600_000;
+/** About 250,000 tokens of English: a 200,000-word novel with its notes. */
+export const HARD_MAX_INPUT_CHARS = 1_000_000;
 const DAY_MS = 86_400_000;
 
 // US dollars per million tokens (input, output), from Anthropic's published
@@ -101,6 +103,9 @@ export async function aiStatus(env: AiEnv): Promise<AiStatus> {
     spent_this_month_usd: fromMicros((spent.results?.[0] as { m: number } | undefined)?.m ?? 0),
     recent: rows.map(({ cost_micros, reserved_micros, ...r }) => ({
       ...r,
+      // A call still "pending" after 15 minutes was cut off mid-way (the page
+      // closed, or the Worker stopped); it stays counted at its maximum.
+      status: r.status === "pending" && Date.parse(r.created_at) < now.getTime() - 15 * 60_000 ? "unknown" : r.status,
       cost_usd: fromMicros(r.status === "done" ? cost_micros : r.status === "failed" ? 0 : reserved_micros),
     })),
   };
@@ -119,6 +124,15 @@ export interface GuardedRequest {
   schema?: Record<string, unknown>;
   /** How long to wait for Claude, in milliseconds. */
   timeoutMs?: number;
+  /** Allow more input than MAX_INPUT_CHARS, up to HARD_MAX_INPUT_CHARS. */
+  maxChars?: number;
+}
+
+export interface ReservedCall {
+  /** The most this call could cost, set aside against the monthly budget. */
+  reservedUsd: number;
+  /** Make the call. The reservation is settled whatever happens. */
+  run: () => Promise<GuardedResult>;
 }
 
 export interface GuardedResult {
@@ -130,7 +144,7 @@ export interface GuardedResult {
   outputTokens: number;
 }
 
-export async function guardedMessage(env: AiEnv, req: GuardedRequest): Promise<GuardedResult> {
+export async function reserveCall(env: AiEnv, req: GuardedRequest): Promise<ReservedCall> {
   if (!env.ANTHROPIC_API_KEY) {
     throw new AiError(
       503,
@@ -139,16 +153,17 @@ export async function guardedMessage(env: AiEnv, req: GuardedRequest): Promise<G
     );
   }
   const chars = req.system.length + req.prompt.length;
-  if (chars > MAX_INPUT_CHARS) {
-    throw new AiError(413, `That's too much text to send at once (${chars.toLocaleString("en-US")} characters; the limit is ${MAX_INPUT_CHARS.toLocaleString("en-US")}).`, "too_long");
+  const maxChars = Math.min(req.maxChars ?? MAX_INPUT_CHARS, HARD_MAX_INPUT_CHARS);
+  if (chars > maxChars) {
+    throw new AiError(413, `That's too much text to send at once (${chars.toLocaleString("en-US")} characters; the limit is ${maxChars.toLocaleString("en-US")}).`, "too_long");
   }
 
   const s = settings(env);
-  // Reserve the most this call could cost: every input character as a token
-  // (English averages about four characters per token, so this errs high) and
-  // the full output allowance, at the dearest price the call could run at.
+  // Reserve the most this call could cost: a token for every two characters
+  // of input (English averages about four, so this errs high) and the full
+  // output allowance, at the dearest price the call could run at.
   const [inPrice, outPrice] = reservePrice(s.model);
-  const reserved = toMicros((chars * inPrice + req.maxTokens * outPrice) / 1_000_000);
+  const reserved = toMicros(((chars / 2) * inPrice + req.maxTokens * outPrice) / 1_000_000);
 
   const id = crypto.randomUUID();
   const now = new Date();
@@ -179,67 +194,80 @@ export async function guardedMessage(env: AiEnv, req: GuardedRequest): Promise<G
     );
   }
 
-  const client = new Anthropic({
-    apiKey: env.ANTHROPIC_API_KEY,
-    baseURL: env.ANTHROPIC_BASE_URL || undefined,
-    maxRetries: 1,
-    timeout: req.timeoutMs ?? 120_000,
-  });
-
-  try {
-    const res = await client.beta.messages.create({
-      model: s.model,
-      max_tokens: req.maxTokens,
-      system: req.system,
-      messages: [{ role: "user", content: req.prompt }],
-      thinking: { type: "adaptive" },
-      output_config: {
-        effort: req.effort ?? "medium",
-        ...(req.schema ? { format: { type: "json_schema" as const, schema: req.schema } } : {}),
-      },
-      // If a safety check declines the request, let Anthropic re-run it on a
-      // suitable fallback model instead of failing.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+  const run = async (): Promise<GuardedResult> => {
+    const client = new Anthropic({
+      apiKey: env.ANTHROPIC_API_KEY,
+      baseURL: env.ANTHROPIC_BASE_URL || undefined,
+      maxRetries: 1,
+      timeout: req.timeoutMs ?? 120_000,
     });
-    const u = res.usage;
-    const input = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
-    const [pi, po] = priceOf(res.model);
-    const [qi, qo] = priceOf(s.model);
-    // Price at the dearer of the requested and the serving model, to err high.
-    const costMicros = toMicros(
-      ((u.input_tokens + (u.cache_creation_input_tokens ?? 0) * 1.25 + (u.cache_read_input_tokens ?? 0) * 0.1) * Math.max(pi, qi) +
-        u.output_tokens * Math.max(po, qo)) /
-        1_000_000,
-    );
-    await env.DB.prepare(
-      "UPDATE ai_calls SET status = 'done', model = ?, input_tokens = ?, output_tokens = ?, cost_micros = ? WHERE id = ?",
-    )
-      .bind(res.model, input, u.output_tokens, costMicros, id)
-      .run();
-    const text = res.content
-      .map((b) => (b.type === "text" ? b.text : ""))
-      .join("")
-      .trim();
-    return {
-      text,
-      model: res.model,
-      stopReason: res.stop_reason,
-      costUsd: fromMicros(costMicros),
-      inputTokens: input,
-      outputTokens: u.output_tokens,
-    };
-  } catch (e) {
-    // Anthropic answered with an error: nothing was billed, so the call stops
-    // counting. A dropped connection or timeout might have been billed, so it
-    // keeps counting at its reservation.
-    const answered = e instanceof Anthropic.APIError && !(e instanceof Anthropic.APIConnectionError);
-    const message = e instanceof Error ? e.message : String(e);
-    await env.DB.prepare("UPDATE ai_calls SET status = ?, error = ? WHERE id = ?")
-      .bind(answered ? "failed" : "unknown", message.slice(0, 500), id)
-      .run();
-    throw explain(e);
-  }
+
+    try {
+      const params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming = {
+        model: s.model,
+        max_tokens: req.maxTokens,
+        system: req.system,
+        messages: [{ role: "user", content: req.prompt }],
+        thinking: { type: "adaptive" },
+        output_config: {
+          effort: req.effort ?? "medium",
+          ...(req.schema ? { format: { type: "json_schema" as const, schema: req.schema } } : {}),
+        },
+        // If a safety check declines the request, let Anthropic re-run it on a
+        // suitable fallback model instead of failing.
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+      };
+      // Long replies must stream, or the HTTP request can time out.
+      const res =
+        req.maxTokens > 16000
+          ? await client.beta.messages.stream(params).finalMessage()
+          : await client.beta.messages.create(params);
+      const u = res.usage;
+      const input = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+      const [pi, po] = priceOf(res.model);
+      const [qi, qo] = priceOf(s.model);
+      // Price at the dearer of the requested and the serving model, to err high.
+      const costMicros = toMicros(
+        ((u.input_tokens + (u.cache_creation_input_tokens ?? 0) * 1.25 + (u.cache_read_input_tokens ?? 0) * 0.1) * Math.max(pi, qi) +
+          u.output_tokens * Math.max(po, qo)) /
+          1_000_000,
+      );
+      await env.DB.prepare(
+        "UPDATE ai_calls SET status = 'done', model = ?, input_tokens = ?, output_tokens = ?, cost_micros = ? WHERE id = ?",
+      )
+        .bind(res.model, input, u.output_tokens, costMicros, id)
+        .run();
+      const text = res.content
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .join("")
+        .trim();
+      return {
+        text,
+        model: res.model,
+        stopReason: res.stop_reason,
+        costUsd: fromMicros(costMicros),
+        inputTokens: input,
+        outputTokens: u.output_tokens,
+      };
+    } catch (e) {
+      // Anthropic answered with an error: nothing was billed, so the call stops
+      // counting. A dropped connection or timeout might have been billed, so it
+      // keeps counting at its reservation.
+      const answered = e instanceof Anthropic.APIError && !(e instanceof Anthropic.APIConnectionError);
+      const message = e instanceof Error ? e.message : String(e);
+      await env.DB.prepare("UPDATE ai_calls SET status = ?, error = ? WHERE id = ?")
+        .bind(answered ? "failed" : "unknown", message.slice(0, 500), id)
+        .run();
+      throw explain(e);
+    }
+  };
+  return { reservedUsd: fromMicros(reserved), run };
+}
+
+/** Check the limits and reserve, then make the call. */
+export async function guardedMessage(env: AiEnv, req: GuardedRequest): Promise<GuardedResult> {
+  return (await reserveCall(env, req)).run();
 }
 
 function explain(e: unknown): AiError {

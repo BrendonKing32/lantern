@@ -148,3 +148,36 @@ export interface CheckResult {
   cost_usd: number;
   checked_at: string;
 }
+
+export type BookFindingKind = "contradiction" | "timeline" | "bible";
+
+export interface BookFinding {
+  kind: BookFindingKind;
+  /** The chapter the quote comes from. */
+  chapter_id: string;
+  chapter_title: string;
+  /** A short passage copied exactly from that chapter. */
+  quote: string;
+  /** What it conflicts with, e.g. "Chapter 3" or "Bible: Mara". */
+  conflicts_with: string;
+  explanation: string;
+  suggestion: string;
+}
+
+export interface BookCheckResult {
+  summary: string;
+  findings: BookFinding[];
+  chapters_checked: number;
+  words_checked: number;
+  entries_checked: number;
+  model: string;
+  cost_usd: number;
+  checked_at: string;
+}
+
+/** One line of the streamed reply to a whole-book check. */
+export type BookCheckEvent =
+  | { type: "started"; reserved_usd: number; chapters: number; words: number }
+  | { type: "progress"; seconds: number }
+  | { type: "result"; result: BookCheckResult }
+  | { type: "error"; status: number; code: string; error: string };

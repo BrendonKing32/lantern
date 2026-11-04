@@ -1,5 +1,7 @@
 import type {
   AiStatus,
+  BookCheckEvent,
+  BookCheckResult,
   CheckResult,
   BibleEntry,
   BibleKind,
@@ -64,6 +66,7 @@ export const api = {
   deleteEntry: (id: string) => request<{ ok: true }>("DELETE", `/api/bible/${id}`),
   checkChapter: (chapterId: string, content: string) =>
     request<CheckResult>("POST", `/api/chapters/${chapterId}/check`, { content }),
+  lastBookCheck: (projectId: string) => request<BookCheckResult | null>("GET", `/api/projects/${projectId}/check-book`),
   aiStatus: () => request<AiStatus>("GET", "/api/ai/status"),
   aiTest: () =>
     request<{ ok: boolean; reply: string; model: string; ms: number; cost_usd: number }>("POST", "/api/ai/test"),
@@ -114,4 +117,41 @@ export function describeError(e: unknown): string {
     return e.message;
   }
   return "Can't reach Lantern. Check your connection and try again.";
+}
+
+/**
+ * Run a whole-book check, calling onEvent for each line the server streams
+ * back. Refusals before the check starts (limits, too long, not set up) throw
+ * an ApiError like any other request.
+ */
+export async function streamBookCheck(
+  projectId: string,
+  overrides: Record<string, string>,
+  onEvent: (e: BookCheckEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`/api/projects/${projectId}/check-book`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ overrides }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(res.status, data?.error ?? res.statusText, data);
+  }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffered = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (value) buffered += value;
+    let nl: number;
+    while ((nl = buffered.indexOf("\n")) >= 0) {
+      const line = buffered.slice(0, nl).trim();
+      buffered = buffered.slice(nl + 1);
+      if (line) onEvent(JSON.parse(line) as BookCheckEvent);
+    }
+    if (done) break;
+  }
 }
