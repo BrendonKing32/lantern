@@ -1,4 +1,6 @@
 import type {
+  BibleEntry,
+  BibleKind,
   ChapterMeta,
   ChapterWithContent,
   DeletedChapter,
@@ -52,6 +54,12 @@ export const api = {
   setArchived: (id: string, archived: boolean) =>
     request<{ id: string; archived_at: string | null }>("PATCH", `/api/projects/${id}`, { archived }),
   deleteProject: (id: string) => request<{ ok: true }>("DELETE", `/api/projects/${id}`),
+  bible: (projectId: string) => request<BibleEntry[]>("GET", `/api/projects/${projectId}/bible`),
+  createEntry: (projectId: string, entry: { name: string; kind: BibleKind; aliases?: string[]; body?: string }) =>
+    request<BibleEntry>("POST", `/api/projects/${projectId}/bible`, entry),
+  updateEntry: (id: string, patch: Partial<Pick<BibleEntry, "name" | "kind" | "aliases" | "body">>) =>
+    request<BibleEntry>("PATCH", `/api/bible/${id}`, patch),
+  deleteEntry: (id: string) => request<{ ok: true }>("DELETE", `/api/bible/${id}`),
   stats: () => request<Stats>("GET", `/api/stats?today=${localDay()}`),
   setGoal: (dailyGoal: number | null) =>
     request<{ daily_goal: number | null }>("PUT", "/api/goal", { daily_goal: dailyGoal }),
