@@ -16,6 +16,7 @@ import { entryIndex, linkKey } from "../../shared/wikilinks";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
 import { CheckPanel, type CheckTab } from "./CheckPanel";
+import { grammarEnabled, setGrammarEnabled } from "../grammar";
 import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
 
 type View = "write" | "board" | "bible";
@@ -99,6 +100,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, []);
   // The continuity check panel reads the editor's text and points into it.
   const [checkOpen, setCheckOpen] = useState(false);
+  const [grammarOn, setGrammarOn] = useState(grammarEnabled);
+  useEffect(() => setGrammarEnabled(grammarOn), [grammarOn]);
   const [checkTab, setCheckTab] = useState<CheckTab>("chapter");
   const editorControls = useRef<EditorControls | null>(null);
   const closeCheck = useCallback(() => setCheckOpen(false), []);
@@ -472,6 +475,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
               Check
             </button>
           )}
+          {view === "write" && (
+            <button
+              className={`btn btn-quiet${grammarOn ? " is-on" : ""}`}
+              aria-pressed={grammarOn}
+              title="Underline grammar and spelling problems (checked on this device by Harper)"
+              onClick={() => setGrammarOn((on) => !on)}
+            >
+              Grammar
+            </button>
+          )}
           <ThemePicker />
           <button
             className={`btn btn-quiet dusk-toggle${dusk ? " is-on" : ""}`}
@@ -516,6 +529,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onCloseHistory={closeHistory}
             entries={entries}
             onOpenLink={openLink}
+            grammarOn={grammarOn}
             controls={editorControls}
           />
         )}

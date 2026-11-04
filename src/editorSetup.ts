@@ -119,8 +119,8 @@ export const proseExtensions = [
   proseBlocks,
   EditorView.lineWrapping,
   proseTheme,
+  // spellcheck is set by the editor: off while Harper checks spelling itself.
   EditorView.contentAttributes.of({
-    spellcheck: "true",
     autocorrect: "on",
     autocapitalize: "sentences",
     "aria-label": "Chapter text",

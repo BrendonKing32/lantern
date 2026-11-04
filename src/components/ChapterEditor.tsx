@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
-import { EditorSelection } from "@codemirror/state";
+import { Compartment, EditorSelection } from "@codemirror/state";
+import { forceLinting } from "@codemirror/lint";
 import { api, ApiError, describeError } from "../api";
 import { drafts } from "../local";
 import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync";
 import { HistoryPanel } from "./HistoryPanel";
 import { basicSetup, proseExtensions } from "../editorSetup";
 import { entriesChanged, wikilinks } from "../wikilinkEditor";
+import { grammar } from "../grammar";
 import { countWords } from "../../shared/wordcount";
 import type { BibleEntry, ChapterWithContent, SaveResult } from "../../shared/types";
 
@@ -32,6 +34,8 @@ interface Props {
   /** Story bible entries, for [[links]]. */
   entries: BibleEntry[];
   onOpenLink: (name: string) => void;
+  /** Check grammar and spelling with Harper (otherwise the browser's spellcheck is used). */
+  grammarOn: boolean;
   onCloseHistory: () => void;
   /** Filled in by the editor so other panels can read the text and point into it. */
   controls?: { current: EditorControls | null };
@@ -73,6 +77,7 @@ export function ChapterEditor({
   onCloseHistory,
   entries,
   onOpenLink,
+  grammarOn,
   controls,
 }: Props) {
   const [initialDoc, setInitialDoc] = useState<string | null>(null);
@@ -95,13 +100,30 @@ export function ChapterEditor({
   const linkHost = useRef({ entries, onOpenLink });
   linkHost.current = { entries, onOpenLink };
   const view = useRef<EditorView | null>(null);
+  // Grammar checking sits in a compartment so it can be switched without
+  // recreating the editor. The latest setting is read when an editor is made.
+  const grammarSlot = useRef(new Compartment());
+  const grammarExt = useRef(grammar({ entries: () => linkHost.current.entries }));
+  const grammarOnRef = useRef(grammarOn);
+  grammarOnRef.current = grammarOn;
+  const proofing = (on: boolean) =>
+    on
+      ? [grammarExt.current, EditorView.contentAttributes.of({ spellcheck: "false" })]
+      : EditorView.contentAttributes.of({ spellcheck: "true" });
   const [extensions] = useState(() => [
     ...proseExtensions,
     wikilinks({ entries: () => linkHost.current.entries, open: (n) => linkHost.current.onOpenLink(n) }),
+    grammarSlot.current.of(proofing(grammarOnRef.current)),
   ]);
   useEffect(() => {
-    view.current?.dispatch({ effects: entriesChanged.of(null) });
+    if (!view.current) return;
+    view.current.dispatch({ effects: entriesChanged.of(null) });
+    forceLinting(view.current); // bible names aren't misspellings
   }, [entries]);
+  useEffect(() => {
+    view.current?.dispatch({ effects: grammarSlot.current.reconfigure(proofing(grammarOn)) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grammarOn]);
 
   useEffect(() => {
     if (!controls) return;
@@ -427,6 +449,7 @@ export function ChapterEditor({
           extensions={extensions}
           onCreateEditor={(v) => {
             view.current = v;
+            v.dispatch({ effects: grammarSlot.current.reconfigure(proofing(grammarOnRef.current)) });
           }}
           basicSetup={basicSetup}
           theme="none"
