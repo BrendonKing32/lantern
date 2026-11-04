@@ -6,6 +6,7 @@ import { ago } from "../when";
 import { RestoreIcon } from "./ProjectList";
 import { TargetMeter } from "./TargetMeter";
 import { ExportDialog } from "./ExportDialog";
+import { Corkboard } from "./Corkboard";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type SaveState } from "./ChapterEditor";
 import type { ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
@@ -39,6 +40,24 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  // Write (the editor) or the corkboard. Remembered per novel for this tab.
+  const boardKey = `lantern:board:${projectId}`;
+  const [board, setBoardState] = useState(() => {
+    try {
+      return sessionStorage.getItem(boardKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setBoard = (on: boolean) => {
+    setBoardState(on);
+    setHistoryOpen(false);
+    try {
+      sessionStorage.setItem(boardKey, on ? "1" : "0");
+    } catch {
+      /* only a convenience */
+    }
+  };
   const [offline, setOffline] = useState(false);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   // Words written today across all novels, and the daily goal (null: none).
@@ -180,6 +199,23 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
+  const setSynopsis = async (id: string, synopsis: string) => {
+    setDetail((d) =>
+      d ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, synopsis } : c)) } : d,
+    );
+    try {
+      await api.updateChapter(id, { synopsis });
+    } catch (e) {
+      alert(describeError(e));
+      load();
+    }
+  };
+
+  const openFromBoard = (id: string) => {
+    setBoard(false);
+    select(id);
+  };
+
   const remove = async (c: ChapterMeta) => {
     if (chapters.length === 1) {
       alert("A novel needs at least one chapter.");
@@ -316,17 +352,27 @@ export function ProjectView({ projectId, chapterId }: Props) {
           <button className="btn btn-quiet drawer-toggle" onClick={() => setDrawerOpen(true)}>
             Chapters
           </button>
+          <div className="view-switch" role="group" aria-label="View">
+            <button className={`btn btn-quiet${board ? "" : " is-on"}`} aria-pressed={!board} onClick={() => setBoard(false)}>
+              Write
+            </button>
+            <button className={`btn btn-quiet${board ? " is-on" : ""}`} aria-pressed={board} onClick={() => setBoard(true)}>
+              Corkboard
+            </button>
+          </div>
           <span className="desk-spacer" />
           <button className="btn btn-quiet" onClick={() => setExportOpen(true)}>
             Export
           </button>
-          <button
-            className={`btn btn-quiet history-toggle${historyOpen ? " is-on" : ""}`}
-            aria-pressed={historyOpen}
-            onClick={() => setHistoryOpen((h) => !h)}
-          >
-            History
-          </button>
+          {!board && (
+            <button
+              className={`btn btn-quiet history-toggle${historyOpen ? " is-on" : ""}`}
+              aria-pressed={historyOpen}
+              onClick={() => setHistoryOpen((h) => !h)}
+            >
+              History
+            </button>
+          )}
           <button
             className={`btn btn-quiet dusk-toggle${dusk ? " is-on" : ""}`}
             aria-pressed={dusk}
@@ -337,7 +383,17 @@ export function ProjectView({ projectId, chapterId }: Props) {
           </button>
         </header>
 
-        {selected && (
+        {board ? (
+          <Corkboard
+            chapters={chapters}
+            wordsFor={wordsFor}
+            selectedId={selected?.id}
+            onOpen={openFromBoard}
+            onReorder={reorder}
+            onSynopsis={setSynopsis}
+            onAdd={addChapter}
+          />
+        ) : selected && (
           <ChapterEditor
             key={selected.id}
             chapterId={selected.id}
@@ -357,7 +413,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
             {save.state === "error" && save.detail ? `Not saved: ${save.detail}` : STATUS_TEXT[save.state]}
           </span>
           <span className="desk-spacer" />
-          {selected && <span>{wordsFor(selected).toLocaleString()} words</span>}
+          {board ? (
+            <span>{bookWords.toLocaleString()} words in the book</span>
+          ) : (
+            selected && <span>{wordsFor(selected).toLocaleString()} words</span>
+          )}
           {sessionWords > 0 && <span className="session">+{sessionWords.toLocaleString()} this session</span>}
           {today?.goal && (
             <span className={Math.max(0, today.words) >= today.goal ? "session" : undefined}>

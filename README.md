@@ -77,6 +77,10 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 
 - **Rename** a chapter or the novel: double-click its title, or use the pencil button.
 - **Reorder** chapters: drag them, or focus one and use Space plus the arrow keys.
+- **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
+  index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
+  to reorder the book, click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
+  **Open** a card to write that chapter.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
   full glow when you meet the goal; without one, at 1,000 words in a session.
@@ -114,5 +118,4 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 
 ## What's next
 
-- **Milestone 3 (remaining):** corkboard with synopses
 - **Milestone 4:** story bible with `[[wikilinks]]`, Claude continuity helpers
