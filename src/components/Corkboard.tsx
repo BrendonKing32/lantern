@@ -1,0 +1,215 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type KeyboardCoordinateGetter,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import type { ChapterMeta } from "../../shared/types";
+
+const MAX_SYNOPSIS = 2000;
+
+const STEP: Record<string, "left" | "right" | "up" | "down"> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
+
+/**
+ * Keyboard moves on the grid by position in the book: left and right step one
+ * card, up and down step one row. (dnd-kit's default picks the nearest card in
+ * that direction, which the cards' slight tilt can fool into jumping rows.)
+ */
+function gridKeys(order: () => string[]): KeyboardCoordinateGetter {
+  return (event, { context: { active, over, collisionRect, droppableRects } }) => {
+    const step = STEP[event.code];
+    if (!step) return undefined;
+    event.preventDefault();
+    if (!active || !collisionRect) return undefined;
+    const ids = order();
+    const rects = ids.map((id) => droppableRects.get(id));
+    if (rects.some((r) => !r)) return undefined;
+    const first = rects[0]!;
+    const cols = Math.max(1, rects.filter((r) => Math.abs(r!.top - first.top) < first.height / 2).length);
+    const from = ids.indexOf(String(over?.id ?? active.id));
+    const delta = step === "right" ? 1 : step === "left" ? -1 : step === "down" ? cols : -cols;
+    const to = Math.min(ids.length - 1, Math.max(0, from + delta));
+    if (from < 0 || to === from) return undefined;
+    const rect = rects[to]!;
+    // Same alignment dnd-kit uses: a later slot lines up by its far edge.
+    const after = to > ids.indexOf(String(active.id));
+    return {
+      x: rect.left - (after ? collisionRect.width - rect.width : 0),
+      y: rect.top - (after ? collisionRect.height - rect.height : 0),
+    };
+  };
+}
+
+interface Props {
+  chapters: ChapterMeta[];
+  wordsFor: (c: ChapterMeta) => number;
+  selectedId: string | undefined;
+  onOpen: (id: string) => void;
+  onReorder: (ids: string[]) => void;
+  onSynopsis: (id: string, synopsis: string) => void;
+  onAdd: () => void;
+}
+
+/** Every chapter as an index card: drag to reorder, write a synopsis, open to write. */
+export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, onSynopsis, onAdd }: Props) {
+  const ids = useRef<string[]>([]);
+  ids.current = chapters.map((c) => c.id);
+  const [coordinateGetter] = useState(() => gridKeys(() => ids.current));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter }),
+  );
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const from = chapters.findIndex((c) => c.id === active.id);
+    const to = chapters.findIndex((c) => c.id === over.id);
+    onReorder(arrayMove(chapters, from, to).map((c) => c.id));
+  };
+
+  return (
+    <section className="board" aria-label="Corkboard">
+      <p className="board-hint">
+        Drag cards to reorder chapters. Click a synopsis to write one; open a card to write the chapter.
+      </p>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={chapters.map((c) => c.id)} strategy={rectSortingStrategy}>
+          <ol className="cards" aria-label="Chapters as cards (drag to reorder)">
+            {chapters.map((c, i) => (
+              <Card
+                key={c.id}
+                chapter={c}
+                number={i + 1}
+                words={wordsFor(c)}
+                selected={c.id === selectedId}
+                onOpen={onOpen}
+                onSynopsis={onSynopsis}
+              />
+            ))}
+            <li className="card-add-slot">
+              <button className="card-add" onClick={onAdd}>
+                Add chapter
+              </button>
+            </li>
+          </ol>
+        </SortableContext>
+      </DndContext>
+    </section>
+  );
+}
+
+interface CardProps {
+  chapter: ChapterMeta;
+  number: number;
+  words: number;
+  selected: boolean;
+  onOpen: (id: string) => void;
+  onSynopsis: (id: string, synopsis: string) => void;
+}
+
+function Card({ chapter, number, words, selected, onOpen, onSynopsis }: CardProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: chapter.id });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(chapter.synopsis);
+  const area = useRef<HTMLTextAreaElement>(null);
+
+  // Pick up changes saved elsewhere while the card isn't being edited.
+  useEffect(() => {
+    if (!editing) setDraft(chapter.synopsis);
+  }, [chapter.synopsis, editing]);
+
+  useEffect(() => {
+    const el = area.current;
+    if (editing && el) {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const text = draft.trim();
+    if (text !== chapter.synopsis.trim()) onSynopsis(chapter.id, text);
+  };
+
+  // Enter and Space on the card's own buttons press them rather than picking
+  // the card up. Pointer drags can start anywhere: a click that doesn't move
+  // 8px still counts as a click.
+  const stop = {
+    onKeyDown: (e: React.KeyboardEvent) => e.stopPropagation(),
+  };
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`card${selected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}`}
+      aria-label={`Chapter ${number}: ${chapter.title}`}
+      {...attributes}
+      {...listeners}
+    >
+      <header className="card-head">
+        <span className="card-num">{number}</span>
+        <button className="card-title" onClick={() => onOpen(chapter.id)} title="Open this chapter" {...stop}>
+          {chapter.title}
+        </button>
+      </header>
+
+      {editing ? (
+        <textarea
+          ref={area}
+          className="card-synopsis-input"
+          value={draft}
+          maxLength={MAX_SYNOPSIS}
+          aria-label={`Synopsis of ${chapter.title}`}
+          placeholder="What happens in this chapter?"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Escape") {
+              setDraft(chapter.synopsis);
+              setEditing(false);
+            } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              commit();
+            }
+          }}
+        />
+      ) : (
+        <button
+          className={`card-synopsis${chapter.synopsis.trim() ? "" : " is-empty"}`}
+          onClick={() => setEditing(true)}
+          aria-label={chapter.synopsis.trim() ? `Edit synopsis of ${chapter.title}` : `Add a synopsis to ${chapter.title}`}
+          {...stop}
+        >
+          <span className="card-synopsis-text">{chapter.synopsis.trim() || "Add a synopsis"}</span>
+        </button>
+      )}
+
+      <footer className="card-foot">
+        <span>{words.toLocaleString()} {words === 1 ? "word" : "words"}</span>
+        <button className="card-open" onClick={() => onOpen(chapter.id)} {...stop}>
+          Open
+        </button>
+      </footer>
+    </li>
+  );
+}
