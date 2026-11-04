@@ -2,6 +2,7 @@ import type {
   AiStatus,
   BookCheckEvent,
   BookCheckResult,
+  BibleEntryDraft,
   CheckResult,
   BibleEntry,
   BibleKind,
@@ -66,6 +67,8 @@ export const api = {
   deleteEntry: (id: string) => request<{ ok: true }>("DELETE", `/api/bible/${id}`),
   checkChapter: (chapterId: string, content: string) =>
     request<CheckResult>("POST", `/api/chapters/${chapterId}/check`, { content }),
+  draftBibleEntry: (chapterId: string, content: string, quote: string) =>
+    request<BibleEntryDraft>("POST", `/api/chapters/${chapterId}/draft-entry`, { content, quote }),
   lastBookCheck: (projectId: string) => request<BookCheckResult | null>("GET", `/api/projects/${projectId}/check-book`),
   aiStatus: () => request<AiStatus>("GET", "/api/ai/status"),
   aiTest: () =>

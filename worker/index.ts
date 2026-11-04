@@ -2,7 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { countWords } from "../shared/wordcount";
 import { BIBLE_KINDS } from "../shared/types";
 import { AiError, aiStatus, guardedMessage, type AiEnv } from "./ai";
-import { checkChapter } from "./check";
+import { checkChapter, draftBibleEntry } from "./check";
 import { prepareBookCheck } from "./bookCheck";
 import type {
   BibleEntry,
@@ -703,6 +703,40 @@ const checkChapterHandler: Handler = async (req, env, p) => {
   return json(result);
 };
 
+// Suggest a story-bible note from a passage the author chose in a chapter.
+// The suggestion is returned for review; this endpoint never creates an entry.
+const draftBibleEntryHandler: Handler = async (req, env, p) => {
+  const row = await getChapterRow(env, p.id);
+  const b = await body<{ content?: unknown; quote?: unknown }>(req);
+  let content: string;
+  if (typeof b.content === "string") {
+    if (new TextEncoder().encode(b.content).length > MAX_CHAPTER_BYTES) throw new HttpError(413, "Chapter is too large (5 MB limit)");
+    content = b.content;
+  } else {
+    const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+    content = obj ? await obj.text() : "";
+  }
+  const quote = typeof b.quote === "string" ? b.quote.trim() : "";
+  if (!content.trim()) throw new HttpError(400, "This chapter is empty, so there's nothing to draft from.");
+  if (!quote || quote.length > 2000 || !content.includes(quote)) {
+    throw new HttpError(400, "That passage is no longer in the chapter. Run the continuity check again.");
+  }
+  const { results } = await env.DB.prepare(
+    `SELECT ${BIBLE_COLS} FROM bible_entries WHERE project_id = ? AND deleted_at IS NULL ORDER BY name COLLATE NOCASE`,
+  )
+    .bind(row.project_id)
+    .all<BibleRow>();
+  const entries = results.map(toEntry);
+  return json(
+    await draftBibleEntry(env, {
+      chapterTitle: row.title,
+      content,
+      quote,
+      existingEntries: entries.map(({ name, kind, aliases }) => ({ name, kind, aliases })),
+    }),
+  );
+};
+
 // Whole-book check. The app sends the text of any chapter it has unsaved
 // writing for; every other chapter is read from storage. Limits are checked
 // before anything streams, so those refusals are ordinary error replies. Then
@@ -780,6 +814,7 @@ const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/ai/status", getAiStatus],
   ["POST", "/api/ai/test", testAi],
   ["POST", "/api/chapters/:id/check", checkChapterHandler],
+  ["POST", "/api/chapters/:id/draft-entry", draftBibleEntryHandler],
   ["POST", "/api/projects/:id/check-book", checkBook],
   ["GET", "/api/projects/:id/check-book", lastBookCheck],
   ["GET", "/api/projects/:id/bible", listBible],

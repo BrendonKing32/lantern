@@ -5,6 +5,8 @@ import { entriesMentioned } from "../../shared/wikilinks";
 import type {
   AiStatus,
   BibleEntry,
+  BibleEntryDraft,
+  BibleKind,
   BookCheckResult,
   BookFindingKind,
   ChapterMeta,
@@ -30,6 +32,7 @@ interface Props {
   onTab: (t: CheckTab) => void;
   /** Open a chapter and select a quoted passage in it. Resolves false if it isn't there. */
   onOpenQuote: (chapterId: string, quote: string) => Promise<boolean>;
+  onEntryCreated: (entry: BibleEntry) => void;
   onClose: () => void;
 }
 
@@ -138,7 +141,7 @@ function Remaining({ status }: { status: AiStatus | null }) {
   return (
     <span className="check-left">
       {" "}
-      · {Math.max(0, status.daily_limit - status.used_last_24h)} checks left today, $
+      · {Math.max(0, status.daily_limit - status.used_last_24h)} Claude calls left today, $
       {Math.max(0, status.monthly_budget_usd - status.spent_this_month_usd).toFixed(2)} left this month
     </span>
   );
@@ -175,11 +178,28 @@ function savedResult(chapterId: string): CheckResult | null {
   }
 }
 
-function ChapterCheck({ chapter, chapters, entries, controls, status, canRun, limitReached, loadStatus, onBusy }: Props & Shared) {
+function ChapterCheck({
+  projectId,
+  chapter,
+  chapters,
+  entries,
+  controls,
+  status,
+  canRun,
+  limitReached,
+  loadStatus,
+  onBusy,
+  onEntryCreated,
+}: Props & Shared) {
   const [result, setResult] = useState<CheckResult | null>(() => savedResult(chapter.id));
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState<Set<number>>(new Set());
+  const [entryDrafts, setEntryDrafts] = useState<Record<number, BibleEntryDraft>>({});
+  const [drafting, setDrafting] = useState<number | null>(null);
+  const [savingDraft, setSavingDraft] = useState<number | null>(null);
+  const [addedEntries, setAddedEntries] = useState<Record<number, string>>({});
+  const [draftError, setDraftError] = useState<string | null>(null);
   const earlier = useMemo(() => chapters.slice(0, chapters.findIndex((c) => c.id === chapter.id)), [chapters, chapter.id]);
 
   const preview = useMemo(() => {
@@ -194,7 +214,9 @@ function ChapterCheck({ chapter, chapters, entries, controls, status, canRun, li
     // About four characters a token in, and a few thousand tokens of reasoning
     // and findings out, at the default model's published prices.
     const estimate = (chars / 4) * (4 / 1e6) + 4000 * (20 / 1e6);
-    return { empty: !text.trim(), mentioned, estimate };
+    const draftChars = text.length + entries.reduce((n, e) => n + e.name.length + e.aliases.join(", ").length + 30, 0);
+    const draftEstimate = (draftChars / 4) * (4 / 1e6) + 3000 * (20 / 1e6);
+    return { empty: !text.trim(), mentioned, estimate, draftEstimate };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter.id, entries, earlier, result]);
 
@@ -202,6 +224,9 @@ function ChapterCheck({ chapter, chapters, entries, controls, status, canRun, li
     const text = controls.current?.text();
     if (text === undefined) return;
     setRunning(true);
+    setEntryDrafts({});
+    setAddedEntries({});
+    setDraftError(null);
     onBusy(true);
     setError(null);
     try {
@@ -225,6 +250,58 @@ function ChapterCheck({ chapter, chapters, entries, controls, status, canRun, li
   const reveal = (i: number, quote: string) => {
     if (!controls.current?.reveal(quote)) setMissing((m) => new Set(m).add(i));
   };
+
+  const makeEntryDraft = async (i: number, quote: string) => {
+    const text = controls.current?.text();
+    if (text === undefined) return;
+    setDrafting(i);
+    setDraftError(null);
+    onBusy(true);
+    try {
+      const draft = await api.draftBibleEntry(chapter.id, text, quote);
+      setEntryDrafts((current) => ({ ...current, [i]: draft }));
+    } catch (e) {
+      setDraftError(describeError(e));
+    } finally {
+      setDrafting(null);
+      onBusy(false);
+      loadStatus();
+    }
+  };
+
+  const saveEntryDraft = async (i: number, aliases: string[]) => {
+    const draft = entryDrafts[i];
+    if (!draft || !draft.name.trim() || !draft.body.trim()) return;
+    setSavingDraft(i);
+    setDraftError(null);
+    onBusy(true);
+    try {
+      const entry = await api.createEntry(projectId, {
+        name: draft.name,
+        kind: draft.kind,
+        aliases,
+        body: draft.body,
+      });
+      onEntryCreated(entry);
+      setAddedEntries((current) => ({ ...current, [i]: entry.name }));
+      setEntryDrafts((current) => {
+        const next = { ...current };
+        delete next[i];
+        return next;
+      });
+    } catch (e) {
+      setDraftError(describeError(e));
+    } finally {
+      setSavingDraft(null);
+      onBusy(false);
+    }
+  };
+
+  const updateEntryDraft = (i: number, patch: Partial<BibleEntryDraft>) =>
+    setEntryDrafts((current) => ({
+      ...current,
+      [i]: { ...current[i], ...patch },
+    }));
 
   return (
     <>
@@ -257,7 +334,7 @@ function ChapterCheck({ chapter, chapters, entries, controls, status, canRun, li
           </dd>
         </div>
       </dl>
-      <button className="btn btn-lamp" onClick={run} disabled={running || !canRun || preview.empty}>
+      <button className="btn btn-lamp" onClick={run} disabled={running || drafting !== null || savingDraft !== null || !canRun || preview.empty}>
         {running ? "Checking… this can take a minute" : result ? "Check again" : "Run check"}
       </button>
       {preview.empty && <p className="history-note">The chapter is empty, so there's nothing to check yet.</p>}
@@ -265,6 +342,11 @@ function ChapterCheck({ chapter, chapters, entries, controls, status, canRun, li
       {error && (
         <p className="history-note history-error" role="alert">
           {error}
+        </p>
+      )}
+      {draftError && (
+        <p className="history-note history-error" role="alert">
+          {draftError}
         </p>
       )}
 
@@ -292,6 +374,42 @@ function ChapterCheck({ chapter, chapters, entries, controls, status, canRun, li
                   {missing.has(i) && <p className="history-note">That passage isn't in the chapter any more.</p>}
                   <p className="finding-text">{f.explanation}</p>
                   {f.suggestion && <p className="finding-fix">{f.suggestion}</p>}
+                  {f.kind === "new_fact" && (
+                    addedEntries[i] ? (
+                      <p className="entry-draft-added" role="status">Added “{addedEntries[i]}” to the story bible.</p>
+                    ) : (
+                      <>
+                        <button
+                          className="btn btn-quiet entry-draft-start"
+                          onClick={() => void makeEntryDraft(i, f.quote)}
+                          disabled={running || !canRun || !f.quote || drafting !== null || savingDraft !== null}
+                        >
+                          {drafting === i
+                            ? "Preparing a suggestion…"
+                            : `${entryDrafts[i] ? "Draft another suggestion" : "Draft Bible entry"} · about ${money(preview.draftEstimate)}`}
+                        </button>
+                        <p className="entry-draft-guidance">
+                          Claude uses this chapter, the selected passage and Bible entry names; it won't change your writing.
+                        </p>
+                        {entryDrafts[i] && (
+                          <EntryDraftReview
+                            draft={entryDrafts[i]}
+                            busy={savingDraft === i}
+                            onChange={(patch) => updateEntryDraft(i, patch)}
+                            onSave={(aliases) => void saveEntryDraft(i, aliases)}
+                            onDiscard={() => {
+                              setEntryDrafts((current) => {
+                                const next = { ...current };
+                                delete next[i];
+                                return next;
+                              });
+                              setDraftError(null);
+                            }}
+                          />
+                        )}
+                      </>
+                    )
+                  )}
                 </li>
               ))}
             </ol>
@@ -299,6 +417,70 @@ function ChapterCheck({ chapter, chapters, entries, controls, status, canRun, li
         </section>
       )}
     </>
+  );
+}
+
+function EntryDraftReview({
+  draft,
+  busy,
+  onChange,
+  onSave,
+  onDiscard,
+}: {
+  draft: BibleEntryDraft;
+  busy: boolean;
+  onChange: (patch: Partial<BibleEntryDraft>) => void;
+  onSave: (aliases: string[]) => void;
+  onDiscard: () => void;
+}) {
+  const [aliases, setAliases] = useState(draft.aliases.join(", "));
+  useEffect(() => setAliases(draft.aliases.join(", ")), [draft.aliases]);
+  return (
+    <div className="entry-draft">
+      <p className="entry-draft-guidance">
+        A starting point, not a fact-check. Review or edit it before adding; your chapter won't be changed.
+      </p>
+      <blockquote className="entry-draft-source">“{draft.source_quote}”</blockquote>
+      <label>
+        Name
+        <input value={draft.name} maxLength={120} onChange={(e) => onChange({ name: e.target.value })} />
+      </label>
+      <label>
+        Category
+        <select value={draft.kind} onChange={(e) => onChange({ kind: e.target.value as BibleKind })}>
+          <option value="character">Character</option>
+          <option value="place">Place</option>
+          <option value="thing">Thing</option>
+          <option value="note">Note</option>
+        </select>
+      </label>
+      <label>
+        Other names
+        <input
+          value={aliases}
+          onChange={(e) => setAliases(e.target.value)}
+          onBlur={() => onChange({ aliases: aliases.split(",").map((a) => a.trim()).filter(Boolean) })}
+        />
+      </label>
+      <label>
+        Bible notes
+        <textarea value={draft.body} rows={5} onChange={(e) => onChange({ body: e.target.value })} />
+      </label>
+      <p className="entry-draft-rationale">{draft.rationale}</p>
+      <p className="entry-draft-cost">
+        Suggested by Claude · {money(draft.cost_usd)} · {draft.model}
+      </p>
+      <div className="entry-draft-actions">
+        <button
+          className="btn btn-lamp"
+          onClick={() => onSave(aliases.split(",").map((a) => a.trim()).filter(Boolean))}
+          disabled={busy || !draft.name.trim() || !draft.body.trim()}
+        >
+          {busy ? "Adding…" : "Add to story bible"}
+        </button>
+        <button className="btn btn-quiet" onClick={onDiscard} disabled={busy}>Discard</button>
+      </div>
+    </div>
   );
 }
 

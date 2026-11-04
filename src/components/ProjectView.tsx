@@ -530,6 +530,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             tab={checkTab}
             onTab={setCheckTab}
             onOpenQuote={openQuote}
+            onEntryCreated={(entry) => setEntries((list) => [...list, entry])}
             onClose={closeCheck}
           />
         )}
