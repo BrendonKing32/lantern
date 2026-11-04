@@ -3,7 +3,7 @@
 
 import { api, ApiError } from "./api";
 import { cache, chapters, drafts } from "./local";
-import type { ChapterWithContent, ProjectDetail, ProjectSummary, SaveResult } from "../shared/types";
+import type { BibleEntry, ChapterWithContent, ProjectDetail, ProjectSummary, SaveResult } from "../shared/types";
 
 export interface Loaded<T> {
   data: T;
@@ -53,6 +53,29 @@ async function addToShelf(d: ProjectDetail) {
   };
   const rest = shelf.filter((p) => p.id !== d.project.id);
   await cache.setShelf([entry, ...rest].sort((a, b) => b.updated_at.localeCompare(a.updated_at)));
+}
+
+export const loadBible = (projectId: string): Promise<Loaded<BibleEntry[]>> =>
+  withFallback(
+    () => api.bible(projectId),
+    (list) => cache.setBible(projectId, list),
+    () => cache.bible(projectId),
+  );
+
+/**
+ * A chapter's current text on this device: an unsaved draft first, then the
+ * saved copy, then the server. Null if none of those can be had.
+ */
+export async function chapterText(id: string): Promise<string | null> {
+  const draft = await drafts.read(id);
+  if (draft) return draft.content;
+  const known = await chapters.read(id);
+  if (known) return known.content;
+  try {
+    return (await loadChapter(id)).data.content;
+  } catch {
+    return null;
+  }
 }
 
 export const loadChapter = (id: string): Promise<Loaded<ChapterWithContent>> =>

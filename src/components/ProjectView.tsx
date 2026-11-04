@@ -7,9 +7,17 @@ import { RestoreIcon } from "./ProjectList";
 import { TargetMeter } from "./TargetMeter";
 import { ExportDialog } from "./ExportDialog";
 import { Corkboard } from "./Corkboard";
+import { BibleView } from "./BibleView";
+import { LinkPeek } from "./LinkPeek";
+import { loadBible } from "../sync";
+import { cache } from "../local";
+import { entryIndex, linkKey } from "../../shared/wikilinks";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type SaveState } from "./ChapterEditor";
-import type { ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
+import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
+
+type View = "write" | "board" | "bible";
+const VIEWS: View[] = ["write", "board", "bible"];
 
 // With no daily goal, session words at which the lamp reaches full brightness.
 const FULL_GLOW_WORDS = 1000;
@@ -40,22 +48,60 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  // Write (the editor) or the corkboard. Remembered per novel for this tab.
-  const boardKey = `lantern:board:${projectId}`;
-  const [board, setBoardState] = useState(() => {
+  // Write (the editor), the corkboard or the story bible. Remembered per novel for this tab.
+  const viewKey = `lantern:view:${projectId}`;
+  const [view, setViewState] = useState<View>(() => {
     try {
-      return sessionStorage.getItem(boardKey) === "1";
+      const v = sessionStorage.getItem(viewKey) as View | null;
+      return v && VIEWS.includes(v) ? v : "write";
     } catch {
-      return false;
+      return "write";
     }
   });
-  const setBoard = (on: boolean) => {
-    setBoardState(on);
+  const setView = (v: View) => {
+    setViewState(v);
     setHistoryOpen(false);
+    setPeek(null);
     try {
-      sessionStorage.setItem(boardKey, on ? "1" : "0");
+      sessionStorage.setItem(viewKey, v);
     } catch {
       /* only a convenience */
+    }
+  };
+  const board = view === "board";
+
+  // Story bible entries, for the Bible view and [[links]] in chapters.
+  const [entries, setEntriesState] = useState<BibleEntry[]>([]);
+  const [entryId, setEntryId] = useState<string | null>(null);
+  const [peek, setPeek] = useState<string | null>(null);
+  const setEntries = useCallback(
+    (update: (list: BibleEntry[]) => BibleEntry[]) =>
+      setEntriesState((list) => {
+        const next = update(list).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+        void cache.setBible(projectId, next);
+        return next;
+      }),
+    [projectId],
+  );
+  useEffect(() => {
+    loadBible(projectId)
+      .then(({ data }) => setEntriesState(data))
+      .catch(() => {});
+  }, [projectId]);
+  const index = useMemo(() => entryIndex(entries), [entries]);
+  const openLink = useCallback((name: string) => {
+    setHistoryOpen(false);
+    setPeek(name);
+  }, []);
+  const closePeek = useCallback(() => setPeek(null), []);
+  const createFromLink = async (name: string, kind: BibleKind) => {
+    try {
+      const e = await api.createEntry(projectId, { name, kind });
+      setEntries((list) => [...list, e]);
+      setEntryId(e.id);
+      setView("bible");
+    } catch (err) {
+      alert(describeError(err));
     }
   };
   const [offline, setOffline] = useState(false);
@@ -212,7 +258,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   };
 
   const openFromBoard = (id: string) => {
-    setBoard(false);
+    setView("write");
     select(id);
   };
 
@@ -353,22 +399,35 @@ export function ProjectView({ projectId, chapterId }: Props) {
             Chapters
           </button>
           <div className="view-switch" role="group" aria-label="View">
-            <button className={`btn btn-quiet${board ? "" : " is-on"}`} aria-pressed={!board} onClick={() => setBoard(false)}>
-              Write
-            </button>
-            <button className={`btn btn-quiet${board ? " is-on" : ""}`} aria-pressed={board} onClick={() => setBoard(true)}>
-              Corkboard
-            </button>
+            {(
+              [
+                ["write", "Write"],
+                ["board", "Corkboard"],
+                ["bible", "Bible"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                className={`btn btn-quiet${view === v ? " is-on" : ""}`}
+                aria-pressed={view === v}
+                onClick={() => setView(v)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           <span className="desk-spacer" />
           <button className="btn btn-quiet" onClick={() => setExportOpen(true)}>
             Export
           </button>
-          {!board && (
+          {view === "write" && (
             <button
               className={`btn btn-quiet history-toggle${historyOpen ? " is-on" : ""}`}
               aria-pressed={historyOpen}
-              onClick={() => setHistoryOpen((h) => !h)}
+              onClick={() => {
+                setPeek(null);
+                setHistoryOpen((h) => !h);
+              }}
             >
               History
             </button>
@@ -383,7 +442,18 @@ export function ProjectView({ projectId, chapterId }: Props) {
           </button>
         </header>
 
-        {board ? (
+        {view === "bible" ? (
+          <BibleView
+            projectId={projectId}
+            entries={entries}
+            onEntries={setEntries}
+            selectedId={entryId}
+            onSelect={setEntryId}
+            chapters={chapters}
+            onOpenChapter={openFromBoard}
+            offline={offline}
+          />
+        ) : board ? (
           <Corkboard
             chapters={chapters}
             wordsFor={wordsFor}
@@ -403,6 +473,22 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onStatus={onStatus}
             historyOpen={historyOpen}
             onCloseHistory={closeHistory}
+            entries={entries}
+            onOpenLink={openLink}
+          />
+        )}
+
+        {view === "write" && peek !== null && (
+          <LinkPeek
+            name={peek}
+            entry={index.get(linkKey(peek)) ?? null}
+            offline={offline}
+            onEdit={(e) => {
+              setEntryId(e.id);
+              setView("bible");
+            }}
+            onCreate={createFromLink}
+            onClose={closePeek}
           />
         )}
 
@@ -413,7 +499,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             {save.state === "error" && save.detail ? `Not saved: ${save.detail}` : STATUS_TEXT[save.state]}
           </span>
           <span className="desk-spacer" />
-          {board ? (
+          {view !== "write" ? (
             <span>{bookWords.toLocaleString()} words in the book</span>
           ) : (
             selected && <span>{wordsFor(selected).toLocaleString()} words</span>

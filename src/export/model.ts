@@ -3,6 +3,7 @@
 // the same in either.
 
 import { Lexer, type Token, type Tokens } from "marked";
+import { stripLinks } from "../../shared/wikilinks";
 
 export interface Run {
   text: string;
@@ -136,7 +137,8 @@ function blocks(tokens: Token[], out: Block[], style?: "quote") {
 
 export function parseChapter(title: string, markdown: string): Chapter {
   const out: Block[] = [];
-  blocks(Lexer.lex(markdown, { gfm: true }), out);
+  // [[Mara|her]] reads as "her" in a finished book.
+  blocks(Lexer.lex(stripLinks(markdown), { gfm: true }), out);
   // Many writers start a chapter with its own title as a heading; the export
   // adds the chapter title itself, so drop the duplicate.
   const first = out[0];

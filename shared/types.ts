@@ -8,6 +8,20 @@ export interface ProjectSummary {
   word_count: number;
 }
 
+export type BibleKind = "character" | "place" | "thing" | "note";
+export const BIBLE_KINDS: BibleKind[] = ["character", "place", "thing", "note"];
+
+export interface BibleEntry {
+  id: string;
+  project_id: string;
+  kind: BibleKind;
+  name: string;
+  aliases: string[];
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DeletedProject {
   id: string;
   title: string;

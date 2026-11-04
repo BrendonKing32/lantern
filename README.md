@@ -81,6 +81,13 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
   to reorder the book, click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
   **Open** a card to write that chapter.
+- **Story bible:** the **Bible** view keeps the novel's characters, places, things and notes,
+  each with a name, other names it goes by, and free-form notes that save as you type.
+  Link to an entry from a chapter with `[[Name]]`, or `[[Name|shown text]]` to show different
+  words; typing `[[` suggests entries. Links to an entry are underlined in amber and links to
+  a name with no entry are dotted. Click a link to see the entry beside the page, or add it.
+  Each entry lists the chapters that mention it, linked or not. Exports show links as plain
+  text (`[[Mara|her]]` becomes "her"); the Markdown export keeps them as written.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
   full glow when you meet the goal; without one, at 1,000 words in a session.
@@ -118,4 +125,4 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 
 ## What's next
 
-- **Milestone 4:** story bible with `[[wikilinks]]`, Claude continuity helpers
+- **Milestone 4 (remaining):** Claude continuity helpers

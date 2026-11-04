@@ -5,7 +5,7 @@
 // If IndexedDB is unavailable (some private windows), every call quietly does
 // nothing and Lantern behaves as it does online-only.
 
-import type { ChapterWithContent, ProjectDetail, ProjectSummary } from "../shared/types";
+import type { BibleEntry, ChapterWithContent, ProjectDetail, ProjectSummary } from "../shared/types";
 
 export interface Draft {
   chapterId: string;
@@ -133,4 +133,7 @@ export const cache = {
   project: (id: string) =>
     run<ProjectDetail>("cache", "readonly", (s) => s.get(`project:${id}`)).then((v) => v ?? null),
   setProject: (d: ProjectDetail) => run("cache", "readwrite", (s) => s.put(d, `project:${d.project.id}`)),
+  bible: (projectId: string) =>
+    run<BibleEntry[]>("cache", "readonly", (s) => s.get(`bible:${projectId}`)).then((v) => v ?? null),
+  setBible: (projectId: string, list: BibleEntry[]) => run("cache", "readwrite", (s) => s.put(list, `bible:${projectId}`)),
 };

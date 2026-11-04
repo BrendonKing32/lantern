@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
+import type { EditorView } from "@codemirror/view";
 import { api, ApiError, describeError } from "../api";
 import { drafts } from "../local";
 import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync";
 import { HistoryPanel } from "./HistoryPanel";
 import { basicSetup, proseExtensions } from "../editorSetup";
+import { entriesChanged, wikilinks } from "../wikilinkEditor";
 import { countWords } from "../../shared/wordcount";
-import type { ChapterWithContent, SaveResult } from "../../shared/types";
+import type { BibleEntry, ChapterWithContent, SaveResult } from "../../shared/types";
 
 export type SaveState =
   | "loading"
@@ -26,13 +28,26 @@ interface Props {
   onSaved: (chapterId: string, info: SaveResult) => void;
   onStatus: (state: SaveState, detail?: string) => void;
   historyOpen: boolean;
+  /** Story bible entries, for [[links]]. */
+  entries: BibleEntry[];
+  onOpenLink: (name: string) => void;
   onCloseHistory: () => void;
 }
 
 const SAVE_DELAY = 1200;
 const RETRY_DELAY = 5000;
 
-export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus, historyOpen, onCloseHistory }: Props) {
+export function ChapterEditor({
+  chapterId,
+  title,
+  onWords,
+  onSaved,
+  onStatus,
+  historyOpen,
+  onCloseHistory,
+  entries,
+  onOpenLink,
+}: Props) {
   const [initialDoc, setInitialDoc] = useState<string | null>(null);
   const [editorKey, setEditorKey] = useState(0);
   const [conflict, setConflict] = useState<ChapterWithContent | null>(null);
@@ -46,6 +61,19 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus, hi
   const blocked = useRef(false); // true while a conflict waits for a decision
   const timer = useRef<number | undefined>(undefined);
   const alive = useRef(true);
+
+  // [[links]]: the extension reads the latest entries and click handler from
+  // refs, so it's built once and the editor never has to be recreated.
+  const linkHost = useRef({ entries, onOpenLink });
+  linkHost.current = { entries, onOpenLink };
+  const view = useRef<EditorView | null>(null);
+  const [extensions] = useState(() => [
+    ...proseExtensions,
+    wikilinks({ entries: () => linkHost.current.entries, open: (n) => linkHost.current.onOpenLink(n) }),
+  ]);
+  useEffect(() => {
+    view.current?.dispatch({ effects: entriesChanged.of(null) });
+  }, [entries]);
   // Set when the next save replaces text the writer may want back.
   const keepCopy = useRef<"restore" | "conflict" | undefined>(undefined);
 
@@ -307,7 +335,10 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus, hi
           key={editorKey}
           value={initialDoc}
           onChange={handleChange}
-          extensions={proseExtensions}
+          extensions={extensions}
+          onCreateEditor={(v) => {
+            view.current = v;
+          }}
           basicSetup={basicSetup}
           theme="none"
           placeholder="Begin here."
