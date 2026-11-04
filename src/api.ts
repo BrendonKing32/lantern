@@ -1,4 +1,5 @@
 import type {
+  AiStatus,
   BibleEntry,
   BibleKind,
   ChapterMeta,
@@ -60,6 +61,9 @@ export const api = {
   updateEntry: (id: string, patch: Partial<Pick<BibleEntry, "name" | "kind" | "aliases" | "body">>) =>
     request<BibleEntry>("PATCH", `/api/bible/${id}`, patch),
   deleteEntry: (id: string) => request<{ ok: true }>("DELETE", `/api/bible/${id}`),
+  aiStatus: () => request<AiStatus>("GET", "/api/ai/status"),
+  aiTest: () =>
+    request<{ ok: boolean; reply: string; model: string; ms: number; cost_usd: number }>("POST", "/api/ai/test"),
   stats: () => request<Stats>("GET", `/api/stats?today=${localDay()}`),
   setGoal: (dailyGoal: number | null) =>
     request<{ daily_goal: number | null }>("PUT", "/api/goal", { daily_goal: dailyGoal }),
