@@ -85,6 +85,12 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   streak; with no goal, any day with writing counts. Today never breaks a streak before it ends.
   Words are net (deleting counts against the day), credited to your local date, and restoring a
   version from History doesn't count.
+- **Export:** the Export button in a novel saves it as a Word manuscript (.docx: standard
+  manuscript format with a title page, running header and `#` scene breaks), an EPUB e-book,
+  or a Markdown .zip (a file per chapter plus the whole book). Files are built in the browser
+  from what's on screen, unsaved writing included, so export works offline too. A heading at
+  the top of a chapter that repeats its title is dropped, and `***`, `---` or a lone `#` marks
+  a scene break.
 - **Novel target:** under the novel's word count, **Set a target length**, optionally with a
   finish date, to see progress and the words a day needed to make it.
 - **Saving:** every keystroke is kept on the device first (IndexedDB), then saved about a
@@ -108,5 +114,5 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 
 ## What's next
 
-- **Milestone 3 (remaining):** export (.md zip, .docx, .epub), corkboard with synopses
+- **Milestone 3 (remaining):** corkboard with synopses
 - **Milestone 4:** story bible with `[[wikilinks]]`, Claude continuity helpers

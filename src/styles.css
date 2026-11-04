@@ -971,3 +971,93 @@ body.dusk .history {
   margin: 0;
   color: var(--rose);
 }
+
+/* ---------- export ---------- */
+
+.export {
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 1.4rem 1.4rem 1.2rem;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--shade);
+  color: var(--wick);
+  box-shadow: 0 24px 60px rgb(5 8 14 / 0.55);
+}
+.export::backdrop {
+  background: rgb(5 8 14 / 0.6);
+}
+.export h2 {
+  margin: 0 0 1.1rem;
+  font: 600 1.125rem/1.3 var(--font-prose);
+  overflow-wrap: anywhere;
+}
+.export-formats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0 0 1.1rem;
+  padding: 0;
+  border: 0;
+}
+.export-formats legend {
+  margin-bottom: 0.5rem;
+  padding: 0;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+}
+.export-format {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.export-format.is-on {
+  border-color: var(--lamp);
+  background: rgb(242 196 109 / 0.06);
+}
+.export-format input {
+  margin: 0.2rem 0 0;
+  accent-color: var(--lamp);
+}
+.export-name {
+  display: block;
+}
+.export-detail {
+  display: block;
+  color: var(--text-faint);
+  font-size: 0.8125rem;
+}
+.export-author {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+}
+.export-author input {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--night);
+  font-size: 0.9375rem;
+}
+.export-note {
+  margin: 0 0 1rem;
+  color: var(--text-faint);
+  font-size: 0.8125rem;
+}
+.export-error {
+  margin: 0 0 1rem;
+  color: var(--rose);
+  font-size: 0.875rem;
+}
+.export-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
