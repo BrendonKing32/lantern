@@ -12,11 +12,12 @@ import { buildDocx } from "./docx";
 import { buildEpub } from "./epub";
 import { parseChapter, slug, type Book } from "./model";
 
-export type ExportFormat = "docx" | "epub" | "md";
+export type ExportFormat = "docx" | "epub" | "pdf" | "md";
 
 export const FORMATS: Record<ExportFormat, { label: string; ext: string; type: string }> = {
   docx: { label: "Word", ext: "docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
   epub: { label: "EPUB", ext: "epub", type: "application/epub+zip" },
+  pdf: { label: "PDF", ext: "pdf", type: "application/pdf" },
   md: { label: "Markdown", ext: "zip", type: "application/zip" },
 };
 
@@ -54,9 +55,10 @@ function markdownZip(title: string, texts: { title: string; content: string }[])
 export async function exportBook(detail: ProjectDetail, format: ExportFormat, author: string) {
   const texts = await chapterTexts(detail);
   const title = detail.project.title;
-  let bytes: Uint8Array;
+  const { ext, type } = FORMATS[format];
+  let blob: Blob;
   if (format === "md") {
-    bytes = markdownZip(title, texts);
+    blob = new Blob([markdownZip(title, texts) as BlobPart], { type });
   } else {
     const book: Book = {
       id: detail.project.id,
@@ -65,10 +67,15 @@ export async function exportBook(detail: ProjectDetail, format: ExportFormat, au
       words: texts.reduce((n, t) => n + countWords(t.content), 0),
       chapters: texts.map((t) => parseChapter(t.title, t.content)),
     };
-    bytes = format === "docx" ? buildDocx(book) : buildEpub(book);
+    if (format === "pdf") {
+      const { buildPdf } = await import("./pdf");
+      blob = await buildPdf(book);
+    } else {
+      const bytes = format === "docx" ? buildDocx(book) : buildEpub(book);
+      blob = new Blob([bytes as BlobPart], { type });
+    }
   }
-  const { ext, type } = FORMATS[format];
-  download(new Blob([bytes as BlobPart], { type }), `${slug(title)}.${ext}`);
+  download(blob, `${slug(title)}.${ext}`);
 }
 
 function download(blob: Blob, name: string) {

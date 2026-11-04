@@ -7,6 +7,7 @@ const AUTHOR_KEY = "lantern:author";
 const CHOICES: { id: ExportFormat; name: string; detail: string }[] = [
   { id: "docx", name: "Word (.docx)", detail: "Standard manuscript format, for agents, editors and printing." },
   { id: "epub", name: "EPUB", detail: "An e-book to read on a phone, tablet or e-reader." },
+  { id: "pdf", name: "PDF", detail: "A typeset book for reading or printing." },
   { id: "md", name: "Markdown (.zip)", detail: "A file per chapter plus the whole book, as plain text." },
 ];
 
