@@ -60,6 +60,13 @@ export interface ChapterMeta {
   updated_at: string;
 }
 
+/** The English a novel is written in, for grammar and spelling checks. */
+export const DIALECTS = [
+  { id: "american", name: "US English" },
+  { id: "british", name: "UK English" },
+] as const;
+export type Dialect = (typeof DIALECTS)[number]["id"];
+
 export interface ProjectInfo {
   id: string;
   title: string;
@@ -67,6 +74,7 @@ export interface ProjectInfo {
   updated_at: string;
   target_words: number | null;
   target_date: string | null;
+  dialect: Dialect;
 }
 
 export interface ProjectDetail {

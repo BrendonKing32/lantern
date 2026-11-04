@@ -10,6 +10,7 @@ import type {
   ChapterWithContent,
   DeletedChapter,
   DeletedProject,
+  Dialect,
   ProjectDetail,
   ProjectSummary,
   SaveResult,
@@ -82,6 +83,8 @@ export const api = {
       `/api/projects/${projectId}/target`,
       { target_words: words, target_date: date },
     ),
+  setDialect: (projectId: string, dialect: Dialect) =>
+    request<{ dialect: Dialect }>("PUT", `/api/projects/${projectId}/dialect`, { dialect }),
   deletedProjects: () => request<DeletedProject[]>("GET", "/api/trash/projects"),
   restoreProject: (id: string) => request<ProjectSummary>("POST", `/api/projects/${id}/restore`),
   deletedChapters: (projectId: string) => request<DeletedChapter[]>("GET", `/api/projects/${projectId}/trash`),

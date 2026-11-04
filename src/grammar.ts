@@ -11,12 +11,11 @@ import { StateEffect } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { Lint, WorkerLinter } from "harper.js";
 import { findLinks } from "../shared/wikilinks";
-import type { BibleEntry } from "../shared/types";
+import type { BibleEntry, Dialect as GrammarDialect } from "../shared/types";
 
 const DICTIONARY_KEY = "lantern-dictionary";
 const IGNORED_KEY = "lantern-grammar-ignored";
 const ENABLED_KEY = "lantern-grammar";
-const DIALECT_KEY = "lantern-grammar-dialect";
 
 /** Harper rules that don't suit fiction. */
 const RULES_OFF = [
@@ -60,34 +59,6 @@ export function setGrammarEnabled(on: boolean) {
   }
 }
 
-/** The kinds of English the checker can hold a chapter to. */
-export const DIALECTS = [
-  { id: "american", name: "US English" },
-  { id: "british", name: "UK English" },
-] as const;
-export type GrammarDialect = (typeof DIALECTS)[number]["id"];
-
-let dialect: GrammarDialect = (() => {
-  try {
-    return localStorage.getItem(DIALECT_KEY) === "british" ? "british" : "american";
-  } catch {
-    return "american";
-  }
-})();
-
-/** The English this device checks against. US English unless changed. */
-export const grammarDialect = (): GrammarDialect => dialect;
-
-/** Takes effect on the next check; editors call forceLinting to check again now. */
-export function setGrammarDialect(d: GrammarDialect) {
-  dialect = d;
-  try {
-    localStorage.setItem(DIALECT_KEY, d);
-  } catch {
-    // Not remembered, but still applies until the page closes.
-  }
-}
-
 interface Harper {
   linter: WorkerLinter;
   harperDialect: (d: GrammarDialect) => number;
@@ -109,10 +80,9 @@ async function configure(h: WorkerLinter) {
   if (ignored) await h.importIgnoredLints(ignored).catch(() => {});
 }
 
-/** The linter, switched to the dialect currently chosen. */
-async function readyHarper(): Promise<WorkerLinter> {
+/** The linter, switched to the novel's dialect. */
+async function readyHarper(want: GrammarDialect): Promise<WorkerLinter> {
   const h = await loadHarper();
-  const want = dialect;
   // Chained, so two checks never switch the dialect at the same time.
   h.applied = h.applied.then(async (have) => {
     if (have === want) return have;
@@ -143,7 +113,7 @@ function loadHarper(): Promise<Harper> {
     const binary = createBinaryModuleFromUrl(String(bundled.url), "full");
     await binary.setup();
     const harperDialect = (d: GrammarDialect) => (d === "british" ? Dialect.British : Dialect.American);
-    const start = dialect;
+    const start: GrammarDialect = "american";
     const linter = new WorkerLinter({ binary, dialect: harperDialect(start) });
     await linter.setup();
     await configure(linter);
@@ -156,15 +126,22 @@ function loadHarper(): Promise<Harper> {
   return harper;
 }
 
+/** The linter once any dialect switch under way has finished, so changes aren't lost to it. */
+async function settledHarper(): Promise<WorkerLinter> {
+  const h = await loadHarper();
+  await h.applied.catch(() => {});
+  return h.linter;
+}
+
 async function addToDictionary(word: string) {
-  const h = await readyHarper();
+  const h = await settledHarper();
   const words = readJson<string[]>(DICTIONARY_KEY, []);
   if (!words.includes(word)) writeJson(DICTIONARY_KEY, [...words, word]);
   await h.importWords([word]);
 }
 
 async function ignore(source: string, lint: Lint) {
-  const h = await readyHarper();
+  const h = await settledHarper();
   await h.ignoreLint(source, lint);
   writeJson(IGNORED_KEY, await h.exportIgnoredLints());
 }
@@ -200,6 +177,8 @@ function category(kind: string): "spelling" | "grammar" | "style" {
 export interface GrammarHost {
   /** The novel's bible entries, read fresh on each check. */
   entries: () => BibleEntry[];
+  /** The English the novel is written in, read fresh on each check. */
+  dialect: () => GrammarDialect;
 }
 
 /** A CodeMirror extension that underlines Harper's findings and offers its fixes. */
@@ -210,7 +189,7 @@ export function grammar(host: GrammarHost) {
       if (!source.trim()) return [];
       let h: WorkerLinter;
       try {
-        h = await readyHarper();
+        h = await readyHarper(host.dialect());
       } catch (e) {
         console.warn("Lantern couldn't start the grammar checker", e);
         return [];

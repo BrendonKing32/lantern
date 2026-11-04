@@ -8,9 +8,9 @@ import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync
 import { HistoryPanel } from "./HistoryPanel";
 import { basicSetup, proseExtensions } from "../editorSetup";
 import { entriesChanged, wikilinks } from "../wikilinkEditor";
-import { grammar, recheckGrammar, type GrammarDialect } from "../grammar";
+import { grammar, recheckGrammar } from "../grammar";
 import { countWords } from "../../shared/wordcount";
-import type { BibleEntry, ChapterWithContent, SaveResult } from "../../shared/types";
+import type { BibleEntry, ChapterWithContent, Dialect, SaveResult } from "../../shared/types";
 
 export type SaveState =
   | "loading"
@@ -35,8 +35,8 @@ interface Props {
   onOpenLink: (name: string) => void;
   /** Check grammar and spelling with Harper (otherwise the browser's spellcheck is used). */
   grammarOn: boolean;
-  /** The English Harper checks against. */
-  dialect: GrammarDialect;
+  /** The English the novel is written in. */
+  dialect: Dialect;
   onCloseHistory: () => void;
   /** Filled in by the editor so other panels can read the text and point into it. */
   controls?: { current: EditorControls | null };
@@ -105,7 +105,9 @@ export function ChapterEditor({
   // Grammar checking sits in a compartment so it can be switched without
   // recreating the editor. The latest setting is read when an editor is made.
   const grammarSlot = useRef(new Compartment());
-  const grammarExt = useRef(grammar({ entries: () => linkHost.current.entries }));
+  const dialectRef = useRef(dialect);
+  dialectRef.current = dialect;
+  const grammarExt = useRef(grammar({ entries: () => linkHost.current.entries, dialect: () => dialectRef.current }));
   const grammarOnRef = useRef(grammarOn);
   grammarOnRef.current = grammarOn;
   const proofing = (on: boolean) =>

@@ -172,8 +172,8 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   or **Ignore**. Harper runs entirely in the browser, so chapter text never leaves the device
   for these checks. Story bible names and aliases, and `[[links]]`, are never flagged as
   misspellings. The checker downloads once (about 8.5 MB compressed) the first time it runs,
-  then works offline. Each device keeps its own setting, dictionary and ignored
-  problems. With Grammar off, the browser's own spellcheck is used instead.
+  then works offline. The US/UK choice belongs to the novel, so every device checks it
+  the same way; each device keeps its own on/off setting, dictionary and ignored problems. With Grammar off, the browser's own spellcheck is used instead.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
 - **Themes:** pick Lantern, Hearth, Pine, Tide, or Parchment (a light theme) from the menu on the shelf or in the desk bar. Each device remembers its own choice. Dusk mode works on top of any theme.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
