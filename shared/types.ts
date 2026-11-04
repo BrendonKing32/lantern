@@ -33,3 +33,17 @@ export interface SaveResult {
   word_count: number;
   updated_at: string;
 }
+
+export type SnapshotReason = "auto" | "restore" | "conflict";
+
+export interface Snapshot {
+  id: string;
+  version: number;
+  word_count: number;
+  reason: SnapshotReason;
+  created_at: string;
+}
+
+export interface SnapshotWithContent extends Snapshot {
+  content: string;
+}

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { api, ApiError, describeError } from "../api";
-import { drafts } from "../drafts";
+import { drafts } from "../local";
+import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync";
+import { HistoryPanel } from "./HistoryPanel";
 import { basicSetup, proseExtensions } from "../editorSetup";
 import { countWords } from "../../shared/wordcount";
 import type { ChapterWithContent } from "../../shared/types";
@@ -23,12 +25,14 @@ interface Props {
   onWords: (chapterId: string, words: number, initial: boolean) => void;
   onSaved: (chapterId: string, info: { version: number; word_count: number }) => void;
   onStatus: (state: SaveState, detail?: string) => void;
+  historyOpen: boolean;
+  onCloseHistory: () => void;
 }
 
 const SAVE_DELAY = 1200;
 const RETRY_DELAY = 5000;
 
-export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: Props) {
+export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus, historyOpen, onCloseHistory }: Props) {
   const [initialDoc, setInitialDoc] = useState<string | null>(null);
   const [editorKey, setEditorKey] = useState(0);
   const [conflict, setConflict] = useState<ChapterWithContent | null>(null);
@@ -42,6 +46,8 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
   const blocked = useRef(false); // true while a conflict waits for a decision
   const timer = useRef<number | undefined>(undefined);
   const alive = useRef(true);
+  // Set when the next save replaces text the writer may want back.
+  const keepCopy = useRef<"restore" | "conflict" | undefined>(undefined);
 
   // Keep the latest callbacks without re-running effects.
   const cb = useRef({ onWords, onSaved, onStatus });
@@ -66,15 +72,17 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
     status("saving");
     const content = text.current;
     try {
-      const res = await api.saveChapter(chapterId, content, version.current);
+      const res = await api.saveChapter(chapterId, content, version.current, { snapshot: keepCopy.current });
+      keepCopy.current = undefined;
       version.current = res.version;
       cb.current.onSaved(chapterId, res);
+      void rememberSaved(chapterId, content, res);
       if (text.current === content) {
         dirty.current = false;
-        drafts.clear(chapterId);
+        void drafts.clearIf(chapterId, content);
         status("saved");
       } else {
-        drafts.write(chapterId, text.current, version.current);
+        void drafts.write(chapterId, text.current, version.current);
         saveAgain.current = true;
       }
     } catch (e) {
@@ -106,44 +114,24 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
     }
   };
 
-  // Load the chapter, recovering any unsaved local draft.
+  // Load the chapter, recovering any unsaved local draft. Offline, the copy on
+  // this device stands in for the server's.
   useEffect(() => {
     alive.current = true;
+    openEditors.add(chapterId);
     let cancelled = false;
     status("loading");
 
-    api
-      .getChapter(chapterId)
-      .then((ch) => {
+    void (async () => {
+      const draft = await drafts.read(chapterId);
+      let ch: ChapterWithContent;
+      let offline: boolean;
+      try {
+        ({ data: ch, offline } = await loadChapter(chapterId));
+      } catch (e) {
         if (cancelled) return;
-        version.current = ch.version;
-        let content = ch.content;
-        const draft = drafts.read(chapterId);
-        if (draft && draft.content !== ch.content) {
-          content = draft.content;
-          dirty.current = true;
-          if (draft.baseVersion !== ch.version) {
-            // Saved elsewhere since this draft was written.
-            blocked.current = true;
-            setConflict(ch);
-          }
-        } else if (draft) {
-          drafts.clear(chapterId);
-        }
-        text.current = content;
-        setInitialDoc(content);
-        cb.current.onWords(chapterId, countWords(ch.content), true);
-        if (content !== ch.content) cb.current.onWords(chapterId, countWords(content), false);
-        if (blocked.current) status("conflict");
-        else if (dirty.current) {
-          status("editing");
-          schedule(300);
-        } else status("saved");
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        const draft = drafts.read(chapterId);
-        if (draft && !(e instanceof ApiError && e.status === 404)) {
+        if (draft && isNetworkError(e)) {
+          // Offline with nothing cached but a draft: write on from the draft.
           version.current = draft.baseVersion;
           text.current = draft.content;
           dirty.current = true;
@@ -155,7 +143,39 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
           setLoadError(describeError(e));
           status("error", describeError(e));
         }
-      });
+        return;
+      }
+      if (cancelled) return;
+
+      version.current = ch.version;
+      let content = ch.content;
+      if (draft && draft.content !== ch.content) {
+        content = draft.content;
+        dirty.current = true;
+        // Saved elsewhere since this draft was written. Offline we can't be
+        // sure, so keep writing; the server will flag it on the next save.
+        if (draft.baseVersion !== ch.version && !offline) {
+          blocked.current = true;
+          setConflict(ch);
+        } else {
+          version.current = draft.baseVersion;
+        }
+      } else if (draft) {
+        void drafts.clearIf(chapterId, draft.content);
+      }
+      text.current = content;
+      setInitialDoc(content);
+      cb.current.onWords(chapterId, countWords(ch.content), true);
+      if (content !== ch.content) cb.current.onWords(chapterId, countWords(content), false);
+      if (blocked.current) status("conflict");
+      else if (offline) {
+        status("offline");
+        if (dirty.current) schedule(RETRY_DELAY);
+      } else if (dirty.current) {
+        status("editing");
+        schedule(300);
+      } else status("saved");
+    })();
 
     const warn = (ev: BeforeUnloadEvent) => {
       if (dirty.current) ev.preventDefault();
@@ -165,15 +185,17 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
     return () => {
       cancelled = true;
       alive.current = false;
+      openEditors.delete(chapterId);
       window.clearTimeout(timer.current);
       window.removeEventListener("beforeunload", warn);
       // Best-effort flush when switching chapters; the local draft covers failure.
       if (dirty.current && !blocked.current && !inFlight.current) {
         const content = text.current;
         api
-          .saveChapter(chapterId, content, version.current, { keepalive: true })
+          .saveChapter(chapterId, content, version.current, { keepalive: true, snapshot: keepCopy.current })
           .then((res) => {
-            drafts.clear(chapterId);
+            void drafts.clearIf(chapterId, content);
+            void rememberSaved(chapterId, content, res);
             cb.current.onSaved(chapterId, res);
           })
           .catch(() => {});
@@ -186,7 +208,7 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
     (value: string) => {
       text.current = value;
       dirty.current = true;
-      drafts.write(chapterId, value, version.current);
+      void drafts.write(chapterId, value, version.current);
       cb.current.onWords(chapterId, countWords(value), false);
       if (!blocked.current) {
         cb.current.onStatus("editing");
@@ -201,6 +223,7 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
     version.current = conflict.version;
     blocked.current = false;
     dirty.current = true;
+    keepCopy.current = "conflict"; // the other device's text goes into history
     setConflict(null);
     void saveRef.current();
   };
@@ -211,12 +234,28 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
     text.current = conflict.content;
     dirty.current = false;
     blocked.current = false;
-    drafts.clear(chapterId);
+    void drafts.clear(chapterId);
     setInitialDoc(conflict.content);
     setEditorKey((k) => k + 1);
     cb.current.onWords(chapterId, countWords(conflict.content), false);
     setConflict(null);
     status("saved");
+  };
+
+  // Put an earlier version back. The text it replaces is kept in history, so a
+  // restore can itself be undone.
+  const restore = (content: string) => {
+    if (blocked.current) return;
+    text.current = content;
+    dirty.current = true;
+    keepCopy.current = "restore";
+    void drafts.write(chapterId, content, version.current);
+    setInitialDoc(content);
+    setEditorKey((k) => k + 1);
+    cb.current.onWords(chapterId, countWords(content), false);
+    onCloseHistory();
+    window.clearTimeout(timer.current);
+    void saveRef.current();
   };
 
   if (loadError) {
@@ -232,6 +271,17 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
   }
 
   return (
+    <>
+    {historyOpen && initialDoc !== null && (
+      <HistoryPanel
+        chapterId={chapterId}
+        title={title}
+        currentText={() => text.current}
+        canRestore={!conflict}
+        onRestore={restore}
+        onClose={onCloseHistory}
+      />
+    )}
     <article className="page">
       {conflict && (
         <div className="conflict" role="alert">
@@ -265,5 +315,6 @@ export function ChapterEditor({ chapterId, title, onWords, onSaved, onStatus }: 
         />
       )}
     </article>
+    </>
   );
 }

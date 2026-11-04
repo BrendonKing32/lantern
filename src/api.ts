@@ -4,6 +4,8 @@ import type {
   ProjectDetail,
   ProjectSummary,
   SaveResult,
+  Snapshot,
+  SnapshotWithContent,
 } from "../shared/types";
 
 export class ApiError extends Error {
@@ -51,11 +53,25 @@ export const api = {
   reorder: (projectId: string, chapterIds: string[]) =>
     request<{ ok: true }>("PUT", `/api/projects/${projectId}/order`, { chapterIds }),
   getChapter: (id: string) => request<ChapterWithContent>("GET", `/api/chapters/${id}`),
-  saveChapter: (id: string, content: string, baseVersion: number, opts?: { keepalive?: boolean }) =>
-    request<SaveResult>("PUT", `/api/chapters/${id}`, { content, baseVersion }, opts),
+  /** `snapshot` asks the server to keep the text being replaced in history. */
+  saveChapter: (
+    id: string,
+    content: string,
+    baseVersion: number,
+    opts: { keepalive?: boolean; snapshot?: "restore" | "conflict" } = {},
+  ) =>
+    request<SaveResult>(
+      "PUT",
+      `/api/chapters/${id}`,
+      { content, baseVersion, snapshot: opts.snapshot },
+      { keepalive: opts.keepalive },
+    ),
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
     request<ChapterMeta>("PATCH", `/api/chapters/${id}`, patch),
   deleteChapter: (id: string) => request<{ ok: true }>("DELETE", `/api/chapters/${id}`),
+  listHistory: (chapterId: string) => request<Snapshot[]>("GET", `/api/chapters/${chapterId}/history`),
+  getSnapshot: (chapterId: string, snapshotId: string) =>
+    request<SnapshotWithContent>("GET", `/api/chapters/${chapterId}/history/${snapshotId}`),
 };
 
 export function describeError(e: unknown): string {

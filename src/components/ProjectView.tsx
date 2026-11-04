@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, describeError } from "../api";
 import { navigate } from "../router";
+import { loadProject } from "../sync";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type SaveState } from "./ChapterEditor";
 import type { ChapterMeta, ProjectDetail } from "../../shared/types";
@@ -32,13 +33,15 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [dusk, setDusk] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [renamingTitle, setRenamingTitle] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [offline, setOffline] = useState(false);
   const sessionStart = useRef<Record<string, number>>({});
 
   const load = useCallback(() => {
-    api
-      .getProject(projectId)
-      .then((d) => {
-        setDetail(d);
+    loadProject(projectId)
+      .then(({ data, offline }) => {
+        setDetail(data);
+        setOffline(offline);
         setError(null);
       })
       .catch((e) => setError(describeError(e)));
@@ -48,6 +51,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const chapters = detail?.chapters ?? [];
   const selected = chapters.find((c) => c.id === chapterId) ?? chapters[0];
+
+  useEffect(() => setHistoryOpen(false), [selected?.id]);
 
   // Keep the URL pointing at a real chapter.
   useEffect(() => {
@@ -103,6 +108,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, []);
 
   const onStatus = useCallback((state: SaveState, detail?: string) => setSave({ state, detail }), []);
+  const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
   const select = (id: string) => {
     setDrawerOpen(false);
@@ -216,6 +222,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             {detail.project.title}
           </h2>
         )}
+        {offline && <p className="offline-note">Offline. Writing is kept on this device and saves when you reconnect.</p>}
         <p className="book-count">{bookWords.toLocaleString()} words in {chapters.length} {chapters.length === 1 ? "chapter" : "chapters"}</p>
 
         <ChapterList
@@ -242,6 +249,13 @@ export function ProjectView({ projectId, chapterId }: Props) {
           </button>
           <span className="desk-spacer" />
           <button
+            className={`btn btn-quiet history-toggle${historyOpen ? " is-on" : ""}`}
+            aria-pressed={historyOpen}
+            onClick={() => setHistoryOpen((h) => !h)}
+          >
+            History
+          </button>
+          <button
             className={`btn btn-quiet dusk-toggle${dusk ? " is-on" : ""}`}
             aria-pressed={dusk}
             onClick={() => setDusk((d) => !d)}
@@ -259,6 +273,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onWords={onWords}
             onSaved={onSaved}
             onStatus={onStatus}
+            historyOpen={historyOpen}
+            onCloseHistory={closeHistory}
           />
         )}
 

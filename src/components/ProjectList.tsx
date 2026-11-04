@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, describeError } from "../api";
 import { navigate } from "../router";
+import { loadShelf } from "../sync";
 import { LanternMark } from "./ProjectView";
 import type { ProjectSummary } from "../../shared/types";
 
@@ -18,12 +19,15 @@ export function ProjectList() {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--glow", "0.35");
-    api
-      .listProjects()
-      .then(setProjects)
+    loadShelf()
+      .then(({ data, offline }) => {
+        setProjects(data);
+        setOffline(offline);
+      })
       .catch((e) => setError(describeError(e)));
   }, []);
 
@@ -68,6 +72,13 @@ export function ProjectList() {
         <LanternMark />
         <h1 className="shelf-name">Lantern</h1>
       </header>
+
+      {offline && (
+        <p className="offline-note">
+          You're offline. Novels you've opened on this device are here to read and write in, and your
+          words save when you reconnect.
+        </p>
+      )}
 
       {error && (
         <p className="shelf-error" role="alert">
