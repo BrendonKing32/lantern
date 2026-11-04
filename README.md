@@ -166,6 +166,14 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   chapter; click a quote to open that chapter at it. A run takes a few minutes, so keep the
   page open; the last result is saved and shows again on any device. Books up to about
   160,000 words fit in one check.
+- **Grammar and spelling:** pick **Grammar: US English** or **Grammar: UK English** in the desk
+  bar (or **Grammar off**), and [Harper](https://writewithharper.com) checks the chapter as you write and underlines problems: rose for spelling, amber for
+  grammar, dotted for style. Hover an underline for the suggested fix, **Add to dictionary**,
+  or **Ignore**. Harper runs entirely in the browser, so chapter text never leaves the device
+  for these checks. Story bible names and aliases, and `[[links]]`, are never flagged as
+  misspellings. The checker downloads once (about 8.5 MB compressed) the first time it runs,
+  then works offline. The US/UK choice belongs to the novel, so every device checks it
+  the same way; each device keeps its own on/off setting, dictionary and ignored problems. With Grammar off, the browser's own spellcheck is used instead.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
 - **Themes:** pick Lantern, Hearth, Pine, Tide, or Parchment (a light theme) from the menu on the shelf or in the desk bar. Each device remembers its own choice. Dusk mode works on top of any theme.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches

@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { countWords } from "../shared/wordcount";
-import { BIBLE_KINDS } from "../shared/types";
+import { BIBLE_KINDS, DIALECTS } from "../shared/types";
 import { AiError, aiStatus, guardedMessage, type AiEnv } from "./ai";
 import { checkChapter, draftBibleEntry } from "./check";
 import { prepareBookCheck } from "./bookCheck";
@@ -111,7 +111,7 @@ async function getChapterRow(env: Env, id: string): Promise<ChapterMeta> {
 
 async function requireProject(env: Env, id: string): Promise<ProjectInfo> {
   const row = await env.DB.prepare(
-    `SELECT id, title, created_at, updated_at, target_words, target_date
+    `SELECT id, title, created_at, updated_at, target_words, target_date, dialect
        FROM projects WHERE id = ? AND deleted_at IS NULL`,
   )
     .bind(id)
@@ -264,6 +264,16 @@ const setTarget: Handler = async (req, env, p) => {
     .bind(words, words === null ? null : date, p.id)
     .run();
   return json({ target_words: words, target_date: words === null ? null : date });
+};
+
+const setDialect: Handler = async (req, env, p) => {
+  await requireProject(env, p.id);
+  const { dialect } = await body<{ dialect?: unknown }>(req);
+  if (!DIALECTS.some((d) => d.id === dialect)) {
+    throw new HttpError(400, `dialect must be one of ${DIALECTS.map((d) => d.id).join(", ")}`);
+  }
+  await env.DB.prepare("UPDATE projects SET dialect = ? WHERE id = ?").bind(dialect, p.id).run();
+  return json({ dialect });
 };
 
 const deleteProject: Handler = async (_req, env, p) => {
@@ -822,6 +832,7 @@ const routes: Array<[string, string, Handler]> = [
   ["DELETE", "/api/bible/:id", deleteEntry],
   ["PUT", "/api/goal", setGoal],
   ["PUT", "/api/projects/:id/target", setTarget],
+  ["PUT", "/api/projects/:id/dialect", setDialect],
   ["GET", "/api/trash/projects", listDeletedProjects],
   ["POST", "/api/projects/:id/restore", restoreProject],
   ["GET", "/api/projects/:id/trash", listDeletedChapters],

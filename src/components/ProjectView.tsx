@@ -16,7 +16,9 @@ import { entryIndex, linkKey } from "../../shared/wikilinks";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
 import { CheckPanel, type CheckTab } from "./CheckPanel";
-import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
+import { grammarEnabled, setGrammarEnabled } from "../grammar";
+import { DIALECTS } from "../../shared/types";
+import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, ProjectDetail, SaveResult } from "../../shared/types";
 
 type View = "write" | "board" | "bible";
 const VIEWS: View[] = ["write", "board", "bible"];
@@ -99,6 +101,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, []);
   // The continuity check panel reads the editor's text and points into it.
   const [checkOpen, setCheckOpen] = useState(false);
+  const [grammarOn, setGrammarOn] = useState(grammarEnabled);
+  useEffect(() => setGrammarEnabled(grammarOn), [grammarOn]);
+
   const [checkTab, setCheckTab] = useState<CheckTab>("chapter");
   const editorControls = useRef<EditorControls | null>(null);
   const closeCheck = useCallback(() => setCheckOpen(false), []);
@@ -147,6 +152,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const chapters = detail?.chapters ?? [];
   const selected = chapters.find((c) => c.id === chapterId) ?? chapters[0];
+  // Novels saved on this device before dialects existed have none: US English.
+  const dialect: Dialect = detail?.project.dialect ?? "american";
 
   // History belongs to one chapter; the check panel follows you between chapters.
   useEffect(() => setHistoryOpen(false), [selected?.id]);
@@ -276,6 +283,18 @@ export function ProjectView({ projectId, chapterId }: Props) {
     );
     try {
       await api.updateChapter(id, { synopsis });
+    } catch (e) {
+      alert(describeError(e));
+      load();
+    }
+  };
+
+  // The dialect belongs to the novel, so every device checks it the same way.
+  const changeDialect = async (next: Dialect) => {
+    if (!detail || next === dialect) return;
+    setDetail((d) => (d ? { ...d, project: { ...d.project, dialect: next } } : d));
+    try {
+      await api.setDialect(projectId, next);
     } catch (e) {
       alert(describeError(e));
       load();
@@ -472,6 +491,27 @@ export function ProjectView({ projectId, chapterId }: Props) {
               Check
             </button>
           )}
+          {view === "write" && (
+            <select
+              className={`theme-picker grammar-picker${grammarOn ? " is-on" : ""}`}
+              aria-label="Grammar checking"
+              title="Underline grammar and spelling problems (checked on this device by Harper)"
+              value={grammarOn ? dialect : "off"}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "off") return setGrammarOn(false);
+                void changeDialect(v as Dialect);
+                setGrammarOn(true);
+              }}
+            >
+              <option value="off">Grammar off</option>
+              {DIALECTS.map((d) => (
+                <option key={d.id} value={d.id}>
+                  Grammar: {d.name}
+                </option>
+              ))}
+            </select>
+          )}
           <ThemePicker />
           <button
             className={`btn btn-quiet dusk-toggle${dusk ? " is-on" : ""}`}
@@ -516,6 +556,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onCloseHistory={closeHistory}
             entries={entries}
             onOpenLink={openLink}
+            grammarOn={grammarOn}
+            dialect={dialect}
             controls={editorControls}
           />
         )}

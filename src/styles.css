@@ -446,6 +446,9 @@ select {
   top: 0;
   z-index: 3;
   display: flex;
+  flex-wrap: wrap; /* a second row rather than buttons off the edge */
+  justify-content: flex-end; /* ...kept to the right, under the others */
+  row-gap: 0.25rem;
   align-items: center;
   padding: 0.75rem 1rem;
   transition: opacity 0.3s;
@@ -665,6 +668,10 @@ select {
 .theme-picker:hover {
   color: var(--wick);
   border-color: var(--rule);
+}
+.grammar-picker.is-on {
+  color: var(--lamp);
+  border-color: var(--lamp);
 }
 .theme-picker option {
   background: var(--night);
@@ -1995,4 +2002,72 @@ body.dusk .card {
   margin: 0 0 0.5rem !important;
   color: var(--wick);
   font: 600 0.9375rem/1.3 var(--font-prose) !important;
+}
+
+/* Grammar and spelling (Harper). Quiet underlines in the theme's own colours. */
+.cm-editor .cm-lintRange.cm-grammar-spelling,
+.cm-editor .cm-lintRange.cm-grammar-grammar,
+.cm-editor .cm-lintRange.cm-grammar-style {
+  background-image: none;
+  padding-bottom: 0;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.22em;
+  text-decoration-skip-ink: none;
+}
+.cm-editor .cm-lintRange.cm-grammar-spelling {
+  text-decoration-color: rgb(var(--rose-rgb) / 0.85);
+}
+.cm-editor .cm-lintRange.cm-grammar-grammar {
+  text-decoration-color: rgb(var(--lamp-rgb) / 0.85);
+}
+.cm-editor .cm-lintRange.cm-grammar-style {
+  text-decoration-style: dotted;
+  text-decoration-color: var(--mark);
+}
+.cm-editor .cm-tooltip.cm-tooltip-hover:has(.cm-tooltip-lint) {
+  max-width: 24rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--shade);
+  box-shadow: 0 12px 30px rgb(var(--shadow-rgb) / 0.5);
+  overflow: hidden;
+}
+.cm-editor .cm-tooltip-lint .cm-diagnostic {
+  padding: 0.6rem 0.8rem;
+  margin: 0;
+  border-left: 3px solid var(--mark);
+  color: var(--wick);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+.cm-editor .cm-tooltip-lint .cm-diagnostic-warning {
+  border-left-color: var(--lamp);
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticSource {
+  margin-top: 0.15rem;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  opacity: 1;
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticAction {
+  margin: 0.45rem 0.35rem 0 0;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--lamp);
+  border-radius: 6px;
+  background: rgb(var(--lamp-rgb) / 0.12);
+  color: var(--lamp);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticAction.cm-grammar-quiet {
+  border-color: var(--rule);
+  background: transparent;
+  color: var(--text-soft);
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticAction:hover {
+  filter: brightness(1.12);
 }

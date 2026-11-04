@@ -5,6 +5,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   build: { chunkSizeWarningLimit: 1200 },
+  // Harper finds its WebAssembly file relative to its own module, which
+  // pre-bundling would break in dev.
+  optimizeDeps: { exclude: ["harper.js"] },
   server: {
     proxy: { "/api": "http://localhost:8787" },
   },
