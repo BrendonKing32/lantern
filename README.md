@@ -78,7 +78,15 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 - **Rename** a chapter or the novel: double-click its title, or use the pencil button.
 - **Reorder** chapters: drag them, or focus one and use Space plus the arrow keys.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
-- **The lamp:** the light behind the page brightens as you add words in a session, reaching full glow at 1,000.
+- **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
+  full glow when you meet the goal; without one, at 1,000 words in a session.
+- **Daily goal and streak:** the panel at the top of the shelf shows today's words, your
+  streak and the last 12 weeks. **Set a daily goal** to count only days that meet it toward the
+  streak; with no goal, any day with writing counts. Today never breaks a streak before it ends.
+  Words are net (deleting counts against the day), credited to your local date, and restoring a
+  version from History doesn't count.
+- **Novel target:** under the novel's word count, **Set a target length**, optionally with a
+  finish date, to see progress and the words a day needed to make it.
 - **Saving:** every keystroke is kept on the device first (IndexedDB), then saved about a
   second after you pause. When you're offline it keeps retrying, and reloading is safe.
 - **History:** the History button shows earlier versions of the open chapter. Lantern keeps a
@@ -100,5 +108,5 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 
 ## What's next
 
-- **Milestone 3:** corkboard with synopses, goals and streaks, export (.md zip, .docx, .epub)
+- **Milestone 3 (remaining):** export (.md zip, .docx, .epub), corkboard with synopses
 - **Milestone 4:** story bible with `[[wikilinks]]`, Claude continuity helpers

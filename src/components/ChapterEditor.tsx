@@ -6,7 +6,7 @@ import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync
 import { HistoryPanel } from "./HistoryPanel";
 import { basicSetup, proseExtensions } from "../editorSetup";
 import { countWords } from "../../shared/wordcount";
-import type { ChapterWithContent } from "../../shared/types";
+import type { ChapterWithContent, SaveResult } from "../../shared/types";
 
 export type SaveState =
   | "loading"
@@ -23,7 +23,7 @@ interface Props {
   title: string;
   /** Word count changes. `initial` marks the count as of opening the chapter. */
   onWords: (chapterId: string, words: number, initial: boolean) => void;
-  onSaved: (chapterId: string, info: { version: number; word_count: number }) => void;
+  onSaved: (chapterId: string, info: SaveResult) => void;
   onStatus: (state: SaveState, detail?: string) => void;
   historyOpen: boolean;
   onCloseHistory: () => void;

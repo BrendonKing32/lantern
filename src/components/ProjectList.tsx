@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, describeError } from "../api";
 import { navigate } from "../router";
 import { loadShelf } from "../sync";
+import { TodayPanel } from "./TodayPanel";
 import { LanternMark } from "./ProjectView";
 import { ago } from "../when";
 import type { DeletedProject, ProjectSummary } from "../../shared/types";
@@ -83,6 +84,8 @@ export function ProjectList() {
         <LanternMark />
         <h1 className="shelf-name">Lantern</h1>
       </header>
+
+      {!offline && <TodayPanel />}
 
       {offline && (
         <p className="offline-note">

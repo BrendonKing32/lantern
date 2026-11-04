@@ -105,7 +105,7 @@ export async function syncDrafts() {
     for (const d of await drafts.all()) {
       if (openEditors.has(d.chapterId)) continue;
       try {
-        const res = await api.saveChapter(d.chapterId, d.content, d.baseVersion);
+        const res = await api.saveChapter(d.chapterId, d.content, d.baseVersion, { writtenAt: d.savedAt });
         await drafts.clearIf(d.chapterId, d.content);
         await rememberSaved(d.chapterId, d.content, res);
       } catch (e) {

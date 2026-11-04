@@ -8,7 +8,9 @@ import type {
   SaveResult,
   Snapshot,
   SnapshotWithContent,
+  Stats,
 } from "../shared/types";
+import { localDay } from "./when";
 
 export class ApiError extends Error {
   constructor(
@@ -50,6 +52,15 @@ export const api = {
   setArchived: (id: string, archived: boolean) =>
     request<{ id: string; archived_at: string | null }>("PATCH", `/api/projects/${id}`, { archived }),
   deleteProject: (id: string) => request<{ ok: true }>("DELETE", `/api/projects/${id}`),
+  stats: () => request<Stats>("GET", `/api/stats?today=${localDay()}`),
+  setGoal: (dailyGoal: number | null) =>
+    request<{ daily_goal: number | null }>("PUT", "/api/goal", { daily_goal: dailyGoal }),
+  setTarget: (projectId: string, words: number | null, date: string | null) =>
+    request<{ target_words: number | null; target_date: string | null }>(
+      "PUT",
+      `/api/projects/${projectId}/target`,
+      { target_words: words, target_date: date },
+    ),
   deletedProjects: () => request<DeletedProject[]>("GET", "/api/trash/projects"),
   restoreProject: (id: string) => request<ProjectSummary>("POST", `/api/projects/${id}/restore`),
   deletedChapters: (projectId: string) => request<DeletedChapter[]>("GET", `/api/projects/${projectId}/trash`),
@@ -64,12 +75,13 @@ export const api = {
     id: string,
     content: string,
     baseVersion: number,
-    opts: { keepalive?: boolean; snapshot?: "restore" | "conflict" } = {},
+    opts: { keepalive?: boolean; snapshot?: "restore" | "conflict"; writtenAt?: number } = {},
   ) =>
     request<SaveResult>(
       "PUT",
       `/api/chapters/${id}`,
-      { content, baseVersion, snapshot: opts.snapshot },
+      // `day` credits the words to the local date they were written on.
+      { content, baseVersion, snapshot: opts.snapshot, day: localDay(opts.writtenAt) },
       { keepalive: opts.keepalive },
     ),
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
