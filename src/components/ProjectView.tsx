@@ -16,7 +16,14 @@ import { entryIndex, linkKey } from "../../shared/wikilinks";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
 import { CheckPanel, type CheckTab } from "./CheckPanel";
-import { grammarEnabled, setGrammarEnabled } from "../grammar";
+import {
+  DIALECTS,
+  grammarDialect,
+  grammarEnabled,
+  setGrammarDialect,
+  setGrammarEnabled,
+  type GrammarDialect,
+} from "../grammar";
 import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
 
 type View = "write" | "board" | "bible";
@@ -102,6 +109,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [checkOpen, setCheckOpen] = useState(false);
   const [grammarOn, setGrammarOn] = useState(grammarEnabled);
   useEffect(() => setGrammarEnabled(grammarOn), [grammarOn]);
+  const [dialect, setDialect] = useState<GrammarDialect>(grammarDialect);
+  useEffect(() => setGrammarDialect(dialect), [dialect]);
   const [checkTab, setCheckTab] = useState<CheckTab>("chapter");
   const editorControls = useRef<EditorControls | null>(null);
   const closeCheck = useCallback(() => setCheckOpen(false), []);
@@ -476,14 +485,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
             </button>
           )}
           {view === "write" && (
-            <button
-              className={`btn btn-quiet${grammarOn ? " is-on" : ""}`}
-              aria-pressed={grammarOn}
+            <select
+              className={`theme-picker grammar-picker${grammarOn ? " is-on" : ""}`}
+              aria-label="Grammar checking"
               title="Underline grammar and spelling problems (checked on this device by Harper)"
-              onClick={() => setGrammarOn((on) => !on)}
+              value={grammarOn ? dialect : "off"}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "off") return setGrammarOn(false);
+                setDialect(v as GrammarDialect);
+                setGrammarOn(true);
+              }}
             >
-              Grammar
-            </button>
+              <option value="off">Grammar off</option>
+              {DIALECTS.map((d) => (
+                <option key={d.id} value={d.id}>
+                  Grammar: {d.name}
+                </option>
+              ))}
+            </select>
           )}
           <ThemePicker />
           <button
@@ -530,6 +550,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             entries={entries}
             onOpenLink={openLink}
             grammarOn={grammarOn}
+            dialect={dialect}
             controls={editorControls}
           />
         )}

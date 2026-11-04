@@ -2,14 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
 import { Compartment, EditorSelection } from "@codemirror/state";
-import { forceLinting } from "@codemirror/lint";
 import { api, ApiError, describeError } from "../api";
 import { drafts } from "../local";
 import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync";
 import { HistoryPanel } from "./HistoryPanel";
 import { basicSetup, proseExtensions } from "../editorSetup";
 import { entriesChanged, wikilinks } from "../wikilinkEditor";
-import { grammar } from "../grammar";
+import { grammar, recheckGrammar, type GrammarDialect } from "../grammar";
 import { countWords } from "../../shared/wordcount";
 import type { BibleEntry, ChapterWithContent, SaveResult } from "../../shared/types";
 
@@ -36,6 +35,8 @@ interface Props {
   onOpenLink: (name: string) => void;
   /** Check grammar and spelling with Harper (otherwise the browser's spellcheck is used). */
   grammarOn: boolean;
+  /** The English Harper checks against. */
+  dialect: GrammarDialect;
   onCloseHistory: () => void;
   /** Filled in by the editor so other panels can read the text and point into it. */
   controls?: { current: EditorControls | null };
@@ -78,6 +79,7 @@ export function ChapterEditor({
   entries,
   onOpenLink,
   grammarOn,
+  dialect,
   controls,
 }: Props) {
   const [initialDoc, setInitialDoc] = useState<string | null>(null);
@@ -118,12 +120,18 @@ export function ChapterEditor({
   useEffect(() => {
     if (!view.current) return;
     view.current.dispatch({ effects: entriesChanged.of(null) });
-    forceLinting(view.current); // bible names aren't misspellings
+    recheckGrammar(view.current); // bible names aren't misspellings
   }, [entries]);
   useEffect(() => {
     view.current?.dispatch({ effects: grammarSlot.current.reconfigure(proofing(grammarOn)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grammarOn]);
+  const firstDialect = useRef(dialect);
+  useEffect(() => {
+    if (dialect === firstDialect.current) return;
+    firstDialect.current = dialect;
+    if (view.current) recheckGrammar(view.current); // check again in the new dialect
+  }, [dialect]);
 
   useEffect(() => {
     if (!controls) return;

@@ -7,6 +7,7 @@
 // service worker keeps a copy after the first download.
 
 import { forceLinting, linter, type Action, type Diagnostic } from "@codemirror/lint";
+import { StateEffect } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { Lint, WorkerLinter } from "harper.js";
 import { findLinks } from "../shared/wikilinks";
@@ -15,6 +16,7 @@ import type { BibleEntry } from "../shared/types";
 const DICTIONARY_KEY = "lantern-dictionary";
 const IGNORED_KEY = "lantern-grammar-ignored";
 const ENABLED_KEY = "lantern-grammar";
+const DIALECT_KEY = "lantern-grammar-dialect";
 
 /** Harper rules that don't suit fiction. */
 const RULES_OFF = [
@@ -58,10 +60,77 @@ export function setGrammarEnabled(on: boolean) {
   }
 }
 
-let harper: Promise<WorkerLinter> | null = null;
+/** The kinds of English the checker can hold a chapter to. */
+export const DIALECTS = [
+  { id: "american", name: "US English" },
+  { id: "british", name: "UK English" },
+] as const;
+export type GrammarDialect = (typeof DIALECTS)[number]["id"];
+
+let dialect: GrammarDialect = (() => {
+  try {
+    return localStorage.getItem(DIALECT_KEY) === "british" ? "british" : "american";
+  } catch {
+    return "american";
+  }
+})();
+
+/** The English this device checks against. US English unless changed. */
+export const grammarDialect = (): GrammarDialect => dialect;
+
+/** Takes effect on the next check; editors call forceLinting to check again now. */
+export function setGrammarDialect(d: GrammarDialect) {
+  dialect = d;
+  try {
+    localStorage.setItem(DIALECT_KEY, d);
+  } catch {
+    // Not remembered, but still applies until the page closes.
+  }
+}
+
+interface Harper {
+  linter: WorkerLinter;
+  harperDialect: (d: GrammarDialect) => number;
+  /** The dialect the linter was last set to, or is being set to. */
+  applied: Promise<GrammarDialect>;
+}
+
+let harper: Promise<Harper> | null = null;
+
+/** Rules, the personal dictionary and ignored problems. Harper drops them when its dialect changes. */
+async function configure(h: WorkerLinter) {
+  const config = await h.getLintConfig();
+  for (const rule of RULES_OFF) if (rule in config) config[rule] = false;
+  await h.setLintConfig(config);
+
+  const words = readJson<string[]>(DICTIONARY_KEY, []);
+  if (words.length) await h.importWords(words);
+  const ignored = readJson<string | null>(IGNORED_KEY, null);
+  if (ignored) await h.importIgnoredLints(ignored).catch(() => {});
+}
+
+/** The linter, switched to the dialect currently chosen. */
+async function readyHarper(): Promise<WorkerLinter> {
+  const h = await loadHarper();
+  const want = dialect;
+  // Chained, so two checks never switch the dialect at the same time.
+  h.applied = h.applied.then(async (have) => {
+    if (have === want) return have;
+    await h.linter.setDialect(h.harperDialect(want));
+    await configure(h.linter);
+    return want;
+  });
+  try {
+    await h.applied;
+  } catch (e) {
+    harper = null; // start afresh on the next check
+    throw e;
+  }
+  return h.linter;
+}
 
 /** The shared Harper instance, started on first use. */
-function loadHarper(): Promise<WorkerLinter> {
+function loadHarper(): Promise<Harper> {
   harper ??= (async () => {
     const [{ WorkerLinter, Dialect, createBinaryModuleFromUrl }, { binary: bundled }] = await Promise.all([
       import("harper.js"),
@@ -73,18 +142,12 @@ function loadHarper(): Promise<WorkerLinter> {
     // download isn't remembered.
     const binary = createBinaryModuleFromUrl(String(bundled.url), "full");
     await binary.setup();
-    const h = new WorkerLinter({ binary, dialect: Dialect.American });
-    await h.setup();
-
-    const config = await h.getLintConfig();
-    for (const rule of RULES_OFF) if (rule in config) config[rule] = false;
-    await h.setLintConfig(config);
-
-    const words = readJson<string[]>(DICTIONARY_KEY, []);
-    if (words.length) await h.importWords(words);
-    const ignored = readJson<string | null>(IGNORED_KEY, null);
-    if (ignored) await h.importIgnoredLints(ignored).catch(() => {});
-    return h;
+    const harperDialect = (d: GrammarDialect) => (d === "british" ? Dialect.British : Dialect.American);
+    const start = dialect;
+    const linter = new WorkerLinter({ binary, dialect: harperDialect(start) });
+    await linter.setup();
+    await configure(linter);
+    return { linter, harperDialect, applied: Promise.resolve(start) };
   })();
   // A failed download can be retried on the next check.
   harper.catch(() => {
@@ -94,16 +157,24 @@ function loadHarper(): Promise<WorkerLinter> {
 }
 
 async function addToDictionary(word: string) {
-  const h = await loadHarper();
+  const h = await readyHarper();
   const words = readJson<string[]>(DICTIONARY_KEY, []);
   if (!words.includes(word)) writeJson(DICTIONARY_KEY, [...words, word]);
   await h.importWords([word]);
 }
 
 async function ignore(source: string, lint: Lint) {
-  const h = await loadHarper();
+  const h = await readyHarper();
   await h.ignoreLint(source, lint);
   writeJson(IGNORED_KEY, await h.exportIgnoredLints());
+}
+
+const recheck = StateEffect.define<null>();
+
+/** Check the chapter again now, though its text hasn't changed (new dictionary word, dialect or bible names). */
+export function recheckGrammar(view: EditorView) {
+  view.dispatch({ effects: recheck.of(null) });
+  forceLinting(view); // skip the typing delay
 }
 
 /** Lowercased words from the story bible's names and aliases, which are never misspellings. */
@@ -139,7 +210,7 @@ export function grammar(host: GrammarHost) {
       if (!source.trim()) return [];
       let h: WorkerLinter;
       try {
-        h = await loadHarper();
+        h = await readyHarper();
       } catch (e) {
         console.warn("Lantern couldn't start the grammar checker", e);
         return [];
@@ -179,13 +250,13 @@ export function grammar(host: GrammarHost) {
           actions.push({
             name: "Add to dictionary",
             markClass: "cm-grammar-quiet",
-            apply: (v) => void addToDictionary(problem).then(() => forceLinting(v)),
+            apply: (v) => void addToDictionary(problem).then(() => recheckGrammar(v)),
           });
         }
         actions.push({
           name: "Ignore",
           markClass: "cm-grammar-quiet",
-          apply: (v) => void ignore(source, lint).then(() => forceLinting(v)),
+          apply: (v) => void ignore(source, lint).then(() => recheckGrammar(v)),
         });
 
         out.push({
@@ -200,6 +271,9 @@ export function grammar(host: GrammarHost) {
       }
       return out;
     },
-    { delay: 1000 },
+    {
+      delay: 1000,
+      needsRefresh: (u) => u.transactions.some((t) => t.effects.some((e) => e.is(recheck))),
+    },
   );
 }

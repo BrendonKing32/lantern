@@ -669,6 +669,10 @@ select {
   color: var(--wick);
   border-color: var(--rule);
 }
+.grammar-picker.is-on {
+  color: var(--lamp);
+  border-color: var(--lamp);
+}
 .theme-picker option {
   background: var(--night);
   color: var(--wick);
