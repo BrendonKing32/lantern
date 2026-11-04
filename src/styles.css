@@ -19,7 +19,16 @@
   --lamp: #f2c46d;
   --lamp-ink: #2a1f0c;
   --rose: #e8908c;
-  --selection: rgb(242 196 109 / 0.24);
+  --lamp-hover: #f6d189;
+  --sage: #8fb996;
+  --chip: #36393f;
+  /* Channel triplets, so translucent tints follow the theme. */
+  --lamp-rgb: 242 196 109;
+  --glow-rgb: 255 184 92;
+  --rose-rgb: 232 144 140;
+  --tint-rgb: 255 255 255;
+  --shadow-rgb: 5 8 14;
+  --selection: rgb(var(--lamp-rgb) / 0.24);
 
   --font-prose: "Literata", Georgia, serif;
   --font-ui: "Instrument Sans", system-ui, sans-serif;
@@ -54,7 +63,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
   color: inherit;
 }
@@ -84,8 +94,8 @@ input {
   color: var(--lamp-ink);
 }
 .btn-lamp:hover {
-  background: #f6d189;
-  border-color: #f6d189;
+  background: var(--lamp-hover);
+  border-color: var(--lamp-hover);
 }
 .btn-lamp:disabled {
   opacity: 0.6;
@@ -113,7 +123,7 @@ input {
 }
 .icon-btn:hover {
   color: var(--wick);
-  background: rgb(255 255 255 / 0.06);
+  background: rgb(var(--tint-rgb) / 0.06);
 }
 .icon-btn svg {
   width: 0.85rem;
@@ -148,7 +158,7 @@ input {
   margin: 0 auto;
   padding: 18vh 1.5rem 4rem;
   min-height: 100%;
-  background: radial-gradient(ellipse 70% 40% at 50% 12%, rgb(255 184 92 / 0.16), transparent 70%);
+  background: radial-gradient(ellipse 70% 40% at 50% 12%, rgb(var(--glow-rgb) / 0.16), transparent 70%);
 }
 .shelf-head {
   display: flex;
@@ -333,10 +343,10 @@ input {
   touch-action: none;
 }
 .chapter:hover {
-  background: rgb(255 255 255 / 0.035);
+  background: rgb(var(--tint-rgb) / 0.035);
 }
 .chapter.is-selected {
-  background: rgb(242 196 109 / 0.1);
+  background: rgb(var(--lamp-rgb) / 0.1);
 }
 .chapter.is-selected .chapter-num {
   color: var(--lamp);
@@ -344,7 +354,7 @@ input {
 .chapter.is-dragging {
   z-index: 2;
   background: var(--rule);
-  box-shadow: 0 8px 24px rgb(5 8 14 / 0.5);
+  box-shadow: 0 8px 24px rgb(var(--shadow-rgb) / 0.5);
 }
 .chapter-open {
   flex: 1;
@@ -388,7 +398,7 @@ input {
   display: flex;
 }
 .chapter.is-selected .chapter-tools {
-  background: #36393f;
+  background: var(--chip);
 }
 .chapter-rename {
   flex: 1;
@@ -424,8 +434,8 @@ input {
   background:
     radial-gradient(
       ellipse 62% 58% at 50% 22%,
-      rgb(255 184 92 / calc(var(--glow) * 0.30)),
-      rgb(255 184 92 / calc(var(--glow) * 0.09)) 45%,
+      rgb(var(--glow-rgb) / calc(var(--glow) * 0.30)),
+      rgb(var(--glow-rgb) / calc(var(--glow) * 0.09)) 45%,
       transparent 75%
     ),
     var(--night);
@@ -492,7 +502,7 @@ input {
   vertical-align: 0.05em;
 }
 .save-saved::before {
-  background: #8fb996;
+  background: var(--sage);
 }
 .save-saving::before,
 .save-editing::before {
@@ -519,7 +529,7 @@ input {
   padding: 1rem 1.1rem;
   border: 1px solid var(--rose);
   border-radius: 10px;
-  background: rgb(232 144 140 / 0.08);
+  background: rgb(var(--rose-rgb) / 0.08);
 }
 .conflict p {
   margin: 0 0 0.8rem;
@@ -549,6 +559,118 @@ input {
   display: none;
 }
 
+/* ---------- themes: pick one from the shelf or the desk bar ----------
+   Each theme only swaps tokens. Lantern (above) is the default. */
+
+:root[data-theme="hearth"] {
+  --night: #1f1814;
+  --shade: #271f1a;
+  --rule: #3e3129;
+  --wick: #efe1cf;
+  --page-text: #f2e6d4;
+  --text-soft: #bfae9a;
+  --text-faint: #8a7a6a;
+  --mark: #8a7262;
+  --lamp: #ef9a5a;
+  --lamp-ink: #2a1408;
+  --lamp-hover: #f4b07d;
+  --rose: #e88a8a;
+  --chip: #3a2e27;
+  --lamp-rgb: 239 154 90;
+  --glow-rgb: 255 140 70;
+  --rose-rgb: 232 138 138;
+}
+
+:root[data-theme="pine"] {
+  --night: #141d1a;
+  --shade: #1a2521;
+  --rule: #2b3a34;
+  --wick: #e2e6d6;
+  --page-text: #e6e9da;
+  --text-soft: #a9b3a2;
+  --text-faint: #75857c;
+  --mark: #64786d;
+  --lamp: #cfd47a;
+  --lamp-ink: #1d200a;
+  --lamp-hover: #dde29a;
+  --rose: #e3998a;
+  --sage: #9cc7a0;
+  --chip: #26332e;
+  --lamp-rgb: 207 212 122;
+  --glow-rgb: 210 220 130;
+  --rose-rgb: 227 153 138;
+  --shadow-rgb: 4 10 8;
+}
+
+:root[data-theme="tide"] {
+  --night: #0f1d24;
+  --shade: #14252d;
+  --rule: #253b46;
+  --wick: #dde8ea;
+  --page-text: #e2ecee;
+  --text-soft: #a2b5ba;
+  --text-faint: #6d8790;
+  --mark: #5f7c86;
+  --lamp: #7fd1c3;
+  --lamp-ink: #08211d;
+  --lamp-hover: #a0ddd2;
+  --rose: #ef9a90;
+  --chip: #1f3440;
+  --lamp-rgb: 127 209 195;
+  --glow-rgb: 120 210 220;
+  --rose-rgb: 239 154 144;
+  --shadow-rgb: 2 8 12;
+}
+
+:root[data-theme="parchment"] {
+  --night: #f4ecdc;
+  --shade: #ebe1cd;
+  --rule: #d6c8ad;
+  --wick: #3a2f22;
+  --page-text: #2f261b;
+  --text-soft: #6b5d4a;
+  --text-faint: #96866e;
+  --mark: #a59478;
+  --lamp: #a8641c;
+  --lamp-ink: #fff8ec;
+  --lamp-hover: #8f5414;
+  --rose: #b2483f;
+  --sage: #4f8a5a;
+  --chip: #e0d4bc;
+  --lamp-rgb: 168 100 28;
+  --glow-rgb: 255 210 140;
+  --rose-rgb: 178 72 63;
+  --tint-rgb: 60 40 10;
+  --shadow-rgb: 70 50 20;
+  --selection: rgb(var(--lamp-rgb) / 0.2);
+  color-scheme: light;
+}
+/* Cream cards need an edge against a cream room. */
+:root[data-theme="parchment"] body:not(.dusk) .card {
+  --card-paper: #fffaf0;
+  box-shadow: 0 0 0 1px var(--rule), 0 6px 14px rgb(var(--shadow-rgb) / 0.12);
+}
+
+.theme-picker {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-soft);
+  padding: 0.45rem 0.9rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.theme-picker:hover {
+  color: var(--wick);
+  border-color: var(--rule);
+}
+.theme-picker option {
+  background: var(--night);
+  color: var(--wick);
+}
+
 /* ---------- Dusk mode: just you and the page, amber CRT ---------- */
 
 body.dusk {
@@ -559,8 +681,18 @@ body.dusk {
   --text-soft: #b07f38;
   --mark: #7d5320;
   --lamp: #ffb54a;
+  --lamp-rgb: 255 181 74;
   --rule: #3a2a14;
-  --selection: rgb(255 181 74 / 0.22);
+  --selection: rgb(var(--lamp-rgb) / 0.22);
+  /* Dusk is its own world: reset everything a theme might have changed. */
+  --shade: #1a1209;
+  --chip: #2a1d0e;
+  --lamp-ink: #120d07;
+  --lamp-hover: #ffc56e;
+  --glow-rgb: 255 181 74;
+  --tint-rgb: 255 255 255;
+  --shadow-rgb: 0 0 0;
+  color-scheme: dark;
   --font-prose: var(--font-mono);
   --prose-size: 1.0625rem;
   --prose-leading: 1.7;
@@ -589,7 +721,7 @@ body.dusk .desk-status {
   background: none;
 }
 body.dusk .cm-content {
-  text-shadow: 0 0 6px rgb(255 181 74 / 0.45);
+  text-shadow: 0 0 6px rgb(var(--lamp-rgb) / 0.45);
 }
 body.dusk::after {
   content: "";
@@ -623,7 +755,7 @@ body.dusk::after {
     inset: 0;
     z-index: 15;
     border: 0;
-    background: rgb(5 8 14 / 0.55);
+    background: rgb(var(--shadow-rgb) / 0.55);
   }
   .drawer-toggle {
     display: inline-block;
@@ -665,7 +797,7 @@ body.dusk::after {
   width: min(26rem, 100vw);
   background: var(--shade);
   border-left: 1px solid var(--rule);
-  box-shadow: -18px 0 40px rgb(5 8 14 / 0.4);
+  box-shadow: -18px 0 40px rgb(var(--shadow-rgb) / 0.4);
 }
 .history-head {
   display: flex;
@@ -712,7 +844,7 @@ body.dusk::after {
   cursor: pointer;
 }
 .history-item:hover:not(:disabled) {
-  background: rgb(255 255 255 / 0.04);
+  background: rgb(var(--tint-rgb) / 0.04);
 }
 .history-item:disabled {
   cursor: progress;
@@ -789,7 +921,7 @@ body.dusk .history {
   border-radius: 8px;
 }
 .trash-item:hover {
-  background: rgb(255 255 255 / 0.03);
+  background: rgb(var(--tint-rgb) / 0.03);
 }
 .trash-text {
   display: flex;
@@ -832,7 +964,7 @@ body.dusk .history {
   padding: 1.1rem 1.2rem 1.2rem;
   border: 1px solid var(--rule);
   border-radius: 12px;
-  background: rgb(255 255 255 / 0.02);
+  background: rgb(var(--tint-rgb) / 0.02);
 }
 .today-top {
   display: flex;
@@ -897,9 +1029,9 @@ body.dusk .history {
   border-radius: 2px;
   background: var(--rule);
 }
-.cal-day.lv1 { background: rgb(242 196 109 / 0.25); }
-.cal-day.lv2 { background: rgb(242 196 109 / 0.45); }
-.cal-day.lv3 { background: rgb(242 196 109 / 0.7); }
+.cal-day.lv1 { background: rgb(var(--lamp-rgb) / 0.25); }
+.cal-day.lv2 { background: rgb(var(--lamp-rgb) / 0.45); }
+.cal-day.lv3 { background: rgb(var(--lamp-rgb) / 0.7); }
 .cal-day.lv4 { background: var(--lamp); }
 .cal-day.is-future {
   background: none;
@@ -982,10 +1114,10 @@ body.dusk .history {
   border-radius: 14px;
   background: var(--shade);
   color: var(--wick);
-  box-shadow: 0 24px 60px rgb(5 8 14 / 0.55);
+  box-shadow: 0 24px 60px rgb(var(--shadow-rgb) / 0.55);
 }
 .export::backdrop {
-  background: rgb(5 8 14 / 0.6);
+  background: rgb(var(--shadow-rgb) / 0.6);
 }
 .export h2 {
   margin: 0 0 1.1rem;
@@ -1017,7 +1149,7 @@ body.dusk .history {
 }
 .export-format.is-on {
   border-color: var(--lamp);
-  background: rgb(242 196 109 / 0.06);
+  background: rgb(var(--lamp-rgb) / 0.06);
 }
 .export-format input {
   margin: 0.2rem 0 0;
@@ -1109,7 +1241,7 @@ body.dusk .history {
   border-radius: 4px;
   background: var(--card-paper);
   color: var(--card-ink);
-  box-shadow: 0 1px 0 rgb(0 0 0 / 0.25), 0 8px 18px rgb(5 8 14 / 0.35);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.25), 0 8px 18px rgb(var(--shadow-rgb) / 0.35);
   cursor: grab;
   touch-action: manipulation;
   transition: box-shadow 0.15s;
@@ -1117,7 +1249,7 @@ body.dusk .history {
 .card:nth-child(3n + 1) { rotate: -0.4deg; }
 .card:nth-child(3n + 2) { rotate: 0.3deg; }
 .card:hover {
-  box-shadow: 0 1px 0 rgb(0 0 0 / 0.25), 0 12px 26px rgb(5 8 14 / 0.45);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.25), 0 12px 26px rgb(var(--shadow-rgb) / 0.45);
 }
 .card.is-selected {
   outline: 2px solid var(--lamp);
@@ -1127,7 +1259,7 @@ body.dusk .history {
   z-index: 5;
   cursor: grabbing;
   rotate: 1.5deg;
-  box-shadow: 0 18px 40px rgb(5 8 14 / 0.55);
+  box-shadow: 0 18px 40px rgb(var(--shadow-rgb) / 0.55);
 }
 .card :focus-visible {
   outline-color: #9a6a12;
@@ -1249,7 +1381,7 @@ body.dusk .card {
   --card-ink: var(--lamp);
   --card-faint: var(--text-soft);
   --card-rule: var(--mark);
-  --card-line: rgb(255 181 74 / 0.08);
+  --card-line: rgb(var(--lamp-rgb) / 0.08);
   box-shadow: 0 0 0 1px var(--rule);
 }
 
@@ -1343,10 +1475,10 @@ body.dusk .card {
   cursor: pointer;
 }
 .bible-item:hover {
-  background: rgb(255 255 255 / 0.04);
+  background: rgb(var(--tint-rgb) / 0.04);
 }
 .bible-item.is-selected {
-  background: rgb(255 255 255 / 0.07);
+  background: rgb(var(--tint-rgb) / 0.07);
 }
 .bible-item-name {
   color: var(--wick);
@@ -1431,7 +1563,7 @@ body.dusk .card {
   padding: 1rem 1.1rem;
   border: 1px solid var(--rule);
   border-radius: 10px;
-  background: rgb(255 255 255 / 0.02);
+  background: rgb(var(--tint-rgb) / 0.02);
   color: var(--page-text);
   font: 400 1.0625rem/1.7 var(--font-prose);
   resize: vertical;
@@ -1469,7 +1601,7 @@ body.dusk .card {
   cursor: pointer;
 }
 .mention:hover {
-  background: rgb(255 255 255 / 0.04);
+  background: rgb(var(--tint-rgb) / 0.04);
 }
 .mention-count {
   color: var(--text-faint);
@@ -1509,7 +1641,7 @@ body.dusk .card {
   border: 1px solid var(--rule);
   border-radius: 8px;
   background: var(--shade);
-  box-shadow: 0 12px 30px rgb(5 8 14 / 0.5);
+  box-shadow: 0 12px 30px rgb(var(--shadow-rgb) / 0.5);
   overflow: hidden;
 }
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul {
@@ -1522,7 +1654,7 @@ body.dusk .card {
   color: var(--wick);
 }
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
-  background: rgb(242 196 109 / 0.16);
+  background: rgb(var(--lamp-rgb) / 0.16);
   color: var(--lamp);
 }
 .cm-editor .cm-tooltip-autocomplete .cm-completionDetail {
@@ -1603,7 +1735,7 @@ body.dusk .card {
   font-size: 0.875rem;
 }
 .claude-ok {
-  color: #8fb996;
+  color: var(--sage);
 }
 .claude-recent h3 {
   margin: 0 0 0.4rem;
@@ -1650,7 +1782,7 @@ body.dusk .card {
   padding: 0.8rem 0.9rem;
   border: 1px solid var(--rose);
   border-radius: 10px;
-  background: rgb(232 144 140 / 0.08);
+  background: rgb(var(--rose-rgb) / 0.08);
   color: var(--text-soft);
   font-size: 0.875rem;
 }
@@ -1727,7 +1859,7 @@ body.dusk .card {
   border-left-color: var(--lamp);
 }
 .finding-new_fact {
-  border-left-color: #8fb996;
+  border-left-color: var(--sage);
 }
 .finding p {
   margin: 0 0 0.4rem;
