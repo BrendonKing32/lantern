@@ -13,7 +13,8 @@ import { loadBible } from "../sync";
 import { cache } from "../local";
 import { entryIndex, linkKey } from "../../shared/wikilinks";
 import { ChapterList } from "./ChapterList";
-import { ChapterEditor, type SaveState } from "./ChapterEditor";
+import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
+import { CheckPanel } from "./CheckPanel";
 import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
 
 type View = "write" | "board" | "bible";
@@ -61,6 +62,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const setView = (v: View) => {
     setViewState(v);
     setHistoryOpen(false);
+    setCheckOpen(false);
     setPeek(null);
     try {
       sessionStorage.setItem(viewKey, v);
@@ -91,8 +93,13 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const index = useMemo(() => entryIndex(entries), [entries]);
   const openLink = useCallback((name: string) => {
     setHistoryOpen(false);
+    setCheckOpen(false);
     setPeek(name);
   }, []);
+  // The continuity check panel reads the editor's text and points into it.
+  const [checkOpen, setCheckOpen] = useState(false);
+  const editorControls = useRef<EditorControls | null>(null);
+  const closeCheck = useCallback(() => setCheckOpen(false), []);
   const closePeek = useCallback(() => setPeek(null), []);
   const createFromLink = async (name: string, kind: BibleKind) => {
     try {
@@ -139,7 +146,10 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const chapters = detail?.chapters ?? [];
   const selected = chapters.find((c) => c.id === chapterId) ?? chapters[0];
 
-  useEffect(() => setHistoryOpen(false), [selected?.id]);
+  useEffect(() => {
+    setHistoryOpen(false);
+    setCheckOpen(false);
+  }, [selected?.id]);
 
   // Keep the URL pointing at a real chapter.
   useEffect(() => {
@@ -426,10 +436,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
               aria-pressed={historyOpen}
               onClick={() => {
                 setPeek(null);
+                setCheckOpen(false);
                 setHistoryOpen((h) => !h);
               }}
             >
               History
+            </button>
+          )}
+          {view === "write" && (
+            <button
+              className={`btn btn-quiet${checkOpen ? " is-on" : ""}`}
+              aria-pressed={checkOpen}
+              title="Check this chapter against the story bible"
+              onClick={() => {
+                setPeek(null);
+                setHistoryOpen(false);
+                setCheckOpen((c) => !c);
+              }}
+            >
+              Check
             </button>
           )}
           <button
@@ -475,6 +500,19 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onCloseHistory={closeHistory}
             entries={entries}
             onOpenLink={openLink}
+            controls={editorControls}
+          />
+        )}
+
+        {view === "write" && checkOpen && selected && (
+          <CheckPanel
+            key={selected.id}
+            chapter={selected}
+            earlier={chapters.slice(0, chapters.findIndex((c) => c.id === selected.id))}
+            entries={entries}
+            controls={editorControls}
+            offline={offline}
+            onClose={closeCheck}
           />
         )}
 

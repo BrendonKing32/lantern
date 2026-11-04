@@ -73,18 +73,7 @@ export function ClaudePanel({ onClose }: { onClose: () => void }) {
       {s && !s.configured && (
         <div className="claude-setup">
           <p>Claude isn't set up yet. Lantern needs an Anthropic API key, which is billed by use.</p>
-          <ol>
-            <li>
-              Sign in at <strong>console.anthropic.com</strong>, add billing, and set a monthly spend limit there too.
-            </li>
-            <li>
-              Create a key under <strong>API Keys</strong>.
-            </li>
-            <li>
-              In the Lantern folder on your computer, run <code>npx wrangler secret put ANTHROPIC_API_KEY</code> and paste
-              the key. Cloudflare stores it encrypted; it never goes in the code.
-            </li>
-          </ol>
+          <SetupSteps />
           <button className="btn" onClick={() => void load()}>
             Check again
           </button>
@@ -165,5 +154,23 @@ export function ClaudePanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
     </dialog>
+  );
+}
+
+/** How to connect Claude: shown wherever a Claude feature is used before it's set up. */
+export function SetupSteps() {
+  return (
+    <ol className="setup-steps">
+      <li>
+        Sign in at <strong>console.anthropic.com</strong>, add billing, and set a monthly spend limit there too.
+      </li>
+      <li>
+        Create a key under <strong>API Keys</strong>.
+      </li>
+      <li>
+        In the Lantern folder on your computer, run <code>npx wrangler secret put ANTHROPIC_API_KEY</code> and paste the
+        key. Cloudflare stores it encrypted; it never goes in the code.
+      </li>
+    </ol>
   );
 }

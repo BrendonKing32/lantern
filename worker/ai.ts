@@ -115,6 +115,10 @@ export interface GuardedRequest {
   /** Hard cap on what Claude writes back, thinking included. */
   maxTokens: number;
   effort?: "low" | "medium" | "high";
+  /** A JSON schema the reply must follow (structured outputs). */
+  schema?: Record<string, unknown>;
+  /** How long to wait for Claude, in milliseconds. */
+  timeoutMs?: number;
 }
 
 export interface GuardedResult {
@@ -179,7 +183,7 @@ export async function guardedMessage(env: AiEnv, req: GuardedRequest): Promise<G
     apiKey: env.ANTHROPIC_API_KEY,
     baseURL: env.ANTHROPIC_BASE_URL || undefined,
     maxRetries: 1,
-    timeout: 120_000,
+    timeout: req.timeoutMs ?? 120_000,
   });
 
   try {
@@ -189,7 +193,10 @@ export async function guardedMessage(env: AiEnv, req: GuardedRequest): Promise<G
       system: req.system,
       messages: [{ role: "user", content: req.prompt }],
       thinking: { type: "adaptive" },
-      output_config: { effort: req.effort ?? "medium" },
+      output_config: {
+        effort: req.effort ?? "medium",
+        ...(req.schema ? { format: { type: "json_schema" as const, schema: req.schema } } : {}),
+      },
       // If a safety check declines the request, let Anthropic re-run it on a
       // suitable fallback model instead of failing.
       betas: ["server-side-fallback-2026-07-01"],

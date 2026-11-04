@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
+import { EditorSelection } from "@codemirror/state";
 import { api, ApiError, describeError } from "../api";
 import { drafts } from "../local";
 import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync";
@@ -32,6 +33,31 @@ interface Props {
   entries: BibleEntry[];
   onOpenLink: (name: string) => void;
   onCloseHistory: () => void;
+  /** Filled in by the editor so other panels can read the text and point into it. */
+  controls?: { current: EditorControls | null };
+}
+
+export interface EditorControls {
+  /** The text on screen, unsaved writing included. */
+  text: () => string;
+  /** Select and scroll to a quoted passage. False if it isn't in the chapter. */
+  reveal: (quote: string) => boolean;
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Where a quote sits in the text: exactly, ignoring spacing and case, or by its opening words. */
+function locate(doc: string, quote: string): [number, number] | null {
+  const q = quote.trim();
+  if (!q) return null;
+  const exact = doc.indexOf(q);
+  if (exact >= 0) return [exact, exact + q.length];
+  const words = q.split(/\s+/).map(escapeRe);
+  const loose = new RegExp(words.join("\\s+"), "i").exec(doc);
+  if (loose) return [loose.index, loose.index + loose[0].length];
+  if (words.length <= 3) return null;
+  const head = new RegExp(words.slice(0, 6).join("\\s+"), "i").exec(doc);
+  return head ? [head.index, head.index + head[0].length] : null;
 }
 
 const SAVE_DELAY = 1200;
@@ -47,6 +73,7 @@ export function ChapterEditor({
   onCloseHistory,
   entries,
   onOpenLink,
+  controls,
 }: Props) {
   const [initialDoc, setInitialDoc] = useState<string | null>(null);
   const [editorKey, setEditorKey] = useState(0);
@@ -74,6 +101,27 @@ export function ChapterEditor({
   useEffect(() => {
     view.current?.dispatch({ effects: entriesChanged.of(null) });
   }, [entries]);
+
+  useEffect(() => {
+    if (!controls) return;
+    controls.current = {
+      text: () => text.current,
+      reveal: (quote) => {
+        const v = view.current;
+        const at = v && locate(v.state.doc.toString(), quote);
+        if (!v || !at) return false;
+        v.dispatch({
+          selection: EditorSelection.range(at[0], at[1]),
+          effects: EditorView.scrollIntoView(at[0], { y: "center" }),
+        });
+        v.focus();
+        return true;
+      },
+    };
+    return () => {
+      controls.current = null;
+    };
+  }, [controls]);
   // Set when the next save replaces text the writer may want back.
   const keepCopy = useRef<"restore" | "conflict" | undefined>(undefined);
 

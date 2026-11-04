@@ -113,6 +113,12 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   a name with no entry are dotted. Click a link to see the entry beside the page, or add it.
   Each entry lists the chapters that mention it, linked or not. Exports show links as plain
   text (`[[Mara|her]]` becomes "her"); the Markdown export keeps them as written.
+- **Continuity check:** while writing, **Check** sends the chapter on screen to Claude with
+  the bible entries it links to or names, the names of the other entries, and the synopses
+  of earlier chapters. Claude returns contradictions with the bible or earlier chapters,
+  places the chapter contradicts itself, and new facts worth adding to the bible, each
+  quoting the passage; click a quote to jump to it. The panel shows what will be sent and
+  the estimated cost first. Needs Claude set up (see below); until then it says so.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
   full glow when you meet the goal; without one, at 1,000 words in a session.
@@ -150,4 +156,4 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 
 ## What's next
 
-- **Milestone 4 (remaining):** Claude continuity helpers
+- **Milestone 4 (remaining):** whole-book continuity checks, drafting bible entries from chapters

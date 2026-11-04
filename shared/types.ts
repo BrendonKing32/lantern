@@ -125,3 +125,26 @@ export interface AiStatus {
   spent_this_month_usd: number;
   recent: AiCall[];
 }
+
+export type FindingKind = "contradiction" | "internal" | "new_fact";
+
+export interface Finding {
+  kind: FindingKind;
+  /** A short passage copied exactly from the chapter. */
+  quote: string;
+  /** The bible entry involved, or "" if none. */
+  entry: string;
+  explanation: string;
+  /** A possible fix, or "" if none. */
+  suggestion: string;
+}
+
+export interface CheckResult {
+  summary: string;
+  findings: Finding[];
+  /** Names of the bible entries that were sent with the chapter. */
+  entries_checked: string[];
+  model: string;
+  cost_usd: number;
+  checked_at: string;
+}
