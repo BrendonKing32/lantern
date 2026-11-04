@@ -5,6 +5,7 @@ import { loadProject } from "../sync";
 import { ago } from "../when";
 import { RestoreIcon } from "./ProjectList";
 import { TargetMeter } from "./TargetMeter";
+import { ExportDialog } from "./ExportDialog";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type SaveState } from "./ChapterEditor";
 import type { ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
@@ -37,6 +38,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [offline, setOffline] = useState(false);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   // Words written today across all novels, and the daily goal (null: none).
@@ -54,6 +56,12 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [projectId]);
 
   useEffect(load, [load]);
+  // Fetch the export code in the background, so the service worker keeps it
+  // and exporting works offline too.
+  useEffect(() => {
+    const t = window.setTimeout(() => void import("../export").catch(() => {}), 4000);
+    return () => window.clearTimeout(t);
+  }, []);
   useEffect(() => {
     // Only listed online; offline the section stays hidden.
     api.deletedChapters(projectId).then(setTrash).catch(() => {});
@@ -309,6 +317,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
             Chapters
           </button>
           <span className="desk-spacer" />
+          <button className="btn btn-quiet" onClick={() => setExportOpen(true)}>
+            Export
+          </button>
           <button
             className={`btn btn-quiet history-toggle${historyOpen ? " is-on" : ""}`}
             aria-pressed={historyOpen}
@@ -338,6 +349,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onCloseHistory={closeHistory}
           />
         )}
+
+        {exportOpen && <ExportDialog detail={detail} onClose={() => setExportOpen(false)} />}
 
         <footer className="desk-status" aria-live="polite">
           <span className={`save-state save-${save.state}`} title={save.detail}>
