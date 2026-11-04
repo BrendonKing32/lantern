@@ -1638,3 +1638,145 @@ body.dusk .card {
   color: var(--text-soft);
   font-size: 0.875rem;
 }
+
+/* ---------- continuity check ---------- */
+
+.desk-bar .btn.is-on {
+  color: var(--lamp);
+  border-color: var(--lamp);
+}
+.check-notice {
+  margin: 0 0 1.1rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--rose);
+  border-radius: 10px;
+  background: rgb(232 144 140 / 0.08);
+  color: var(--text-soft);
+  font-size: 0.875rem;
+}
+.check-notice p {
+  margin: 0 0 0.6rem;
+}
+.check-notice strong {
+  color: var(--wick);
+}
+.setup-steps {
+  margin: 0 0 0.9rem;
+  padding-left: 1.2rem;
+  color: var(--text-soft);
+  font-size: 0.875rem;
+}
+.setup-steps li {
+  margin-bottom: 0.4rem;
+}
+.setup-steps code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--wick);
+  overflow-wrap: anywhere;
+}
+.check-send {
+  margin: 0 0 1.1rem;
+  font-size: 0.8125rem;
+}
+.check-send div {
+  margin-bottom: 0.55rem;
+}
+.check-send dt {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+.check-send dd {
+  margin: 0.1rem 0 0;
+  color: var(--text-soft);
+}
+.check-left {
+  color: var(--text-faint);
+}
+.check .btn-lamp {
+  margin-bottom: 0.8rem;
+}
+.check-result {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+.check-meta {
+  margin: 0 0 0.5rem;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+.check-summary {
+  margin: 0 0 1rem;
+  color: var(--page-text);
+  font: 400 0.9375rem/1.55 var(--font-prose);
+}
+.findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.finding {
+  margin-bottom: 0.9rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rose);
+  border-radius: 8px;
+}
+.finding-internal {
+  border-left-color: var(--lamp);
+}
+.finding-new_fact {
+  border-left-color: #8fb996;
+}
+.finding p {
+  margin: 0 0 0.4rem;
+  font-size: 0.875rem;
+}
+.finding-kind {
+  color: var(--text-faint);
+  font-size: 0.75rem !important;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.finding-kind span {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-soft);
+}
+.finding-quote {
+  display: block;
+  margin: 0 0 0.45rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lamp);
+  font: italic 400 0.9375rem/1.5 var(--font-prose);
+  text-align: left;
+  cursor: pointer;
+}
+.finding-quote:hover {
+  text-decoration: underline;
+}
+.finding-text {
+  color: var(--text-soft);
+}
+.finding-fix {
+  color: var(--text-faint);
+}
+.finding-fix::before {
+  content: "Fix: ";
+  color: var(--text-soft);
+}
+
+/* Side panels (History, links, Check) sit below the top bar on wide screens,
+   so its buttons stay usable while a panel is open. */
+@media (min-width: 801px) {
+  .history {
+    top: 3.9rem;
+    border-top: 1px solid var(--rule);
+    border-top-left-radius: 12px;
+  }
+}

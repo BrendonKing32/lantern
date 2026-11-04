@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { countWords } from "../shared/wordcount";
 import { BIBLE_KINDS } from "../shared/types";
 import { AiError, aiStatus, guardedMessage, type AiEnv } from "./ai";
+import { checkChapter } from "./check";
 import type {
   BibleEntry,
   BibleKind,
@@ -665,6 +666,40 @@ const testAi: Handler = async (_req, env) => {
   });
 };
 
+// Check a chapter against the story bible. The app sends the text on screen
+// (unsaved writing included); without it, the last saved text is used.
+const checkChapterHandler: Handler = async (req, env, p) => {
+  const row = await getChapterRow(env, p.id);
+  const project = await requireProject(env, row.project_id);
+  const b = await body<{ content?: unknown }>(req);
+  let content: string;
+  if (typeof b.content === "string") {
+    if (new TextEncoder().encode(b.content).length > MAX_CHAPTER_BYTES) throw new HttpError(413, "Chapter is too large (5 MB limit)");
+    content = b.content;
+  } else {
+    const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+    content = obj ? await obj.text() : "";
+  }
+  if (!content.trim()) throw new HttpError(400, "This chapter is empty, so there's nothing to check yet.");
+
+  const [earlier, bible] = await env.DB.batch([
+    env.DB.prepare(
+      "SELECT title, synopsis FROM chapters WHERE project_id = ? AND deleted_at IS NULL AND position < ? ORDER BY position",
+    ).bind(row.project_id, row.position),
+    env.DB.prepare(`SELECT ${BIBLE_COLS} FROM bible_entries WHERE project_id = ? AND deleted_at IS NULL ORDER BY name COLLATE NOCASE`).bind(
+      row.project_id,
+    ),
+  ]);
+  const before = (earlier.results ?? []) as { title: string; synopsis: string }[];
+  const result = await checkChapter(env, {
+    projectTitle: project.title,
+    chapter: { title: row.title, position: before.length, content },
+    earlier: before,
+    entries: ((bible.results ?? []) as BibleRow[]).map(toEntry),
+  });
+  return json(result);
+};
+
 // ---------- router ----------
 
 const routes: Array<[string, string, Handler]> = [
@@ -672,6 +707,7 @@ const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/stats", getStats],
   ["GET", "/api/ai/status", getAiStatus],
   ["POST", "/api/ai/test", testAi],
+  ["POST", "/api/chapters/:id/check", checkChapterHandler],
   ["GET", "/api/projects/:id/bible", listBible],
   ["POST", "/api/projects/:id/bible", createEntry],
   ["PATCH", "/api/bible/:id", updateEntry],

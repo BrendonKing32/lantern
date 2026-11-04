@@ -36,3 +36,24 @@ export function entryIndex(entries: BibleEntry[]): Map<string, BibleEntry> {
   }
   return map;
 }
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Entries a text links to with [[...]] or names in running text (by name or
+ * alias, as whole words, ignoring case), in the order they first appear.
+ */
+export function entriesMentioned(text: string, entries: BibleEntry[]): BibleEntry[] {
+  const index = entryIndex(entries);
+  const found = new Map<string, { entry: BibleEntry; at: number }>();
+  const note = (e: BibleEntry | undefined, at: number) => {
+    if (e && (!found.has(e.id) || found.get(e.id)!.at > at)) found.set(e.id, { entry: e, at });
+  };
+  for (const l of findLinks(text)) note(index.get(linkKey(l.name)), l.from);
+  const names = [...index.keys()].filter(Boolean).sort((a, b) => b.length - a.length);
+  if (names.length) {
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${names.map(escapeRe).join("|")})(?![\\p{L}\\p{N}])`, "giu");
+    for (const m of text.matchAll(re)) note(index.get(m[0].toLowerCase()), m.index!);
+  }
+  return [...found.values()].sort((a, b) => a.at - b.at).map((f) => f.entry);
+}
