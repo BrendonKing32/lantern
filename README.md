@@ -176,8 +176,9 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   Words are net (deleting counts against the day), credited to your local date, and restoring a
   version from History doesn't count.
 - **Export:** the Export button in a novel saves it as a Word manuscript (.docx: standard
-  manuscript format with a title page, running header and `#` scene breaks), an EPUB e-book,
-  or a Markdown .zip (a file per chapter plus the whole book). Files are built in the browser
+  manuscript format with a title page, running header and `#` scene breaks), a typeset PDF
+  for reading or printing, an EPUB e-book, or a Markdown .zip (a file per chapter plus the whole
+  book). Files are built in the browser
   from what's on screen, unsaved writing included, so export works offline too. A heading at
   the top of a chapter that repeats its title is dropped, and `***`, `---` or a lone `#` marks
   a scene break.
