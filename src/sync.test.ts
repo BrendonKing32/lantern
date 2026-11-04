@@ -1,0 +1,75 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  saveChapter: vi.fn(),
+  draftsAll: vi.fn(),
+  draftsClearIf: vi.fn(),
+  chapterRead: vi.fn(),
+  chapterWrite: vi.fn(),
+}));
+
+vi.mock("./api", () => ({
+  api: { saveChapter: mocks.saveChapter },
+  ApiError: class ApiError extends Error {
+    constructor(public status: number, message: string, public data: Record<string, unknown> | null) {
+      super(message);
+    }
+  },
+}));
+
+vi.mock("./local", () => ({
+  drafts: { all: mocks.draftsAll, clearIf: mocks.draftsClearIf },
+  chapters: { read: mocks.chapterRead, write: mocks.chapterWrite },
+}));
+
+import { ApiError } from "./api";
+import { syncDrafts } from "./sync";
+
+const draft = { chapterId: "chapter-1", content: "A draft.", baseVersion: 4, savedAt: 123 };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.draftsAll.mockResolvedValue([draft]);
+  mocks.draftsClearIf.mockResolvedValue(undefined);
+  mocks.chapterRead.mockResolvedValue({
+    id: draft.chapterId,
+    project_id: "project-1",
+    title: "Chapter 1",
+    synopsis: "",
+    position: 0,
+    word_count: 0,
+    version: 4,
+    updated_at: "",
+    content: "",
+  });
+  mocks.chapterWrite.mockResolvedValue(undefined);
+});
+
+describe("offline draft sync", () => {
+  it("clears and updates the cached chapter after a successful save", async () => {
+    const result = { version: 5, word_count: 2, updated_at: "now" };
+    mocks.saveChapter.mockResolvedValue(result);
+
+    await syncDrafts();
+
+    expect(mocks.saveChapter).toHaveBeenCalledWith(
+      draft.chapterId,
+      draft.content,
+      draft.baseVersion,
+      { writtenAt: draft.savedAt },
+    );
+    expect(mocks.draftsClearIf).toHaveBeenCalledWith(draft.chapterId, draft.content);
+    expect(mocks.chapterWrite).toHaveBeenCalledWith(
+      expect.objectContaining({ ...result, content: draft.content }),
+    );
+  });
+
+  it("keeps a conflicting draft for the writer to resolve", async () => {
+    mocks.saveChapter.mockRejectedValue(new ApiError(409, "conflict", { version: 5 }));
+
+    await syncDrafts();
+
+    expect(mocks.draftsClearIf).not.toHaveBeenCalled();
+    expect(mocks.chapterWrite).not.toHaveBeenCalled();
+  });
+});

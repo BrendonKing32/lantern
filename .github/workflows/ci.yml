@@ -18,6 +18,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Tests
+        run: npm test
       - name: Typecheck app and Worker
         run: npm run typecheck
       - name: Build

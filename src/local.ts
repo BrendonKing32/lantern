@@ -48,6 +48,13 @@ function open(): Promise<IDBDatabase | null> {
 
 type StoreName = "drafts" | "chapters" | "cache";
 
+export class DraftStorageError extends Error {
+  constructor() {
+    super("Lantern couldn't save this draft on this device.");
+    this.name = "DraftStorageError";
+  }
+}
+
 // Readwrite transactions on the same store run in the order they're created,
 // so a clear() issued after a write() always lands after it.
 async function run<T>(
@@ -66,6 +73,40 @@ async function run<T>(
       tx.onabort = () => resolve(undefined);
     } catch {
       resolve(undefined);
+    }
+  });
+}
+
+async function writeDraft(chapterId: string, content: string, baseVersion: number): Promise<void> {
+  const db = await open();
+  if (!db) throw new DraftStorageError();
+  await new Promise<void>((resolve, reject) => {
+    try {
+      const tx = db.transaction("drafts", "readwrite");
+      tx.objectStore("drafts").put({ chapterId, content, baseVersion, savedAt: Date.now() });
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(new DraftStorageError());
+    } catch {
+      reject(new DraftStorageError());
+    }
+  });
+}
+
+async function readDraft(chapterId: string): Promise<Draft | null> {
+  const db = await open();
+  if (!db) throw new DraftStorageError();
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction("drafts", "readonly");
+      const request = tx.objectStore("drafts").get(chapterId);
+      let draft: Draft | undefined;
+      request.onsuccess = () => {
+        draft = request.result as Draft | undefined;
+      };
+      tx.oncomplete = () => resolve(draft ?? null);
+      tx.onerror = tx.onabort = () => reject(new DraftStorageError());
+    } catch {
+      reject(new DraftStorageError());
     }
   });
 }
@@ -100,11 +141,9 @@ async function migrateLegacyDrafts(db: IDBDatabase) {
 }
 
 export const drafts = {
-  read: (chapterId: string) =>
-    run<Draft | undefined>("drafts", "readonly", (s) => s.get(chapterId)).then((d) => d ?? null),
+  read: readDraft,
   all: () => run<Draft[]>("drafts", "readonly", (s) => s.getAll()).then((d) => d ?? []),
-  write: (chapterId: string, content: string, baseVersion: number) =>
-    run("drafts", "readwrite", (s) => s.put({ chapterId, content, baseVersion, savedAt: Date.now() })),
+  write: writeDraft,
   /** Remove the draft, but only if it still holds `content` (a newer keystroke wins). */
   clearIf: (chapterId: string, content: string) =>
     run("drafts", "readwrite", (s) => {

@@ -47,11 +47,12 @@ The `workers.dev` URL is turned off, so Access is the only way in.
 
 ### Automatic deploys from GitHub (optional)
 
-Every push and pull request runs the **CI** workflow (typecheck and build).
+Every push and pull request runs the **CI** workflow (tests, typecheck and build).
 The **Deploy** workflow publishes `main` to Cloudflare, but it stays off until you turn it on:
 
 1. Create a Cloudflare API token (**My Profile → API Tokens → Create Token**) using the
-   **Edit Cloudflare Workers** template, and add **Account → D1 → Edit** permission.
+   **Edit Cloudflare Workers** template, and add **Account → D1 → Edit** and
+   **Account → Workers R2 Storage → Edit** permissions.
 2. In the GitHub repo, go to **Settings → Secrets and variables → Actions** and add:
    - Secrets: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (the account ID is on your Cloudflare dashboard's overview page)
    - Variable: `CLOUDFLARE_DEPLOY` set to `true`
@@ -61,6 +62,43 @@ After that, merging to `main` applies any new migrations and deploys.
 The values in `wrangler.toml` (database ID, Access team domain, and AUD tag) are
 identifiers, not secrets, so they're fine to commit. Real secrets go in
 GitHub secrets or `wrangler secret put`, never in the repo.
+
+## Backups
+
+Lantern writes a daily backup to a separate, private R2 bucket. Before the first
+deploy with backups enabled, create it:
+
+```sh
+npx wrangler r2 bucket create lantern-backups
+```
+
+The Worker runs the backup at 03:17 UTC. Each complete backup contains a
+restorable SQL export of every D1 table, every object in `lantern-manuscripts`
+(including chapter history), and a manifest. Backups older than 30 days are
+deleted. A backup is marked complete only after confirming that no chapter
+version changed while its text was copied. Check the Worker logs for
+`scheduled backup failed`; an incomplete run has no manifest and should not be
+used for recovery.
+
+The backup bucket is separate but in the same Cloudflare account, so it helps
+recover from accidental changes or loss of the primary bucket/database; it
+doesn't protect against loss of the entire Cloudflare account.
+
+### Restore
+
+Stop writing in Lantern while restoring. Choose a backup directory containing
+`manifest.json` in the R2 dashboard, then use its timestamp as `<backup-id>`.
+The D1 SQL restore replaces the app's current rows, so review the file and make
+sure the database migrations are already applied:
+
+```powershell
+npx wrangler r2 object get lantern-backups/backups/<backup-id>/database.sql --file .\database.sql
+npx wrangler d1 execute lantern-db --remote --file .\database.sql
+.\scripts\restore-r2-backup.ps1 -BackupId <backup-id>
+```
+
+The PowerShell script restores the listed manuscript and history objects into
+`lantern-manuscripts`, overwriting matching keys without deleting any others.
 
 ## Claude (optional)
 
@@ -146,7 +184,9 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 - **Novel target:** under the novel's word count, **Set a target length**, optionally with a
   finish date, to see progress and the words a day needed to make it.
 - **Saving:** every keystroke is kept on the device first (IndexedDB), then saved about a
-  second after you pause. When you're offline it keeps retrying, and reloading is safe.
+  second after you pause. When you're offline it keeps retrying, and reloading is safe. If the
+  browser blocks local draft storage, Lantern reports it and won't open a chapter it can't
+  safely check for an unsaved draft.
 - **History:** the History button shows earlier versions of the open chapter. Lantern keeps a
   copy at most every 10 minutes while you write, plus one before every restore and before you
   replace another device's version. Pick one to read it, then **Restore this version**. Restoring

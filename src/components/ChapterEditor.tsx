@@ -85,6 +85,7 @@ export function ChapterEditor({
   const dirty = useRef(false);
   const inFlight = useRef(false);
   const saveAgain = useRef(false);
+  const draftStorageFailed = useRef(false);
   const blocked = useRef(false); // true while a conflict waits for a decision
   const timer = useRef<number | undefined>(undefined);
   const alive = useRef(true);
@@ -138,6 +139,22 @@ export function ChapterEditor({
     timer.current = window.setTimeout(() => void saveRef.current(), ms);
   }, []);
 
+  const persistDraft = (content: string, baseVersion: number) => {
+    void drafts.write(chapterId, content, baseVersion).then(
+      () => {
+        draftStorageFailed.current = false;
+      },
+      () => {
+        draftStorageFailed.current = true;
+        status(
+          "error",
+          "This draft isn't saved on this device. Keep this page open while Lantern retries the server save.",
+        );
+        void saveRef.current();
+      },
+    );
+  };
+
   saveRef.current = async () => {
     if (!dirty.current || blocked.current) return;
     if (inFlight.current) {
@@ -151,6 +168,7 @@ export function ChapterEditor({
       const res = await api.saveChapter(chapterId, content, version.current, { snapshot: keepCopy.current });
       keepCopy.current = undefined;
       version.current = res.version;
+      draftStorageFailed.current = false;
       cb.current.onSaved(chapterId, res);
       void rememberSaved(chapterId, content, res);
       if (text.current === content) {
@@ -158,7 +176,7 @@ export function ChapterEditor({
         void drafts.clearIf(chapterId, content);
         status("saved");
       } else {
-        void drafts.write(chapterId, text.current, version.current);
+        persistDraft(text.current, version.current);
         saveAgain.current = true;
       }
     } catch (e) {
@@ -174,11 +192,25 @@ export function ChapterEditor({
           schedule(RETRY_DELAY);
         }
       } else if (e instanceof ApiError && e.status === 401) {
-        status("signedout");
+        if (draftStorageFailed.current) {
+          status("error", `This draft isn't saved on this device. ${describeError(e)}`);
+        } else {
+          status("signedout");
+        }
       } else if (e instanceof ApiError && e.status < 500) {
-        status("error", describeError(e));
+        status(
+          "error",
+          draftStorageFailed.current
+            ? `This draft isn't saved on this device. ${describeError(e)}`
+            : describeError(e),
+        );
       } else {
-        status("offline");
+        status(
+          draftStorageFailed.current ? "error" : "offline",
+          draftStorageFailed.current
+            ? `This draft isn't saved on this device. ${describeError(e)}`
+            : undefined,
+        );
         schedule(RETRY_DELAY);
       }
     } finally {
@@ -199,7 +231,16 @@ export function ChapterEditor({
     status("loading");
 
     void (async () => {
-      const draft = await drafts.read(chapterId);
+      let draft: Awaited<ReturnType<typeof drafts.read>>;
+      try {
+        draft = await drafts.read(chapterId);
+      } catch {
+        if (!cancelled) {
+          setLoadError("Lantern couldn't read local drafts on this device. Enable site storage and reload to protect unsaved writing.");
+          status("error", "Local draft storage is unavailable.");
+        }
+        return;
+      }
       let ch: ChapterWithContent;
       let offline: boolean;
       try {
@@ -284,7 +325,7 @@ export function ChapterEditor({
     (value: string) => {
       text.current = value;
       dirty.current = true;
-      void drafts.write(chapterId, value, version.current);
+      persistDraft(value, version.current);
       cb.current.onWords(chapterId, countWords(value), false);
       if (!blocked.current) {
         cb.current.onStatus("editing");
@@ -325,7 +366,7 @@ export function ChapterEditor({
     text.current = content;
     dirty.current = true;
     keepCopy.current = "restore";
-    void drafts.write(chapterId, content, version.current);
+    persistDraft(content, version.current);
     setInitialDoc(content);
     setEditorKey((k) => k + 1);
     cb.current.onWords(chapterId, countWords(content), false);
