@@ -19,6 +19,10 @@ run_worker_first = ["/api/*"]
 binding = "BUCKET"
 bucket_name = "lantern-manuscripts"
 
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "lantern-backups"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "lantern-db"
@@ -36,3 +40,6 @@ ACCESS_AUD = "1e574ca60c92c7dc4f16d769c40c82f2b3636c2dcb0061e6248b2e27d077d2a3"
 AI_MODEL = "claude-opus-5-5"
 AI_DAILY_LIMIT = "30"          # calls in any 24 hours
 AI_MONTHLY_BUDGET_USD = "10"   # estimated spend per calendar month (UTC)
+
+[triggers]
+crons = ["17 3 * * *"]

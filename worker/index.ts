@@ -4,6 +4,7 @@ import { BIBLE_KINDS } from "../shared/types";
 import { AiError, aiStatus, guardedMessage, type AiEnv } from "./ai";
 import { checkChapter, draftBibleEntry } from "./check";
 import { prepareBookCheck } from "./bookCheck";
+import { createBackup, type BackupEnv } from "./backups";
 import type {
   BibleEntry,
   BibleKind,
@@ -19,9 +20,7 @@ import type {
   Stats,
 } from "../shared/types";
 
-export interface Env extends AiEnv {
-  DB: D1Database;
-  BUCKET: R2Bucket;
+export interface Env extends AiEnv, BackupEnv {
   ASSETS: Fetcher;
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUD: string;
@@ -872,5 +871,13 @@ export default {
       console.error(e);
       return json({ error: "Server error" }, 500);
     }
+  },
+  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      createBackup(env).catch((e) => {
+        console.error("scheduled backup failed", e);
+        throw e;
+      }),
+    );
   },
 } satisfies ExportedHandler<Env>;

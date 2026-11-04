@@ -7,6 +7,7 @@
     "dev:api": "mkdir -p dist && wrangler dev",
     "build": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.worker.json --noEmit && vite build",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply lantern-db --local",
     "db:migrate": "wrangler d1 migrations apply lantern-db --remote",
     "deploy": "npm run build && npm run db:migrate && wrangler deploy"
@@ -36,8 +37,10 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "fake-indexeddb": "^6.2.7",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
+    "vitest": "^5.1.0",
     "wrangler": "^4.156.2"
   },
   "type": "module",
