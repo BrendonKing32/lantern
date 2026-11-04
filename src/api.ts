@@ -1,6 +1,8 @@
 import type {
   ChapterMeta,
   ChapterWithContent,
+  DeletedChapter,
+  DeletedProject,
   ProjectDetail,
   ProjectSummary,
   SaveResult,
@@ -48,6 +50,10 @@ export const api = {
   setArchived: (id: string, archived: boolean) =>
     request<{ id: string; archived_at: string | null }>("PATCH", `/api/projects/${id}`, { archived }),
   deleteProject: (id: string) => request<{ ok: true }>("DELETE", `/api/projects/${id}`),
+  deletedProjects: () => request<DeletedProject[]>("GET", "/api/trash/projects"),
+  restoreProject: (id: string) => request<ProjectSummary>("POST", `/api/projects/${id}/restore`),
+  deletedChapters: (projectId: string) => request<DeletedChapter[]>("GET", `/api/projects/${projectId}/trash`),
+  restoreChapter: (id: string) => request<ChapterMeta>("POST", `/api/chapters/${id}/restore`),
   createChapter: (projectId: string, title: string) =>
     request<ChapterMeta>("POST", `/api/projects/${projectId}/chapters`, { title }),
   reorder: (projectId: string, chapterIds: string[]) =>

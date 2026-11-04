@@ -3,16 +3,10 @@ import { api, describeError } from "../api";
 import { navigate } from "../router";
 import { loadShelf } from "../sync";
 import { LanternMark } from "./ProjectView";
-import type { ProjectSummary } from "../../shared/types";
+import { ago } from "../when";
+import type { DeletedProject, ProjectSummary } from "../../shared/types";
 
-function lastEdited(iso: string): string {
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 1) return "Edited just now";
-  if (mins < 60) return `Edited ${mins} min ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `Edited ${hrs} hr ago`;
-  return `Edited ${new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
-}
+const lastEdited = (iso: string) => ago("Edited", iso);
 
 export function ProjectList() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
@@ -20,6 +14,7 @@ export function ProjectList() {
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [offline, setOffline] = useState(false);
+  const [deleted, setDeleted] = useState<DeletedProject[]>([]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--glow", "0.35");
@@ -29,6 +24,8 @@ export function ProjectList() {
         setOffline(offline);
       })
       .catch((e) => setError(describeError(e)));
+    // Deleted novels are only listed online; offline the section just stays hidden.
+    api.deletedProjects().then(setDeleted).catch(() => {});
   }, []);
 
   const setArchived = async (p: ProjectSummary, archived: boolean) => {
@@ -41,10 +38,24 @@ export function ProjectList() {
   };
 
   const remove = async (p: ProjectSummary) => {
-    if (!confirm(`Delete “${p.title}”? It leaves your shelf for good, though its text is kept in storage.`)) return;
+    if (!confirm(`Delete “${p.title}”? It moves to Deleted at the bottom of the shelf, where you can restore it.`)) return;
     try {
       await api.deleteProject(p.id);
       setProjects((list) => list && list.filter((x) => x.id !== p.id));
+      const { id, title, chapter_count, word_count } = p;
+      setDeleted((d) => [{ id, title, chapter_count, word_count, deleted_at: new Date().toISOString() }, ...d]);
+    } catch (err) {
+      setError(describeError(err));
+    }
+  };
+
+  const restore = async (p: DeletedProject) => {
+    try {
+      const summary = await api.restoreProject(p.id);
+      setDeleted((d) => d.filter((x) => x.id !== p.id));
+      setProjects((list) =>
+        [summary, ...(list ?? []).filter((x) => x.id !== p.id)].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+      );
     } catch (err) {
       setError(describeError(err));
     }
@@ -96,7 +107,9 @@ export function ProjectList() {
 
       {projects && active.length === 0 && (
         <p className="shelf-empty">
-          {archived.length ? "Every novel is archived. Start a new one, or restore one below." : "Nothing on the shelf yet. Name your first novel to begin."}
+          {archived.length || deleted.length
+            ? "Nothing on the shelf right now. Start a new novel, or restore one below."
+            : "Nothing on the shelf yet. Name your first novel to begin."}
         </p>
       )}
 
@@ -126,6 +139,31 @@ export function ProjectList() {
           <ul className="books">
             {archived.map((p) => (
               <Book key={p.id} project={p} onRestore={() => setArchived(p, false)} onDelete={() => remove(p)} />
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {deleted.length > 0 && (
+        <details className="archive">
+          <summary>Deleted ({deleted.length})</summary>
+          <ul className="books">
+            {deleted.map((p) => (
+              <li className="book-item" key={p.id}>
+                <span className="book book-gone">
+                  <span className="book-name">{p.title}</span>
+                  <span className="book-meta">
+                    {p.word_count.toLocaleString()} words, {p.chapter_count}{" "}
+                    {p.chapter_count === 1 ? "chapter" : "chapters"}
+                  </span>
+                  <span className="book-meta book-edited">{ago("Deleted", p.deleted_at)}</span>
+                </span>
+                <span className="book-tools">
+                  <button className="icon-btn" aria-label={`Restore ${p.title}`} title="Restore to shelf" onClick={() => restore(p)}>
+                    <RestoreIcon />
+                  </button>
+                </span>
+              </li>
             ))}
           </ul>
         </details>
@@ -162,7 +200,7 @@ function Book({ project: p, onArchive, onRestore, onDelete }: BookProps) {
         )}
         {onRestore && (
           <button className="icon-btn" aria-label={`Restore ${p.title}`} title="Restore to shelf" onClick={onRestore}>
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 7.5A5 5 0 1 1 4.5 11.5M3 3.5v4h4" /></svg>
+            <RestoreIcon />
           </button>
         )}
         <button className="icon-btn" aria-label={`Delete ${p.title}`} title="Delete" onClick={onDelete}>
@@ -170,5 +208,13 @@ function Book({ project: p, onArchive, onRestore, onDelete }: BookProps) {
         </button>
       </span>
     </li>
+  );
+}
+
+export function RestoreIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M3 7.5A5 5 0 1 1 4.5 11.5M3 3.5v4h4" />
+    </svg>
   );
 }

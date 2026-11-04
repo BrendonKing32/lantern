@@ -1,6 +1,13 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { countWords } from "../shared/wordcount";
-import type { ChapterMeta, Snapshot, SnapshotReason } from "../shared/types";
+import type {
+  ChapterMeta,
+  DeletedChapter,
+  DeletedProject,
+  ProjectSummary,
+  Snapshot,
+  SnapshotReason,
+} from "../shared/types";
 
 export interface Env {
   DB: D1Database;
@@ -154,17 +161,43 @@ async function snapshotBeforeSave(env: Env, row: ChapterMeta, reason: SnapshotRe
 type Params = Record<string, string>;
 type Handler = (req: Request, env: Env, p: Params) => Promise<Response>;
 
+const PROJECT_SUMMARY = `
+  SELECT p.id, p.title, p.created_at, p.updated_at, p.archived_at, p.deleted_at,
+         COUNT(c.id) AS chapter_count, COALESCE(SUM(c.word_count), 0) AS word_count
+    FROM projects p
+    LEFT JOIN chapters c ON c.project_id = p.id AND c.deleted_at IS NULL`;
+
 const listProjects: Handler = async (_req, env) => {
   const { results } = await env.DB.prepare(
-    `SELECT p.id, p.title, p.created_at, p.updated_at, p.archived_at,
-            COUNT(c.id) AS chapter_count, COALESCE(SUM(c.word_count), 0) AS word_count
-       FROM projects p
-       LEFT JOIN chapters c ON c.project_id = p.id AND c.deleted_at IS NULL
-      WHERE p.deleted_at IS NULL
-      GROUP BY p.id
-      ORDER BY p.updated_at DESC`,
-  ).all();
-  return json(results);
+    `${PROJECT_SUMMARY} WHERE p.deleted_at IS NULL GROUP BY p.id ORDER BY p.updated_at DESC`,
+  ).all<ProjectSummary & { deleted_at: null }>();
+  return json(results.map(({ deleted_at: _, ...p }) => p));
+};
+
+const listDeletedProjects: Handler = async (_req, env) => {
+  const { results } = await env.DB.prepare(
+    `${PROJECT_SUMMARY} WHERE p.deleted_at IS NOT NULL GROUP BY p.id ORDER BY p.deleted_at DESC LIMIT 200`,
+  ).all<DeletedProject>();
+  return json(
+    results.map(({ id, title, deleted_at, chapter_count, word_count }) => ({
+      id, title, deleted_at, chapter_count, word_count,
+    })),
+  );
+};
+
+// Bring a deleted novel back to the shelf, with the chapters it had when deleted.
+const restoreProject: Handler = async (_req, env, p) => {
+  const res = await env.DB.prepare(
+    "UPDATE projects SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+  )
+    .bind(p.id)
+    .run();
+  if (!res.meta.changes) throw new HttpError(404, "That novel isn't in Deleted");
+  const row = await env.DB.prepare(`${PROJECT_SUMMARY} WHERE p.id = ? GROUP BY p.id`)
+    .bind(p.id)
+    .first<ProjectSummary & { deleted_at: null }>();
+  const { deleted_at: _, ...summary } = row!;
+  return json(summary);
 };
 
 const createProject: Handler = async (req, env) => {
@@ -210,6 +243,40 @@ const deleteProject: Handler = async (_req, env, p) => {
   await requireProject(env, p.id);
   await env.DB.prepare("UPDATE projects SET deleted_at = ? WHERE id = ?").bind(now(), p.id).run();
   return json({ ok: true });
+};
+
+const listDeletedChapters: Handler = async (_req, env, p) => {
+  await requireProject(env, p.id);
+  const { results } = await env.DB.prepare(
+    `SELECT id, title, word_count, deleted_at FROM chapters
+      WHERE project_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 200`,
+  )
+    .bind(p.id)
+    .all<DeletedChapter>();
+  return json(results);
+};
+
+// A restored chapter goes back at the end of the book; drag it where it belongs.
+const restoreChapter: Handler = async (_req, env, p) => {
+  const row = await env.DB.prepare(
+    `SELECT project_id FROM chapters
+      WHERE id = ? AND deleted_at IS NOT NULL
+        AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)`,
+  )
+    .bind(p.id)
+    .first<{ project_id: string }>();
+  if (!row) throw new HttpError(404, "That chapter isn't in Recently deleted");
+  const ts = now();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE chapters SET deleted_at = NULL,
+              position = (SELECT COALESCE(MAX(position), -1) + 1 FROM chapters
+                           WHERE project_id = ? AND deleted_at IS NULL)
+        WHERE id = ?`,
+    ).bind(row.project_id, p.id),
+    env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id),
+  ]);
+  return json(await getChapterRow(env, p.id));
 };
 
 const createChapter: Handler = async (req, env, p) => {
@@ -343,6 +410,10 @@ const getSnapshot: Handler = async (_req, env, p) => {
 
 const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/projects", listProjects],
+  ["GET", "/api/trash/projects", listDeletedProjects],
+  ["POST", "/api/projects/:id/restore", restoreProject],
+  ["GET", "/api/projects/:id/trash", listDeletedChapters],
+  ["POST", "/api/chapters/:id/restore", restoreChapter],
   ["POST", "/api/projects", createProject],
   ["GET", "/api/projects/:id", getProject],
   ["PATCH", "/api/projects/:id", updateProject],

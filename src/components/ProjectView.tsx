@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, describeError } from "../api";
 import { navigate } from "../router";
 import { loadProject } from "../sync";
+import { ago } from "../when";
+import { RestoreIcon } from "./ProjectList";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type SaveState } from "./ChapterEditor";
-import type { ChapterMeta, ProjectDetail } from "../../shared/types";
+import type { ChapterMeta, DeletedChapter, ProjectDetail } from "../../shared/types";
 
 // Session words at which the lamp reaches full brightness.
 const FULL_GLOW_WORDS = 1000;
@@ -35,6 +37,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [offline, setOffline] = useState(false);
+  const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const sessionStart = useRef<Record<string, number>>({});
 
   const load = useCallback(() => {
@@ -48,6 +51,10 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [projectId]);
 
   useEffect(load, [load]);
+  useEffect(() => {
+    // Only listed online; offline the section stays hidden.
+    api.deletedChapters(projectId).then(setTrash).catch(() => {});
+  }, [projectId]);
 
   const chapters = detail?.chapters ?? [];
   const selected = chapters.find((c) => c.id === chapterId) ?? chapters[0];
@@ -159,13 +166,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
       alert("A novel needs at least one chapter.");
       return;
     }
-    if (!confirm(`Delete “${c.title}”? It moves out of the book, and its text is kept in storage.`)) return;
+    if (!confirm(`Delete “${c.title}”? It moves to Recently deleted under the chapter list, where you can restore it.`)) return;
     try {
       await api.deleteChapter(c.id);
+      setTrash((t) => [{ id: c.id, title: c.title, word_count: wordsFor(c), deleted_at: new Date().toISOString() }, ...t]);
       const idx = chapters.findIndex((x) => x.id === c.id);
       const rest = chapters.filter((x) => x.id !== c.id);
       setDetail((d) => (d ? { ...d, chapters: rest } : d));
       if (c.id === selected?.id) navigate(projectId, rest[Math.max(0, idx - 1)].id, true);
+    } catch (e) {
+      alert(describeError(e));
+    }
+  };
+
+  const restoreChapter = async (c: DeletedChapter) => {
+    try {
+      const ch = await api.restoreChapter(c.id);
+      setTrash((t) => t.filter((x) => x.id !== c.id));
+      setDetail((d) => (d ? { ...d, chapters: [...d.chapters.filter((x) => x.id !== ch.id), ch] } : d));
+      select(ch.id);
     } catch (e) {
       alert(describeError(e));
     }
@@ -238,6 +257,32 @@ export function ProjectView({ projectId, chapterId }: Props) {
         <button className="add-chapter" onClick={addChapter}>
           Add chapter
         </button>
+
+        {trash.length > 0 && (
+          <details className="trash">
+            <summary>Recently deleted ({trash.length})</summary>
+            <ul className="trash-list">
+              {trash.map((c) => (
+                <li key={c.id} className="trash-item">
+                  <span className="trash-text">
+                    <span className="trash-title">{c.title}</span>
+                    <span className="trash-meta">
+                      {c.word_count.toLocaleString()} words · {ago("deleted", c.deleted_at)}
+                    </span>
+                  </span>
+                  <button
+                    className="icon-btn"
+                    aria-label={`Restore ${c.title}`}
+                    title="Restore to the end of the book"
+                    onClick={() => restoreChapter(c)}
+                  >
+                    <RestoreIcon />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </aside>
 
       <button className="scrim" aria-label="Close chapters" onClick={() => setDrawerOpen(false)} tabIndex={drawerOpen ? 0 : -1} />
