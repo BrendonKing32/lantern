@@ -79,18 +79,26 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 - **Reorder** chapters: drag them, or focus one and use Space plus the arrow keys.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
 - **The lamp:** the light behind the page brightens as you add words in a session, reaching full glow at 1,000.
-- **Saving:** every keystroke is kept in the browser first, then saved about a
+- **Saving:** every keystroke is kept on the device first (IndexedDB), then saved about a
   second after you pause. When you're offline it keeps retrying, and reloading is safe.
+- **History:** the History button shows earlier versions of the open chapter. Lantern keeps a
+  copy at most every 10 minutes while you write, plus one before every restore and before you
+  replace another device's version. Pick one to read it, then **Restore this version**. Restoring
+  is itself undoable from History. Copies live in R2 under each chapter's `history/` folder.
+- **Offline:** once a novel has been opened online, the app, the shelf and every chapter of that
+  novel are kept on the device, so Lantern opens and lets you write with no connection. Unsaved
+  writing from any chapter is sent when you reconnect. Creating, renaming, reordering, deleting
+  and restoring still need a connection.
 - **Two devices:** if a chapter was saved somewhere else while you were writing,
   Lantern stops and asks which version to keep instead of overwriting either one.
-- **Deleted chapters** leave the book, but their text stays in R2.
+- **Deleted chapters** move to **Recently deleted** under the chapter list. The arrow button
+  puts one back at the end of the book, with its text and history intact.
 - **Archive a novel:** on the shelf, hover it and use the box button. Archived novels
   move to the **Archived** section at the bottom, where the arrow button puts them back.
-- **Delete a novel:** the trash button, on the shelf or in Archived. It leaves the
-  shelf for good, but its chapter text stays in R2.
+- **Delete a novel:** the trash button, on the shelf or in Archived. It moves to **Deleted**
+  at the bottom of the shelf, where the arrow button restores it with all its chapters.
 
 ## What's next
 
-- **Milestone 2:** IndexedDB offline cache and sync queue, version history, restoring deleted chapters
 - **Milestone 3:** corkboard with synopses, goals and streaks, export (.md zip, .docx, .epub)
 - **Milestone 4:** story bible with `[[wikilinks]]`, Claude continuity helpers

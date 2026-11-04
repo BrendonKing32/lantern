@@ -8,6 +8,21 @@ export interface ProjectSummary {
   word_count: number;
 }
 
+export interface DeletedProject {
+  id: string;
+  title: string;
+  deleted_at: string;
+  chapter_count: number;
+  word_count: number;
+}
+
+export interface DeletedChapter {
+  id: string;
+  title: string;
+  word_count: number;
+  deleted_at: string;
+}
+
 export interface ChapterMeta {
   id: string;
   project_id: string;

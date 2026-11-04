@@ -755,3 +755,55 @@ body.dusk .history {
   color: var(--text-soft);
   font-size: 0.8125rem;
 }
+
+/* ---------- deleted novels and chapters ---------- */
+
+.archive + .archive {
+  margin-top: 1rem;
+}
+.book-gone {
+  cursor: default;
+}
+.trash {
+  margin-top: 1.5rem;
+  font-size: 0.8125rem;
+}
+.trash summary {
+  padding: 0.3rem 0.5rem;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.trash summary:hover {
+  color: var(--text-soft);
+}
+.trash-list {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+}
+.trash-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.25rem 0.35rem 0.5rem;
+  border-radius: 8px;
+}
+.trash-item:hover {
+  background: rgb(255 255 255 / 0.03);
+}
+.trash-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.trash-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
+}
+.trash-meta {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
