@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { ThemePicker } from "./ThemePicker";
 import { api, describeError } from "../api";
 import { navigate } from "../router";
 import { loadShelf } from "../sync";
@@ -86,6 +87,7 @@ export function ProjectList() {
         <LanternMark />
         <h1 className="shelf-name">Lantern</h1>
         <span className="desk-spacer" />
+        <ThemePicker />
         {!offline && (
           <button className="btn btn-quiet" onClick={() => setClaudeOpen(true)}>
             Claude

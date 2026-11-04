@@ -126,6 +126,7 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   page open; the last result is saved and shows again on any device. Books up to about
   160,000 words fit in one check.
 - **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
+- **Themes:** pick Lantern, Hearth, Pine, Tide, or Parchment (a light theme) from the menu on the shelf or in the desk bar. Each device remembers its own choice. Dusk mode works on top of any theme.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
   full glow when you meet the goal; without one, at 1,000 words in a session.
 - **Daily goal and streak:** the panel at the top of the shelf shows today's words, your

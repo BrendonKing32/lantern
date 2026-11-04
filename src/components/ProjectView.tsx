@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ThemePicker } from "./ThemePicker";
 import { api, describeError } from "../api";
 import { navigate } from "../router";
 import { loadProject } from "../sync";
@@ -471,6 +472,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
               Check
             </button>
           )}
+          <ThemePicker />
           <button
             className={`btn btn-quiet dusk-toggle${dusk ? " is-on" : ""}`}
             aria-pressed={dusk}
