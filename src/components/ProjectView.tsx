@@ -4,11 +4,12 @@ import { navigate } from "../router";
 import { loadProject } from "../sync";
 import { ago } from "../when";
 import { RestoreIcon } from "./ProjectList";
+import { TargetMeter } from "./TargetMeter";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type SaveState } from "./ChapterEditor";
-import type { ChapterMeta, DeletedChapter, ProjectDetail } from "../../shared/types";
+import type { ChapterMeta, DeletedChapter, ProjectDetail, SaveResult } from "../../shared/types";
 
-// Session words at which the lamp reaches full brightness.
+// With no daily goal, session words at which the lamp reaches full brightness.
 const FULL_GLOW_WORDS = 1000;
 
 const STATUS_TEXT: Record<SaveState, string> = {
@@ -38,6 +39,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [offline, setOffline] = useState(false);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
+  // Words written today across all novels, and the daily goal (null: none).
+  const [today, setToday] = useState<{ words: number; goal: number | null } | null>(null);
   const sessionStart = useRef<Record<string, number>>({});
 
   const load = useCallback(() => {
@@ -54,6 +57,10 @@ export function ProjectView({ projectId, chapterId }: Props) {
   useEffect(() => {
     // Only listed online; offline the section stays hidden.
     api.deletedChapters(projectId).then(setTrash).catch(() => {});
+    api
+      .stats()
+      .then((s) => setToday({ words: s.today, goal: s.daily_goal }))
+      .catch(() => {});
   }, [projectId]);
 
   const chapters = detail?.chapters ?? [];
@@ -97,19 +104,23 @@ export function ProjectView({ projectId, chapterId }: Props) {
   );
 
   useEffect(() => {
-    const glow = 0.35 + 0.65 * Math.min(1, sessionWords / FULL_GLOW_WORDS);
+    // The lamp is fully lit once today's goal is met, or after 1,000 words in a session.
+    const progress = today?.goal ? Math.max(0, today.words) / today.goal : sessionWords / FULL_GLOW_WORDS;
+    const glow = 0.35 + 0.65 * Math.min(1, progress);
     document.documentElement.style.setProperty("--glow", glow.toFixed(3));
-  }, [sessionWords]);
+  }, [sessionWords, today]);
 
   const onWords = useCallback((id: string, words: number, initial: boolean) => {
     if (initial && sessionStart.current[id] === undefined) sessionStart.current[id] = words;
     setLive((prev) => (prev[id] === words ? prev : { ...prev, [id]: words }));
   }, []);
 
-  const onSaved = useCallback((id: string, info: { version: number; word_count: number }) => {
+  const onSaved = useCallback((id: string, info: SaveResult) => {
+    const { today_words, ...meta } = info;
+    if (today_words !== undefined) setToday((t) => (t ? { ...t, words: today_words } : t));
     setDetail((d) =>
       d
-        ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, ...info } : c)) }
+        ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, ...meta } : c)) }
         : d,
     );
   }, []);
@@ -243,6 +254,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
         )}
         {offline && <p className="offline-note">Offline. Writing is kept on this device and saves when you reconnect.</p>}
         <p className="book-count">{bookWords.toLocaleString()} words in {chapters.length} {chapters.length === 1 ? "chapter" : "chapters"}</p>
+        <TargetMeter
+          project={detail.project}
+          words={bookWords}
+          onChange={(t) => setDetail((d) => (d ? { ...d, project: { ...d.project, ...t } } : d))}
+        />
 
         <ChapterList
           chapters={chapters}
@@ -330,6 +346,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
           <span className="desk-spacer" />
           {selected && <span>{wordsFor(selected).toLocaleString()} words</span>}
           {sessionWords > 0 && <span className="session">+{sessionWords.toLocaleString()} this session</span>}
+          {today?.goal && (
+            <span className={Math.max(0, today.words) >= today.goal ? "session" : undefined}>
+              {Math.max(0, today.words).toLocaleString()} / {today.goal.toLocaleString()} today
+            </span>
+          )}
         </footer>
       </main>
     </div>

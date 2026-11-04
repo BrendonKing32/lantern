@@ -4,9 +4,11 @@ import type {
   ChapterMeta,
   DeletedChapter,
   DeletedProject,
+  ProjectInfo,
   ProjectSummary,
   Snapshot,
   SnapshotReason,
+  Stats,
 } from "../shared/types";
 
 export interface Env {
@@ -100,10 +102,13 @@ async function getChapterRow(env: Env, id: string): Promise<ChapterMeta> {
   return row;
 }
 
-async function requireProject(env: Env, id: string) {
-  const row = await env.DB.prepare("SELECT id, title, created_at, updated_at FROM projects WHERE id = ? AND deleted_at IS NULL")
+async function requireProject(env: Env, id: string): Promise<ProjectInfo> {
+  const row = await env.DB.prepare(
+    `SELECT id, title, created_at, updated_at, target_words, target_date
+       FROM projects WHERE id = ? AND deleted_at IS NULL`,
+  )
     .bind(id)
-    .first<{ id: string; title: string; created_at: string; updated_at: string }>();
+    .first<ProjectInfo>();
   if (!row) throw new HttpError(404, "Project not found");
   return row;
 }
@@ -239,6 +244,21 @@ const updateProject: Handler = async (req, env, p) => {
   return json({ id: p.id, title });
 };
 
+const setTarget: Handler = async (req, env, p) => {
+  await requireProject(env, p.id);
+  const b = await body<{ target_words?: unknown; target_date?: unknown }>(req);
+  const words = b.target_words ?? null;
+  const date = b.target_date ?? null;
+  if (words !== null && !(Number.isInteger(words) && (words as number) > 0 && (words as number) <= 10_000_000)) {
+    throw new HttpError(400, "target_words must be a whole number above zero");
+  }
+  if (date !== null && !isDay(date)) throw new HttpError(400, "target_date must be YYYY-MM-DD");
+  await env.DB.prepare("UPDATE projects SET target_words = ?, target_date = ? WHERE id = ?")
+    .bind(words, words === null ? null : date, p.id)
+    .run();
+  return json({ target_words: words, target_date: words === null ? null : date });
+};
+
 const deleteProject: Handler = async (_req, env, p) => {
   await requireProject(env, p.id);
   await env.DB.prepare("UPDATE projects SET deleted_at = ? WHERE id = ?").bind(now(), p.id).run();
@@ -318,7 +338,7 @@ const getChapter: Handler = async (_req, env, p) => {
 };
 
 const saveChapter: Handler = async (req, env, p) => {
-  const b = await body<{ content?: unknown; baseVersion?: unknown; snapshot?: unknown }>(req);
+  const b = await body<{ content?: unknown; baseVersion?: unknown; snapshot?: unknown; day?: unknown }>(req);
   if (typeof b.content !== "string") throw new HttpError(400, "content must be a string");
   const reason: SnapshotReason =
     b.snapshot === "restore" || b.snapshot === "conflict" ? b.snapshot : "auto";
@@ -360,9 +380,22 @@ const saveChapter: Handler = async (req, env, p) => {
       .run();
     throw e;
   }
-  await env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id).run();
+  // Count the words this save added (or removed) toward the writer's day.
+  // Putting back an old version from History isn't writing, so it doesn't count.
+  const day = isDay(b.day) ? b.day : ts.slice(0, 10);
+  const delta = reason === "restore" ? 0 : words - row.word_count;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id),
+    env.DB.prepare(
+      `INSERT INTO daily_words (day, project_id, words) VALUES (?, ?, ?)
+         ON CONFLICT (day, project_id) DO UPDATE SET words = words + excluded.words`,
+    ).bind(day, row.project_id, delta),
+  ]);
+  const today = await env.DB.prepare("SELECT COALESCE(SUM(words), 0) AS w FROM daily_words WHERE day = ?")
+    .bind(day)
+    .first<{ w: number }>();
 
-  return json({ version: b.baseVersion + 1, word_count: words, updated_at: ts });
+  return json({ version: b.baseVersion + 1, word_count: words, updated_at: ts, today_words: today?.w ?? 0 });
 };
 
 const updateChapter: Handler = async (req, env, p) => {
@@ -406,10 +439,89 @@ const getSnapshot: Handler = async (_req, env, p) => {
   return json({ ...snap, content: await obj.text() });
 };
 
+// ---------- goals and streaks ----------
+
+const DAY_MS = 86_400_000;
+const shiftDay = (day: string, by: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + by * DAY_MS).toISOString().slice(0, 10);
+
+function isDay(v: unknown): v is string {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+}
+
+async function dailyGoal(env: Env): Promise<number | null> {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'daily_goal'").first<{ value: string }>();
+  const n = row ? Number(row.value) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+const getStats: Handler = async (req, env) => {
+  const q = new URL(req.url).searchParams.get("today");
+  const today = isDay(q) ? q : now().slice(0, 10);
+  const goal = await dailyGoal(env);
+  // A year back is plenty for the streak; the calendar shows the last 12 weeks.
+  const { results } = await env.DB.prepare(
+    `SELECT day, SUM(words) AS words FROM daily_words
+      WHERE day >= ? AND day <= ? GROUP BY day ORDER BY day`,
+  )
+    .bind(shiftDay(today, -400), today)
+    .all<{ day: string; words: number }>();
+  const byDay = new Map(results.map((r) => [r.day, r.words]));
+  const met = (d: string) => (byDay.get(d) ?? 0) >= (goal ?? 1);
+
+  // Today only adds to the streak once it's met; until then it can't break it.
+  let streak = 0;
+  for (let d = met(today) ? today : shiftDay(today, -1); met(d); d = shiftDay(d, -1)) streak++;
+
+  let best = 0;
+  let run = 0;
+  let prev: string | null = null;
+  for (const r of results) {
+    if (r.words < (goal ?? 1)) {
+      run = 0;
+    } else {
+      run = prev !== null && shiftDay(prev, 1) === r.day && run > 0 ? run + 1 : 1;
+      best = Math.max(best, run);
+    }
+    prev = r.day;
+  }
+
+  const since = shiftDay(today, -83);
+  const stats: Stats = {
+    daily_goal: goal,
+    today: byDay.get(today) ?? 0,
+    streak,
+    best_streak: Math.max(best, streak),
+    days: results.filter((r) => r.day >= since && r.words !== 0),
+  };
+  return json(stats);
+};
+
+const setGoal: Handler = async (req, env) => {
+  const b = await body<{ daily_goal?: unknown }>(req);
+  const goal = b.daily_goal ?? null;
+  if (goal !== null && !(Number.isInteger(goal) && (goal as number) > 0 && (goal as number) <= 1_000_000)) {
+    throw new HttpError(400, "daily_goal must be a whole number above zero");
+  }
+  if (goal === null) {
+    await env.DB.prepare("DELETE FROM settings WHERE key = 'daily_goal'").run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO settings (key, value) VALUES ('daily_goal', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )
+      .bind(String(goal))
+      .run();
+  }
+  return json({ daily_goal: goal });
+};
+
 // ---------- router ----------
 
 const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/projects", listProjects],
+  ["GET", "/api/stats", getStats],
+  ["PUT", "/api/goal", setGoal],
+  ["PUT", "/api/projects/:id/target", setTarget],
   ["GET", "/api/trash/projects", listDeletedProjects],
   ["POST", "/api/projects/:id/restore", restoreProject],
   ["GET", "/api/projects/:id/trash", listDeletedChapters],
