@@ -164,7 +164,7 @@ function LimitNote({ status, limitReached }: { status: AiStatus | null; limitRea
 const CHAPTER_KIND: Record<FindingKind, string> = {
   contradiction: "Contradiction",
   internal: "Contradicts itself",
-  new_fact: "Not in the bible yet",
+  new_fact: "Not in the story guide yet",
 };
 
 const resultKey = (chapterId: string) => `lantern:check:${chapterId}`;
@@ -306,12 +306,12 @@ function ChapterCheck({
   return (
     <>
       <p className="history-note">
-        Claude reads “{chapter.title}” alongside the bible entries it mentions and the synopses of earlier chapters, and
+        Claude reads “{chapter.title}” alongside the story guide entries it mentions and the synopses of earlier chapters, and
         points out anything that doesn't line up.
       </p>
       <dl className="check-send">
         <div>
-          <dt>Bible entries</dt>
+          <dt>Story Guide entries</dt>
           <dd>
             {preview.mentioned.length
               ? preview.mentioned.map((e) => e.name).join(", ")
@@ -376,7 +376,7 @@ function ChapterCheck({
                   {f.suggestion && <p className="finding-fix">{f.suggestion}</p>}
                   {f.kind === "new_fact" && (
                     addedEntries[i] ? (
-                      <p className="entry-draft-added" role="status">Added “{addedEntries[i]}” to the story bible.</p>
+                      <p className="entry-draft-added" role="status">Added “{addedEntries[i]}” to the story guide.</p>
                     ) : (
                       <>
                         <button
@@ -386,10 +386,10 @@ function ChapterCheck({
                         >
                           {drafting === i
                             ? "Preparing a suggestion…"
-                            : `${entryDrafts[i] ? "Draft another suggestion" : "Draft Bible entry"} · about ${money(preview.draftEstimate)}`}
+                            : `${entryDrafts[i] ? "Draft another suggestion" : "Draft Story Guide entry"} · about ${money(preview.draftEstimate)}`}
                         </button>
                         <p className="entry-draft-guidance">
-                          Claude uses this chapter, the selected passage and Bible entry names; it won't change your writing.
+                          Claude uses this chapter, the selected passage and Story Guide entry names; it won't change your writing.
                         </p>
                         {entryDrafts[i] && (
                           <EntryDraftReview
@@ -463,7 +463,7 @@ function EntryDraftReview({
         />
       </label>
       <label>
-        Bible notes
+        Story Guide notes
         <textarea value={draft.body} rows={5} onChange={(e) => onChange({ body: e.target.value })} />
       </label>
       <p className="entry-draft-rationale">{draft.rationale}</p>
@@ -476,7 +476,7 @@ function EntryDraftReview({
           onClick={() => onSave(aliases.split(",").map((a) => a.trim()).filter(Boolean))}
           disabled={busy || !draft.name.trim() || !draft.body.trim()}
         >
-          {busy ? "Adding…" : "Add to story bible"}
+          {busy ? "Adding…" : "Add to story guide"}
         </button>
         <button className="btn btn-quiet" onClick={onDiscard} disabled={busy}>Discard</button>
       </div>
@@ -489,7 +489,7 @@ function EntryDraftReview({
 const BOOK_KIND: Record<BookFindingKind, string> = {
   contradiction: "Contradiction",
   timeline: "Timeline",
-  bible: "Bible out of date",
+  bible: "Story Guide out of date",
 };
 
 /** Roughly what fits in one book check: about a million characters. */
@@ -538,7 +538,7 @@ function BookCheck({
 
   const words = chapters.reduce((n, c) => n + wordsFor(c), 0);
   const notes = entries.reduce((n, e) => n + e.body.length, 0);
-  // About 1.35 tokens a word of English, plus the bible, and around ten
+  // About 1.35 tokens a word of English, plus the story guide, and around ten
   // thousand tokens of reasoning and findings out, at published prices.
   const estimate = ((words * 1.35 + notes / 4 + 2000) * 4) / 1e6 + (10_000 * 20) / 1e6;
   const tooLong = words > MAX_BOOK_WORDS;
@@ -587,8 +587,8 @@ function BookCheck({
   return (
     <>
       <p className="history-note">
-        Claude reads every chapter in order, with the whole story bible, and points out contradictions between chapters,
-        timeline problems, and places the bible has fallen behind the book.
+        Claude reads every chapter in order, with the whole story guide, and points out contradictions between chapters,
+        timeline problems, and places the story guide has fallen behind the book.
       </p>
       <dl className="check-send">
         <div>
@@ -598,7 +598,7 @@ function BookCheck({
           </dd>
         </div>
         <div>
-          <dt>Bible</dt>
+          <dt>Story Guide</dt>
           <dd>
             {entries.length} {entries.length === 1 ? "entry" : "entries"}
           </dd>
