@@ -11,7 +11,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** The bible entry behind a [[link]], shown beside the page while writing. */
+/** The story guide entry behind a [[link]], shown beside the page while writing. */
 export function LinkPeek({ name, entry, offline, onEdit, onCreate, onClose }: Props) {
   const [kind, setKind] = useState<BibleKind>("character");
   const [busy, setBusy] = useState(false);
@@ -25,9 +25,9 @@ export function LinkPeek({ name, entry, offline, onEdit, onCreate, onClose }: Pr
   }, [onClose]);
 
   return (
-    <aside className="history peek" aria-label={entry ? `Story bible: ${entry.name}` : `No entry for ${name}`}>
+    <aside className="history peek" aria-label={entry ? `Story Guide: ${entry.name}` : `No entry for ${name}`}>
       <header className="history-head">
-        <h2 className="history-title">{entry ? KIND_ONE[entry.kind] : "Story bible"}</h2>
+        <h2 className="history-title">{entry ? KIND_ONE[entry.kind] : "Story Guide"}</h2>
         <span className="desk-spacer" />
         <button className="icon-btn" aria-label="Close" title="Close (Esc)" onClick={onClose}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
@@ -40,13 +40,13 @@ export function LinkPeek({ name, entry, offline, onEdit, onCreate, onClose }: Pr
             {entry.aliases.length > 0 && <p className="peek-aka">Also called {entry.aliases.join(", ")}</p>}
             <div className="peek-body">{entry.body.trim() || <span className="peek-empty">No notes yet.</span>}</div>
             <button className="btn btn-lamp" onClick={() => onEdit(entry)}>
-              Edit in the bible
+              Edit in the story guide
             </button>
           </>
         ) : (
           <>
             <h3 className="peek-name">{name}</h3>
-            <p className="history-note">There's no story bible entry called “{name}” yet.</p>
+            <p className="history-note">There's no story guide entry called “{name}” yet.</p>
             {offline ? (
               <p className="history-note">Connect to the internet to add it.</p>
             ) : (

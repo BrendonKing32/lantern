@@ -30,7 +30,7 @@ interface Props {
   onSaved: (chapterId: string, info: SaveResult) => void;
   onStatus: (state: SaveState, detail?: string) => void;
   historyOpen: boolean;
-  /** Story bible entries, for [[links]]. */
+  /** Story guide entries, for [[links]]. */
   entries: BibleEntry[];
   onOpenLink: (name: string) => void;
   /** Check grammar and spelling with Harper (otherwise the browser's spellcheck is used). */
@@ -122,7 +122,7 @@ export function ChapterEditor({
   useEffect(() => {
     if (!view.current) return;
     view.current.dispatch({ effects: entriesChanged.of(null) });
-    recheckGrammar(view.current); // bible names aren't misspellings
+    recheckGrammar(view.current); // story guide names aren't misspellings
   }, [entries]);
   useEffect(() => {
     view.current?.dispatch({ effects: grammarSlot.current.reconfigure(proofing(grammarOn)) });
