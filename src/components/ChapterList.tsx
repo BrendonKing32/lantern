@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -74,11 +74,12 @@ interface RowProps {
 }
 
 function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDelete }: RowProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: chapter.id,
   });
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(chapter.title);
+  const chapterButtonRef = useRef<HTMLButtonElement>(null);
 
   const commit = () => {
     setRenaming(false);
@@ -92,9 +93,17 @@ function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDe
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={`chapter${selected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}`}
-      {...attributes}
-      {...listeners}
     >
+      <button
+        ref={setActivatorNodeRef}
+        className="chapter-drag icon-btn"
+        {...attributes}
+        {...listeners}
+        aria-label={`Reorder ${chapter.title}`}
+        title="Drag to reorder"
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v1M11 3.5v1M5 7.5v1M11 7.5v1M5 11.5v1M11 11.5v1" /></svg>
+      </button>
       {renaming ? (
         <input
           className="chapter-rename"
@@ -106,15 +115,20 @@ function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDe
           onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
             e.stopPropagation();
-            if (e.key === "Enter") commit();
+            if (e.key === "Enter") {
+              commit();
+              requestAnimationFrame(() => chapterButtonRef.current?.focus());
+            }
             if (e.key === "Escape") {
               setDraft(chapter.title);
               setRenaming(false);
+              requestAnimationFrame(() => chapterButtonRef.current?.focus());
             }
           }}
         />
       ) : (
         <button
+          ref={chapterButtonRef}
           className="chapter-open"
           aria-current={selected ? "page" : undefined}
           onClick={() => onSelect(chapter.id)}

@@ -139,7 +139,7 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
 ## Using it
 
 - **Rename** a chapter or the novel: double-click its title, or use the pencil button.
-- **Reorder** chapters: drag them, or focus one and use Space plus the arrow keys.
+- **Reorder** chapters: drag the handle beside a chapter, or focus the handle and use Space plus the arrow keys.
 - **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
   index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
   to reorder the book, click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
