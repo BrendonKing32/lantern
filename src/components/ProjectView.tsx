@@ -49,9 +49,50 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [save, setSave] = useState<{ state: SaveState; detail?: string }>({ state: "loading" });
   const [dusk, setDusk] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const drawerToggleRef = useRef<HTMLButtonElement>(null);
+  const drawerCloseRef = useRef<HTMLButtonElement>(null);
+  const renameProjectRef = useRef<HTMLButtonElement>(null);
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const closeDrawer = useCallback(() => {
+    setDrawerOpen(false);
+    if (window.matchMedia("(max-width: 800px)").matches) drawerToggleRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const mobile = window.matchMedia("(max-width: 800px)");
+    const onChange = () => {
+      if (!mobile.matches) setDrawerOpen(false);
+    };
+    mobile.addEventListener("change", onChange);
+    return () => mobile.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!drawerOpen || !window.matchMedia("(max-width: 800px)").matches) return;
+    drawerCloseRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Tab") {
+        const focusable = Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], summary, [tabindex]:not([tabindex="-1"])',
+        ) ?? []).filter((element) => element.getClientRects().length > 0);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [drawerOpen]);
   // Write (the editor), the corkboard or the story bible. Remembered per novel for this tab.
   const viewKey = `lantern:view:${projectId}`;
   const [view, setViewState] = useState<View>(() => {
@@ -181,16 +222,18 @@ export function ProjectView({ projectId, chapterId }: Props) {
   // Dusk mode: Cmd/Ctrl+Shift+D toggles, Esc leaves.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "d") {
         e.preventDefault();
         setDusk((d) => !d);
       } else if (e.key === "Escape") {
-        setDusk(false);
+        if (drawerOpen) closeDrawer();
+        else setDusk(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [drawerOpen, closeDrawer]);
 
   useEffect(() => {
     document.body.classList.toggle("dusk", dusk);
@@ -234,7 +277,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
   const select = (id: string) => {
-    setDrawerOpen(false);
+    if (drawerOpen) closeDrawer();
     navigate(projectId, id);
   };
 
@@ -364,10 +407,15 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   return (
     <div className={`workspace${drawerOpen ? " drawer-open" : ""}`}>
-      <aside className="sidebar" aria-label="Novel">
-        <button className="home-link" onClick={() => navigate()}>
-          <LanternMark /> Lantern
-        </button>
+      <aside id="novel-sidebar" ref={sidebarRef} className="sidebar" aria-label="Novel" role={drawerOpen ? "dialog" : undefined} aria-modal={drawerOpen || undefined}>
+        <div className="sidebar-head">
+          <button className="home-link" onClick={() => navigate()}>
+            <LanternMark /> Lantern
+          </button>
+          <button ref={drawerCloseRef} className="btn btn-quiet drawer-close" onClick={closeDrawer}>
+            Close
+          </button>
+        </div>
 
         {renamingTitle ? (
           <input
@@ -377,14 +425,26 @@ export function ProjectView({ projectId, chapterId }: Props) {
             aria-label="Novel title"
             onBlur={(e) => renameProject(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") renameProject(e.currentTarget.value);
-              if (e.key === "Escape") setRenamingTitle(false);
+              if (e.key === "Enter") {
+                renameProject(e.currentTarget.value);
+                requestAnimationFrame(() => renameProjectRef.current?.focus());
+              }
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                setRenamingTitle(false);
+                requestAnimationFrame(() => renameProjectRef.current?.focus());
+              }
             }}
           />
         ) : (
-          <h2 className="book-title" onDoubleClick={() => setRenamingTitle(true)} title="Double-click to rename">
-            {detail.project.title}
-          </h2>
+          <div className="book-title-row">
+            <h2 className="book-title" onDoubleClick={() => setRenamingTitle(true)} title="Double-click to rename">
+              {detail.project.title}
+            </h2>
+            <button ref={renameProjectRef} className="icon-btn book-title-edit" aria-label="Rename novel" onClick={() => setRenamingTitle(true)}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3z" /></svg>
+            </button>
+          </div>
         )}
         {offline && <p className="offline-note">Offline. Writing is kept on this device and saves when you reconnect.</p>}
         <p className="book-count">{bookWords.toLocaleString()} words in {chapters.length} {chapters.length === 1 ? "chapter" : "chapters"}</p>
@@ -435,11 +495,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
         )}
       </aside>
 
-      <button className="scrim" aria-label="Close chapters" onClick={() => setDrawerOpen(false)} tabIndex={drawerOpen ? 0 : -1} />
+      <button className="scrim" aria-label="Close chapters" onClick={closeDrawer} tabIndex={-1} />
 
       <main className="desk">
         <header className="desk-bar">
-          <button className="btn btn-quiet drawer-toggle" onClick={() => setDrawerOpen(true)}>
+          <button ref={drawerToggleRef} className="btn btn-quiet drawer-toggle" aria-controls="novel-sidebar" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>
             Chapters
           </button>
           <div className="view-switch" role="group" aria-label="View">
