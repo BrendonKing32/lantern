@@ -6,6 +6,7 @@ export const THEMES = [
   { id: "hearth", name: "Hearth", night: "#1f1814" },
   { id: "pine", name: "Pine", night: "#141d1a" },
   { id: "tide", name: "Tide", night: "#0f1d24" },
+  { id: "shadow", name: "Shadow", night: "#1b1725" },
   { id: "parchment", name: "Parchment", night: "#f4ecdc" },
 ] as const;
 

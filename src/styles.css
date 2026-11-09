@@ -625,6 +625,26 @@ select {
   --shadow-rgb: 2 8 12;
 }
 
+:root[data-theme="shadow"] {
+  --night: #1b1725;
+  --shade: #25202f;
+  --rule: #393247;
+  --wick: #ebe2f1;
+  --page-text: #efe6f3;
+  --text-soft: #b8aabd;
+  --text-faint: #867a92;
+  --mark: #71647e;
+  --lamp: #c4a0f4;
+  --lamp-ink: #21142c;
+  --lamp-hover: #d5b9fa;
+  --rose: #e89bb7;
+  --chip: #312a3b;
+  --lamp-rgb: 196 160 244;
+  --glow-rgb: 190 130 255;
+  --rose-rgb: 232 155 183;
+  --shadow-rgb: 8 4 14;
+}
+
 :root[data-theme="parchment"] {
   --night: #f4ecdc;
   --shade: #ebe1cd;
