@@ -39,6 +39,19 @@ function fakeDatabase(versionReads: number[] = [2, 2]) {
     bible_entries: [],
     ai_calls: [],
     book_checks: [],
+    scenes: [{
+      id: "s1",
+      project_id: "p1",
+      chapter_id: "c1",
+      title: "The meeting",
+      summary: "Mara learns the truth.",
+      pov: "Mara",
+      location: "The station",
+      status: "planned",
+      position: 0,
+      created_at: "2026-01-01",
+      updated_at: "2026-01-01",
+    }],
   };
   let versionRead = 0;
   const db = {
@@ -77,6 +90,7 @@ describe("scheduled backups", () => {
     expect(backups.contents.has(`${backupRoot}r2/${manuscriptKey}`)).toBe(true);
     const sql = backups.contents.get(`${backupRoot}database.sql`) as string;
     expect(sql).toContain("'Writer''s book'");
+    expect(sql).toContain(`INSERT INTO "scenes" ("id", "project_id", "chapter_id", "title", "summary", "pov", "location", "status", "position", "created_at", "updated_at") VALUES ('s1', 'p1', 'c1', 'The meeting', 'Mara learns the truth.', 'Mara', 'The station', 'planned', 0, '2026-01-01', '2026-01-01');`);
     expect(manifestsLast(backups.put.mock.calls.map(([key]) => String(key)))).toBe(true);
     expect(backups.contents.has(expiredKey)).toBe(false);
   });

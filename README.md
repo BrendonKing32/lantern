@@ -144,6 +144,12 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
   to reorder the book, click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
   **Open** a card to write that chapter.
+- **Scenes:** the **Scenes** view keeps planning cards inside each chapter. Add and reorder
+  scenes, then note a summary, POV, location and whether the scene is planned or drafted.
+  Scene cards are planning notes and do not split or change the chapter manuscript.
+- **Search:** the **Search** view finds literal words or phrases across the whole book, including
+  drafts saved on this device. Choose whether to match case, then open a result to jump to it
+  in the chapter editor. Search shows up to 500 matches at a time.
 - **Story bible:** the **Bible** view keeps the novel's characters, places, things and notes,
   each with a name, other names it goes by, and free-form notes that save as you type.
   Link to an entry from a chapter with `[[Name]]`, or `[[Name|shown text]]` to show different

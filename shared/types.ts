@@ -60,6 +60,22 @@ export interface ChapterMeta {
   updated_at: string;
 }
 
+export type SceneStatus = "planned" | "drafted";
+
+export interface SceneMeta {
+  id: string;
+  project_id: string;
+  chapter_id: string;
+  title: string;
+  summary: string;
+  pov: string;
+  location: string;
+  status: SceneStatus;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
 /** The English a novel is written in, for grammar and spelling checks. */
 export const DIALECTS = [
   { id: "american", name: "US English" },

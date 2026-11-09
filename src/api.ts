@@ -14,6 +14,7 @@ import type {
   ProjectDetail,
   ProjectSummary,
   SaveResult,
+  SceneMeta,
   Snapshot,
   SnapshotWithContent,
   Stats,
@@ -110,6 +111,15 @@ export const api = {
     ),
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
     request<ChapterMeta>("PATCH", `/api/chapters/${id}`, patch),
+  scenes: (projectId: string) => request<SceneMeta[]>("GET", `/api/projects/${projectId}/scenes`),
+  createScene: (chapterId: string) => request<SceneMeta>("POST", `/api/chapters/${chapterId}/scenes`),
+  updateScene: (
+    id: string,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status">>,
+  ) => request<SceneMeta>("PATCH", `/api/scenes/${id}`, patch),
+  deleteScene: (id: string) => request<{ ok: true }>("DELETE", `/api/scenes/${id}`),
+  reorderScenes: (projectId: string, chapterId: string, sceneIds: string[]) =>
+    request<{ ok: true }>("PUT", `/api/projects/${projectId}/scenes/order`, { chapterId, sceneIds }),
   deleteChapter: (id: string) => request<{ ok: true }>("DELETE", `/api/chapters/${id}`),
   listHistory: (chapterId: string) => request<Snapshot[]>("GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>
