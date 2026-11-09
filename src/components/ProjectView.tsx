@@ -8,6 +8,8 @@ import { RestoreIcon } from "./ProjectList";
 import { TargetMeter } from "./TargetMeter";
 import { ExportDialog } from "./ExportDialog";
 import { Corkboard } from "./Corkboard";
+import { SceneBoard } from "./SceneBoard";
+import { SearchPanel } from "./SearchPanel";
 import { BibleView } from "./BibleView";
 import { LinkPeek } from "./LinkPeek";
 import { loadBible } from "../sync";
@@ -18,10 +20,10 @@ import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEdi
 import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
 import { DIALECTS } from "../../shared/types";
-import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, ProjectDetail, SaveResult } from "../../shared/types";
+import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, ProjectDetail, SaveResult, SceneMeta } from "../../shared/types";
 
-type View = "write" | "board" | "bible";
-const VIEWS: View[] = ["write", "board", "bible"];
+type View = "write" | "board" | "scenes" | "search" | "bible";
+const VIEWS: View[] = ["write", "board", "scenes", "search", "bible"];
 
 // With no daily goal, session words at which the lamp reaches full brightness.
 const FULL_GLOW_WORDS = 1000;
@@ -120,6 +122,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
   };
   const [offline, setOffline] = useState(false);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
+  const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
+  const [scenesError, setScenesError] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState<{ id: string; content: string } | null>(null);
   // Words written today across all novels, and the daily goal (null: none).
   const [today, setToday] = useState<{ words: number; goal: number | null } | null>(null);
   const sessionStart = useRef<Record<string, number>>({});
@@ -152,6 +157,12 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const chapters = detail?.chapters ?? [];
   const selected = chapters.find((c) => c.id === chapterId) ?? chapters[0];
+  useEffect(() => {
+    if (view !== "scenes") return;
+    setScenes(null);
+    setScenesError(null);
+    api.scenes(projectId).then(setScenes).catch((e) => setScenesError(describeError(e)));
+  }, [projectId, view]);
   // Novels saved on this device before dialects existed have none: US English.
   const dialect: Dialect = detail?.project.dialect ?? "american";
 
@@ -238,6 +249,12 @@ export function ProjectView({ projectId, chapterId }: Props) {
     navigate(projectId, id);
   };
 
+  const openSearch = () => {
+    const text = editorControls.current?.text();
+    setSearchText(text !== undefined && selected ? { id: selected.id, content: text } : null);
+    setView("search");
+  };
+
   const addChapter = async () => {
     try {
       const ch = await api.createChapter(projectId, `Chapter ${chapters.length + 1}`);
@@ -304,6 +321,53 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const openFromBoard = (id: string) => {
     setView("write");
     select(id);
+  };
+
+  const addScene = async (chapterId: string): Promise<SceneMeta | null> => {
+    try {
+      const scene = await api.createScene(chapterId);
+      setScenes((list) => [...(list ?? []), scene]);
+      return scene;
+    } catch (e) {
+      alert(describeError(e));
+      return null;
+    }
+  };
+
+  const updateScene = async (
+    scene: SceneMeta,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status">>,
+  ) => {
+    try {
+      const updated = await api.updateScene(scene.id, patch);
+      setScenes((list) => list?.map((item) => item.id === scene.id ? updated : item) ?? []);
+    } catch (e) {
+      alert(describeError(e));
+      throw e;
+    }
+  };
+
+  const deleteScene = async (scene: SceneMeta) => {
+    if (!confirm(`Delete the scene plan “${scene.title}”?`)) return;
+    try {
+      await api.deleteScene(scene.id);
+      setScenes((list) => list?.filter((item) => item.id !== scene.id) ?? []);
+    } catch (e) {
+      alert(describeError(e));
+    }
+  };
+
+  const reorderScenes = async (chapterId: string, sceneIds: string[]) => {
+    setScenes((list) => list?.map((scene) => {
+      if (scene.chapter_id !== chapterId) return scene;
+      return { ...scene, position: sceneIds.indexOf(scene.id) };
+    }) ?? []);
+    try {
+      await api.reorderScenes(projectId, chapterId, sceneIds);
+    } catch (e) {
+      alert(describeError(e));
+      api.scenes(projectId).then(setScenes).catch((error) => setScenesError(describeError(error)));
+    }
   };
 
   const remove = async (c: ChapterMeta) => {
@@ -447,6 +511,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
               [
                 ["write", "Write"],
                 ["board", "Corkboard"],
+                ["scenes", "Scenes"],
                 ["bible", "Story Guide"],
               ] as const
             ).map(([v, label]) => (
@@ -461,6 +526,13 @@ export function ProjectView({ projectId, chapterId }: Props) {
             ))}
           </div>
           <span className="desk-spacer" />
+          <button
+            className={`btn btn-quiet${view === "search" ? " is-on" : ""}`}
+            aria-pressed={view === "search"}
+            onClick={openSearch}
+          >
+            Search
+          </button>
           <button className="btn btn-quiet" onClick={() => setExportOpen(true)}>
             Export
           </button>
@@ -543,6 +615,32 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onReorder={reorder}
             onSynopsis={setSynopsis}
             onAdd={addChapter}
+          />
+        ) : view === "scenes" ? (
+          scenesError ? (
+            <div className="screen-message" role="alert">
+              <p>Scene plans didn't load.</p>
+              <p className="screen-message-detail">{scenesError}</p>
+            </div>
+          ) : scenes ? (
+            <SceneBoard
+              chapters={chapters}
+              scenes={scenes}
+              offline={offline}
+              onAdd={addScene}
+              onUpdate={updateScene}
+              onDelete={(scene) => void deleteScene(scene)}
+              onMove={(chapterId, sceneIds) => void reorderScenes(chapterId, sceneIds)}
+            />
+          ) : <div className="screen-message">Loading scene plans…</div>
+        ) : view === "search" ? (
+          <SearchPanel
+            chapters={chapters}
+            currentChapter={searchText}
+            onOpen={(id, quote) => {
+              setView("write");
+              void openQuote(id, quote);
+            }}
           />
         ) : selected && (
           <ChapterEditor
