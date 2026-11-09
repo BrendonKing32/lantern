@@ -144,7 +144,7 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
   to reorder the book, click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
   **Open** a card to write that chapter.
-- **Story bible:** the **Bible** view keeps the novel's characters, places, things and notes,
+- **Story guide:** the **Story Guide** view keeps the novel's characters, places, things and notes,
   each with a name, other names it goes by, and free-form notes that save as you type.
   Link to an entry from a chapter with `[[Name]]`, or `[[Name|shown text]]` to show different
   words; typing `[[` suggests entries. Links to an entry are underlined in amber and links to
@@ -152,17 +152,17 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   Each entry lists the chapters that mention it, linked or not. Exports show links as plain
   text (`[[Mara|her]]` becomes "her"); the Markdown export keeps them as written.
 - **Continuity check:** while writing, **Check** sends the chapter on screen to Claude with
-  the bible entries it links to or names, the names of the other entries, and the synopses
-  of earlier chapters. Claude returns contradictions with the bible or earlier chapters,
-  places the chapter contradicts itself, and new facts worth adding to the bible, each
+  the story guide entries it links to or names, the names of the other entries, and the synopses
+  of earlier chapters. Claude returns contradictions with the story guide or earlier chapters,
+  places the chapter contradicts itself, and new facts worth adding to the story guide, each
   quoting the passage; click a quote to jump to it. The panel shows what will be sent and
-  the estimated cost first. For a new-fact finding, **Draft Bible entry** suggests a concise
+  the estimated cost first. For a new-fact finding, **Draft Story Guide entry** suggests a concise
   reference note from the chapter and selected passage. Review and edit the name, category,
   aliases and notes before adding it; nothing is saved automatically, and Claude never writes
   or changes the chapter. Needs Claude set up (see below); until then it says so.
 - **Whole-book check:** the **Whole book** tab in the same panel sends every chapter in
-  order (unsaved writing included) with the whole bible, and reports contradictions between
-  chapters, timeline problems, and where the bible has fallen behind. Findings are grouped by
+  order (unsaved writing included) with the whole story guide, and reports contradictions between
+  chapters, timeline problems, and where the story guide has fallen behind. Findings are grouped by
   chapter; click a quote to open that chapter at it. A run takes a few minutes, so keep the
   page open; the last result is saved and shows again on any device. Books up to about
   160,000 words fit in one check.
@@ -170,7 +170,7 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   bar (or **Grammar off**), and [Harper](https://writewithharper.com) checks the chapter as you write and underlines problems: rose for spelling, amber for
   grammar, dotted for style. Hover an underline for the suggested fix, **Add to dictionary**,
   or **Ignore**. Harper runs entirely in the browser, so chapter text never leaves the device
-  for these checks. Story bible names and aliases, and `[[links]]`, are never flagged as
+  for these checks. Story guide names and aliases, and `[[links]]`, are never flagged as
   misspellings. The checker downloads once (about 8.5 MB compressed) the first time it runs,
   then works offline. The US/UK choice belongs to the novel, so every device checks it
   the same way; each device keeps its own on/off setting, dictionary and ignored problems. With Grammar off, the browser's own spellcheck is used instead.

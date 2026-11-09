@@ -93,7 +93,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [drawerOpen]);
-  // Write (the editor), the corkboard or the story bible. Remembered per novel for this tab.
+  // Write (the editor), the corkboard or the story guide. Remembered per novel for this tab.
   const viewKey = `lantern:view:${projectId}`;
   const [view, setViewState] = useState<View>(() => {
     try {
@@ -116,7 +116,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   };
   const board = view === "board";
 
-  // Story bible entries, for the Bible view and [[links]] in chapters.
+  // Story guide entries, for the Story Guide view and [[links]] in chapters.
   const [entries, setEntriesState] = useState<BibleEntry[]>([]);
   const [entryId, setEntryId] = useState<string | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
@@ -507,7 +507,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
               [
                 ["write", "Write"],
                 ["board", "Corkboard"],
-                ["bible", "Bible"],
+                ["bible", "Story Guide"],
               ] as const
             ).map(([v, label]) => (
               <button
@@ -541,7 +541,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             <button
               className={`btn btn-quiet${checkOpen ? " is-on" : ""}`}
               aria-pressed={checkOpen}
-              title="Check this chapter against the story bible"
+              title="Check this chapter against the story guide"
               onClick={() => {
                 setPeek(null);
                 setHistoryOpen(false);

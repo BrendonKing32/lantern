@@ -28,7 +28,7 @@ interface Props {
   offline: boolean;
 }
 
-/** The story bible: characters, places, things and notes for this novel. */
+/** The story guide: characters, places, things and notes for this novel. */
 export function BibleView({ projectId, entries, onEntries, selectedId, onSelect, chapters, onOpenChapter, offline }: Props) {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -58,15 +58,15 @@ export function BibleView({ projectId, entries, onEntries, selectedId, onSelect,
   };
 
   return (
-    <section className={`bible${selected ? " has-selection" : ""}`} aria-label="Story bible">
+    <section className={`bible${selected ? " has-selection" : ""}`} aria-label="Story Guide">
       <div className="bible-list">
         <input
           className="bible-search"
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search the bible"
-          aria-label="Search the bible"
+          placeholder="Search the story guide"
+          aria-label="Search the story guide"
         />
         <div className="bible-new" role="group" aria-label="New entry">
           {BIBLE_KINDS.map((k) => (
@@ -134,7 +134,7 @@ export function BibleView({ projectId, entries, onEntries, selectedId, onSelect,
           />
         ) : (
           <p className="bible-empty">
-            {entries.length ? "Choose an entry to read or edit it." : "Your story bible keeps track of who and what is in the book."}
+            {entries.length ? "Choose an entry to read or edit it." : "Your story guide keeps track of who and what is in the book."}
           </p>
         )}
       </div>
@@ -201,7 +201,7 @@ function EntryEditor({ entry, offline, onSaved, onDeleted, chapters, onOpenChapt
   };
 
   const remove = async () => {
-    if (!confirm(`Delete “${entry.name}” from the story bible? Links to it in chapters stay as plain [[text]].`)) return;
+    if (!confirm(`Delete “${entry.name}” from the story guide? Links to it in chapters stay as plain [[text]].`)) return;
     try {
       await api.deleteEntry(entry.id);
       onDeleted();
