@@ -67,6 +67,7 @@ function locate(doc: string, quote: string): [number, number] | null {
 
 const SAVE_DELAY = 1200;
 const RETRY_DELAY = 5000;
+const WORD_COUNT_DELAY = 150;
 
 export function ChapterEditor({
   chapterId,
@@ -95,6 +96,7 @@ export function ChapterEditor({
   const draftStorageFailed = useRef(false);
   const blocked = useRef(false); // true while a conflict waits for a decision
   const timer = useRef<number | undefined>(undefined);
+  const wordCountTimer = useRef<number | undefined>(undefined);
   const alive = useRef(true);
 
   // [[links]]: the extension reads the latest entries and click handler from
@@ -161,6 +163,18 @@ export function ChapterEditor({
   // Keep the latest callbacks without re-running effects.
   const cb = useRef({ onWords, onSaved, onStatus });
   cb.current = { onWords, onSaved, onStatus };
+  const flushWordCount = () => {
+    window.clearTimeout(wordCountTimer.current);
+    wordCountTimer.current = undefined;
+    cb.current.onWords(chapterId, countWords(text.current), false);
+  };
+  const scheduleWordCount = () => {
+    window.clearTimeout(wordCountTimer.current);
+    wordCountTimer.current = window.setTimeout(() => {
+      wordCountTimer.current = undefined;
+      cb.current.onWords(chapterId, countWords(text.current), false);
+    }, WORD_COUNT_DELAY);
+  };
   const status = (s: SaveState, detail?: string) => {
     if (alive.current) cb.current.onStatus(s, detail);
   };
@@ -336,6 +350,7 @@ export function ChapterEditor({
       alive.current = false;
       openEditors.delete(chapterId);
       window.clearTimeout(timer.current);
+      if (wordCountTimer.current !== undefined) flushWordCount();
       window.removeEventListener("beforeunload", warn);
       // Best-effort flush when switching chapters; the local draft covers failure.
       if (dirty.current && !blocked.current && !inFlight.current) {
@@ -358,7 +373,7 @@ export function ChapterEditor({
       text.current = value;
       dirty.current = true;
       persistDraft(value, version.current);
-      cb.current.onWords(chapterId, countWords(value), false);
+      scheduleWordCount();
       if (!blocked.current) {
         cb.current.onStatus("editing");
         schedule(SAVE_DELAY);
@@ -386,7 +401,7 @@ export function ChapterEditor({
     void drafts.clear(chapterId);
     setInitialDoc(conflict.content);
     setEditorKey((k) => k + 1);
-    cb.current.onWords(chapterId, countWords(conflict.content), false);
+    flushWordCount();
     setConflict(null);
     status("saved");
   };
@@ -401,7 +416,7 @@ export function ChapterEditor({
     persistDraft(content, version.current);
     setInitialDoc(content);
     setEditorKey((k) => k + 1);
-    cb.current.onWords(chapterId, countWords(content), false);
+    flushWordCount();
     onCloseHistory();
     window.clearTimeout(timer.current);
     void saveRef.current();
