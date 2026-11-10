@@ -125,7 +125,7 @@ export interface Stats {
   days: DayWords[];
 }
 
-export type SnapshotReason = "auto" | "restore" | "conflict";
+export type SnapshotReason = "auto" | "restore" | "conflict" | "replace";
 
 export interface Snapshot {
   id: string;
@@ -137,6 +137,20 @@ export interface Snapshot {
 
 export interface SnapshotWithContent extends Snapshot {
   content: string;
+}
+
+export interface ShareComment {
+  id: string;
+  chapter_id: string;
+  chapter_title: string;
+  display_name: string;
+  body: string;
+  created_at: string;
+}
+
+export interface SharedProject {
+  project: { title: string };
+  chapters: Pick<ChapterMeta, "id" | "title" | "word_count">[];
 }
 
 export interface AiCall {

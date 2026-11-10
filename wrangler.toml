@@ -2,7 +2,7 @@ name = "lantern"
 main = "worker/index.ts"
 compatibility_date = "2026-10-01"
 
-# Only reachable through the custom domain, which sits behind Cloudflare Access.
+# Only reachable through the custom domain, with private paths behind Access.
 workers_dev = false
 preview_urls = false
 
@@ -30,8 +30,8 @@ database_id = "084c5c28-3355-4ef9-89f9-f9eac612ea13"
 migrations_dir = "migrations"
 
 [vars]
-# Cloudflare Access identifiers (not secrets). The Worker verifies every
-# API request's Access token against these and refuses all requests if blank.
+# Cloudflare Access identifiers (not secrets). The Worker verifies private API
+# requests with these and refuses them if blank. Public review endpoints use link tokens.
 ACCESS_TEAM_DOMAIN = "brendonking.cloudflareaccess.com"
 ACCESS_AUD = "1e574ca60c92c7dc4f16d769c40c82f2b3636c2dcb0061e6248b2e27d077d2a3"
 

@@ -6,10 +6,11 @@ import { initTheme } from "./theme";
 import "./styles.css";
 
 initTheme();
-startSync();
+const publicShare = window.location.pathname.startsWith("/share/");
+if (!publicShare) startSync();
 
 // The service worker keeps the app itself on this device so it opens offline.
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
+if (import.meta.env.PROD && !publicShare && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   });

@@ -32,8 +32,19 @@ npm run db:migrate          # creates the tables in lantern-db
    ACCESS_AUD = "the-aud-tag"
    ```
 
-The Worker checks the Access token on every API call. It refuses everything
-while those two values are empty, so a deploy before this step stays locked.
+The Worker checks the Access token on every private API call. It refuses
+private API requests while those two values are empty, so a deploy before this
+step stays locked. Review links use separate, limited public endpoints.
+
+### Allow unlisted manuscript reviews
+
+Review links are public bearer links, so Cloudflare Access must let those paths
+through without weakening the private app. Add Access **Bypass** applications
+for `lantern.bkbuilds.dev/share/*`, `lantern.bkbuilds.dev/api/share/*`, and
+`lantern.bkbuilds.dev/assets/*`, each with an **Everyone** policy. Do not bypass
+`/api/*` broadly: only `/api/share/*` serves a valid review link without sign-in.
+The `/assets/*` path exposes only the app's built JavaScript and styles; the
+manuscript is returned only after the share token is checked by the Worker.
 
 ## Deploy
 
@@ -43,7 +54,8 @@ npm run deploy
 
 This builds the app, applies any new database migrations to `lantern-db`, and publishes it at `lantern.bkbuilds.dev`. The custom
 domain is created automatically because bkbuilds.dev is on Cloudflare.
-The `workers.dev` URL is turned off, so Access is the only way in.
+The `workers.dev` URL is turned off. Cloudflare Access protects the writing
+app and private API; the explicitly bypassed paths above serve unlisted reviews.
 
 ### Automatic deploys from GitHub (optional)
 
@@ -149,7 +161,13 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   Scene cards are planning notes and do not split or change the chapter manuscript.
 - **Search:** the **Search** view finds literal words or phrases across the whole book, including
   drafts saved on this device. Choose whether to match case, then open a result to jump to it
-  in the chapter editor. Search shows up to 500 matches at a time.
+  in the chapter editor. Search shows up to 500 matches at a time. **Replace across the book**
+  previews chapter counts first, includes this device's unsaved drafts, checks for version conflicts,
+  and saves a restorable copy of each changed chapter in History before replacing.
+- **Review links:** **Share** creates an unlisted read-only link that stays active until revoked.
+  Anyone with the link can read the manuscript and leave chapter-level feedback; feedback
+  is private to the author and is never shown to other reviewers. The author can review or delete
+  comments in Share, and can revoke or replace the link at any time. Review links need a connection.
 - **Story guide:** the **Story Guide** view keeps the novel's characters, places, things and notes,
   each with a name, other names it goes by, and free-form notes that save as you type.
   Link to an entry from a chapter with `[[Name]]`, or `[[Name|shown text]]` to show different
@@ -203,8 +221,8 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   browser blocks local draft storage, Lantern reports it and won't open a chapter it can't
   safely check for an unsaved draft.
 - **History:** the History button shows earlier versions of the open chapter. Lantern keeps a
-  copy at most every 10 minutes while you write, plus one before every restore and before you
-  replace another device's version. Pick one to read it, then **Restore this version**. Restoring
+  copy at most every 10 minutes while you write, plus one before every restore, whole-book
+  replacement, and before you replace another device's version. Pick one to read it, then **Restore this version**. Restoring
   is itself undoable from History. Copies live in R2 under each chapter's `history/` folder.
 - **Offline:** once a novel has been opened online, the app, the shelf and every chapter of that
   novel are kept on the device, so Lantern opens and lets you write with no connection. Unsaved
