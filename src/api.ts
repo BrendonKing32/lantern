@@ -15,6 +15,8 @@ import type {
   ProjectSummary,
   SaveResult,
   SceneMeta,
+  ShareComment,
+  SharedProject,
   Snapshot,
   SnapshotWithContent,
   Stats,
@@ -100,13 +102,24 @@ export const api = {
     id: string,
     content: string,
     baseVersion: number,
-    opts: { keepalive?: boolean; snapshot?: "restore" | "conflict"; writtenAt?: number } = {},
+    opts: {
+      keepalive?: boolean;
+      snapshot?: "restore" | "conflict" | "replace";
+      snapshotContent?: string;
+      writtenAt?: number;
+    } = {},
   ) =>
     request<SaveResult>(
       "PUT",
       `/api/chapters/${id}`,
       // `day` credits the words to the local date they were written on.
-      { content, baseVersion, snapshot: opts.snapshot, day: localDay(opts.writtenAt) },
+      {
+        content,
+        baseVersion,
+        snapshot: opts.snapshot,
+        snapshotContent: opts.snapshotContent,
+        day: localDay(opts.writtenAt),
+      },
       { keepalive: opts.keepalive },
     ),
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
@@ -124,6 +137,29 @@ export const api = {
   listHistory: (chapterId: string) => request<Snapshot[]>("GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>
     request<SnapshotWithContent>("GET", `/api/chapters/${chapterId}/history/${snapshotId}`),
+  shareStatus: (projectId: string) =>
+    request<{ active: boolean; created_at: string | null }>("GET", `/api/projects/${projectId}/share`),
+  createShare: (projectId: string) =>
+    request<{ active: true; token: string; created_at: string }>("POST", `/api/projects/${projectId}/share`),
+  revokeShare: (projectId: string) =>
+    request<{ ok: true }>("DELETE", `/api/projects/${projectId}/share`),
+  shareComments: (projectId: string) =>
+    request<ShareComment[]>("GET", `/api/projects/${projectId}/share/comments`),
+  deleteShareComment: (projectId: string, commentId: string) =>
+    request<{ ok: true }>("DELETE", `/api/projects/${projectId}/share/comments/${commentId}`),
+  getSharedProject: (token: string) =>
+    request<SharedProject>("GET", `/api/share/${encodeURIComponent(token)}`),
+  getSharedChapter: (token: string, chapterId: string) =>
+    request<{ id: string; title: string; content: string }>(
+      "GET",
+      `/api/share/${encodeURIComponent(token)}/chapters/${encodeURIComponent(chapterId)}`,
+    ),
+  postShareComment: (token: string, chapterId: string, displayName: string, comment: string) =>
+    request<{ ok: true }>("POST", `/api/share/${encodeURIComponent(token)}/comments`, {
+      chapterId,
+      displayName,
+      body: comment,
+    }),
 };
 
 export function describeError(e: unknown): string {

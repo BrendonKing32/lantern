@@ -1394,6 +1394,222 @@ body.dusk .history {
   text-align: left;
   cursor: pointer;
 }
+.book-replace {
+  max-width: 60rem;
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--rule);
+}
+.book-replace h3 {
+  margin: 0 0 0.75rem;
+  color: var(--wick);
+  font: 500 1.125rem/1.35 var(--font-prose);
+}
+.replace-form,
+.replace-actions,
+.share-actions,
+.share-link-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+.replace-form .book-search-query {
+  flex: 1;
+}
+.replace-preview {
+  padding: 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--shade);
+}
+.replace-preview p {
+  margin: 0 0 0.5rem;
+}
+.replace-preview ul {
+  margin: 0.5rem 0 1rem;
+  padding-left: 1.25rem;
+  color: var(--text-soft);
+}
+.replace-preview .replace-examples {
+  margin: 0.2rem 0 0.5rem;
+  padding-left: 1rem;
+  color: var(--text-faint);
+  font: 400 0.8125rem/1.5 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.replace-actions {
+  justify-content: flex-end;
+}
+
+.share-dialog {
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--shade);
+  color: var(--wick);
+  box-shadow: 0 24px 60px rgb(var(--shadow-rgb) / 0.55);
+}
+.share-dialog::backdrop {
+  background: rgb(var(--shadow-rgb) / 0.6);
+}
+.share-dialog-body {
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: 1.3rem;
+}
+.share-head,
+.share-comment-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.share-head h2,
+.share-feedback h3 {
+  margin: 0 0 0.35rem;
+  font: 500 1.2rem/1.35 var(--font-prose);
+}
+.share-head p,
+.share-feedback > p,
+.share-note {
+  margin: 0 0 0.8rem;
+  color: var(--text-faint);
+  font-size: 0.875rem;
+}
+.share-link-controls {
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+.share-link-row {
+  align-items: stretch;
+}
+.share-link-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--night);
+}
+.share-actions {
+  margin-top: 0.7rem;
+}
+.share-feedback {
+  padding-top: 1rem;
+}
+.share-feedback ol {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.share-comment {
+  padding: 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.share-comment-meta {
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.share-comment-meta span {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+.share-comment p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.share-error,
+.public-share-error {
+  color: var(--rose);
+}
+.share-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 1rem;
+}
+
+.public-share {
+  height: 100%;
+  overflow: auto;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+.public-share-head {
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+.public-share-brand {
+  margin: 0 0 0.5rem;
+  color: var(--lamp);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.public-share-head h1,
+.public-manuscript h2,
+.public-feedback h2 {
+  margin: 0;
+  font: 500 1.8rem/1.3 var(--font-prose);
+  overflow-wrap: anywhere;
+}
+.public-chapter-select,
+.public-feedback form label {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  color: var(--text-soft);
+  font-size: 0.875rem;
+}
+.public-chapter-select select,
+.public-feedback input,
+.public-feedback textarea {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--shade);
+}
+.public-manuscript {
+  margin: 1.5rem 0 2.5rem;
+  padding: clamp(1.25rem, 4vw, 3rem);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--shade);
+}
+.public-manuscript h2 {
+  margin-bottom: 1.5rem;
+  font-size: 1.35rem;
+}
+.public-manuscript pre {
+  margin: 0;
+  color: var(--wick);
+  font: 400 1.05rem/1.85 var(--font-prose);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.public-feedback {
+  max-width: 42rem;
+}
+.public-feedback p {
+  color: var(--text-faint);
+}
+.public-feedback form {
+  margin-top: 1rem;
+}
+.public-feedback textarea {
+  resize: vertical;
+  font: inherit;
+}
+.public-feedback-status {
+  color: var(--sage) !important;
+}
 .search-result:hover {
   border-color: var(--lamp);
 }
@@ -1669,6 +1885,17 @@ body.dusk .card {
   .book-search-form {
     align-items: stretch;
     flex-direction: column;
+  }
+  .replace-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .share-link-row {
+    flex-direction: column;
+  }
+  .share-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
   }
   .search-case {
     padding-bottom: 0;

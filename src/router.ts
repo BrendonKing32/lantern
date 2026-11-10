@@ -3,9 +3,12 @@ import { useEffect, useState } from "react";
 export interface Route {
   projectId?: string;
   chapterId?: string;
+  shareToken?: string;
 }
 
 function parse(hash: string): Route {
+  const share = window.location.pathname.match(/^\/share\/([^/]+)\/?$/);
+  if (share) return { shareToken: decodeURIComponent(share[1]) };
   const m = hash.match(/^#\/p\/([^/]+)(?:\/([^/]+))?/);
   return m ? { projectId: m[1], chapterId: m[2] } : {};
 }

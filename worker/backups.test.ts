@@ -52,6 +52,22 @@ function fakeDatabase(versionReads: number[] = [2, 2]) {
       created_at: "2026-01-01",
       updated_at: "2026-01-01",
     }],
+    project_shares: [{
+      id: "share1",
+      project_id: "p1",
+      owner_email: "author@example.test",
+      token_hash: "hashed-token",
+      created_at: "2026-01-01",
+      revoked_at: null,
+    }],
+    share_comments: [{
+      id: "comment1",
+      share_id: "share1",
+      chapter_id: "c1",
+      display_name: "Reader",
+      body: "A private note",
+      created_at: "2026-01-01",
+    }],
   };
   let versionRead = 0;
   const db = {
@@ -91,6 +107,9 @@ describe("scheduled backups", () => {
     const sql = backups.contents.get(`${backupRoot}database.sql`) as string;
     expect(sql).toContain("'Writer''s book'");
     expect(sql).toContain(`INSERT INTO "scenes" ("id", "project_id", "chapter_id", "title", "summary", "pov", "location", "status", "position", "created_at", "updated_at") VALUES ('s1', 'p1', 'c1', 'The meeting', 'Mara learns the truth.', 'Mara', 'The station', 'planned', 0, '2026-01-01', '2026-01-01');`);
+    expect(sql).toContain(`INSERT INTO "project_shares" ("id", "project_id", "owner_email", "token_hash", "created_at", "revoked_at") VALUES ('share1', 'p1', 'author@example.test', 'hashed-token', '2026-01-01', NULL);`);
+    expect(sql).toContain(`INSERT INTO "share_comments" ("id", "share_id", "chapter_id", "display_name", "body", "created_at") VALUES ('comment1', 'share1', 'c1', 'Reader', 'A private note', '2026-01-01');`);
+    expect(sql.indexOf('INSERT INTO "project_shares"')).toBeLessThan(sql.indexOf('INSERT INTO "share_comments"'));
     expect(manifestsLast(backups.put.mock.calls.map(([key]) => String(key)))).toBe(true);
     expect(backups.contents.has(expiredKey)).toBe(false);
   });

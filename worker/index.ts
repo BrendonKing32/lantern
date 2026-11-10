@@ -17,6 +17,7 @@ import type {
   ProjectSummary,
   Snapshot,
   SnapshotReason,
+  ShareComment,
   SceneMeta,
   Stats,
 } from "../shared/types";
@@ -78,7 +79,7 @@ const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 async function authorize(req: Request, env: Env): Promise<string> {
   if (env.DEV_BYPASS === "true") return "dev@localhost";
-  // Fail closed: if Access isn't configured yet, nobody gets in.
+  // Fail closed: if Access isn't configured yet, no private API request gets in.
   if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) {
     throw new HttpError(503, "Access is not configured for this deployment");
   }
@@ -92,7 +93,7 @@ async function authorize(req: Request, env: Env): Promise<string> {
       jwksByIssuer.set(issuer, jwks);
     }
     const { payload } = await jwtVerify(token, jwks, { issuer, audience: env.ACCESS_AUD });
-    return typeof payload.email === "string" ? payload.email : "unknown";
+    return typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "unknown";
   } catch {
     throw new HttpError(401, "Invalid Access token");
   }
@@ -161,21 +162,26 @@ async function insertChapter(env: Env, projectId: string, title: string): Promis
 
 /**
  * Copy the chapter's current text into its history before it's overwritten.
- * Automatic snapshots are rate-limited; restores and conflict overwrites always
- * keep a copy. Empty text is never worth keeping.
+ * Automatic snapshots are rate-limited; restores, replacements and conflict
+ * overwrites always keep a copy. Empty text is never worth keeping.
  */
-async function snapshotBeforeSave(env: Env, row: ChapterMeta, reason: SnapshotReason) {
+async function snapshotBeforeSave(
+  env: Env,
+  row: ChapterMeta,
+  reason: SnapshotReason,
+  contentOverride?: string,
+): Promise<string> {
   if (reason === "auto") {
     const last = await env.DB.prepare(
       "SELECT created_at FROM chapter_snapshots WHERE chapter_id = ? ORDER BY created_at DESC LIMIT 1",
     )
       .bind(row.id)
       .first<{ created_at: string }>();
-    if (last && Date.now() - Date.parse(last.created_at) < SNAPSHOT_INTERVAL_MS) return;
+    if (last && Date.now() - Date.parse(last.created_at) < SNAPSHOT_INTERVAL_MS) return "";
   }
-  const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
-  const text = obj ? await obj.text() : "";
-  if (!text.trim()) return;
+  const obj = contentOverride === undefined ? await env.BUCKET.get(chapterKey(row.project_id, row.id)) : null;
+  const text = contentOverride ?? (obj ? await obj.text() : "");
+  if (!text.trim()) return text;
   const id = newId();
   await env.BUCKET.put(snapshotKey(row.project_id, row.id, id), text, MARKDOWN);
   await env.DB.prepare(
@@ -183,12 +189,31 @@ async function snapshotBeforeSave(env: Env, row: ChapterMeta, reason: SnapshotRe
   )
     .bind(id, row.id, row.version, countWords(text), reason, now())
     .run();
+  return text;
 }
 
 // ---------- handlers ----------
 
 type Params = Record<string, string>;
-type Handler = (req: Request, env: Env, p: Params) => Promise<Response>;
+type Handler = (req: Request, env: Env, p: Params, email?: string) => Promise<Response>;
+
+async function shareTokenHash(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function findActiveShare(env: Env, token: string) {
+  if (!/^[a-f0-9]{64}$/.test(token)) throw new HttpError(404, "Review link not found");
+  const hash = await shareTokenHash(token);
+  const share = await env.DB.prepare(
+    `SELECT id, project_id FROM project_shares
+      WHERE token_hash = ? AND revoked_at IS NULL`,
+  )
+    .bind(hash)
+    .first<{ id: string; project_id: string }>();
+  if (!share) throw new HttpError(404, "Review link not found");
+  return share;
+}
 
 const PROJECT_SUMMARY = `
   SELECT p.id, p.title, p.created_at, p.updated_at, p.archived_at, p.deleted_at,
@@ -478,11 +503,26 @@ const getChapter: Handler = async (_req, env, p) => {
 };
 
 const saveChapter: Handler = async (req, env, p) => {
-  const b = await body<{ content?: unknown; baseVersion?: unknown; snapshot?: unknown; day?: unknown }>(req);
+  const b = await body<{
+    content?: unknown;
+    baseVersion?: unknown;
+    snapshot?: unknown;
+    snapshotContent?: unknown;
+    day?: unknown;
+  }>(req);
   if (typeof b.content !== "string") throw new HttpError(400, "content must be a string");
   const reason: SnapshotReason =
-    b.snapshot === "restore" || b.snapshot === "conflict" ? b.snapshot : "auto";
+    b.snapshot === "restore" || b.snapshot === "conflict" || b.snapshot === "replace" ? b.snapshot : "auto";
   if (typeof b.baseVersion !== "number") throw new HttpError(400, "baseVersion must be a number");
+  if (b.snapshotContent !== undefined && typeof b.snapshotContent !== "string") {
+    throw new HttpError(400, "snapshotContent must be text");
+  }
+  if (b.snapshotContent !== undefined && reason !== "replace") {
+    throw new HttpError(400, "snapshotContent is only valid for a replacement");
+  }
+  if (typeof b.snapshotContent === "string" && new TextEncoder().encode(b.snapshotContent).length > MAX_CHAPTER_BYTES) {
+    throw new HttpError(413, "Snapshot is too large (5 MB limit)");
+  }
   if (new TextEncoder().encode(b.content).length > MAX_CHAPTER_BYTES) {
     throw new HttpError(413, "Chapter is too large (5 MB limit)");
   }
@@ -502,11 +542,27 @@ const saveChapter: Handler = async (req, env, p) => {
     throw new HttpError(409, "conflict", { version: current.version });
   }
 
-  // History is a safety net, so a failure here never blocks the save itself.
+  // Keep the server copy and, when it differs, the local draft being replaced.
   try {
-    await snapshotBeforeSave(env, row, reason);
+    const savedText = await snapshotBeforeSave(env, row, reason);
+    if (
+      reason === "replace" &&
+      typeof b.snapshotContent === "string" &&
+      b.snapshotContent.trim() &&
+      b.snapshotContent !== savedText
+    ) {
+      await snapshotBeforeSave(env, row, reason, b.snapshotContent);
+    }
   } catch (e) {
     console.error("snapshot failed", e);
+    if (reason === "replace") {
+      await env.DB.prepare(
+        "UPDATE chapters SET version = ?, word_count = ?, updated_at = ? WHERE id = ? AND version = ?",
+      )
+        .bind(b.baseVersion, row.word_count, row.updated_at, row.id, b.baseVersion + 1)
+        .run();
+      throw new HttpError(500, "Could not preserve the earlier versions; no replacement was saved");
+    }
   }
 
   try {
@@ -523,7 +579,11 @@ const saveChapter: Handler = async (req, env, p) => {
   // Count the words this save added (or removed) toward the writer's day.
   // Putting back an old version from History isn't writing, so it doesn't count.
   const day = isDay(b.day) ? b.day : ts.slice(0, 10);
-  const delta = reason === "restore" ? 0 : words - row.word_count;
+  const delta = reason === "restore"
+    ? 0
+    : reason === "replace"
+      ? (typeof b.snapshotContent === "string" ? countWords(b.snapshotContent) : row.word_count) - row.word_count
+      : words - row.word_count;
   await env.DB.batch([
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id),
     env.DB.prepare(
@@ -577,6 +637,167 @@ const getSnapshot: Handler = async (_req, env, p) => {
   const obj = await env.BUCKET.get(snapshotKey(row.project_id, row.id, snap.id));
   if (!obj) throw new HttpError(404, "That version's text is missing from storage");
   return json({ ...snap, content: await obj.text() });
+};
+
+const getShareStatus: Handler = async (_req, env, p, email = "") => {
+  await requireProject(env, p.id);
+  if (!email || email === "unknown") throw new HttpError(403, "A verified email is required to manage review links");
+  const share = await env.DB.prepare(
+    `SELECT created_at FROM project_shares
+      WHERE project_id = ? AND owner_email = ? AND revoked_at IS NULL`,
+  )
+    .bind(p.id, email)
+    .first<{ created_at: string }>();
+  if (share) return json({ active: true, created_at: share.created_at });
+  const otherOwner = await env.DB.prepare(
+    "SELECT id FROM project_shares WHERE project_id = ? AND revoked_at IS NULL",
+  )
+    .bind(p.id)
+    .first<{ id: string }>();
+  if (otherOwner) throw new HttpError(403, "Only the person who created this review link can manage it");
+  return json({ active: false, created_at: null });
+};
+
+const createShare: Handler = async (_req, env, p, email = "") => {
+  await requireProject(env, p.id);
+  if (!email || email === "unknown") throw new HttpError(403, "A verified email is required to create a review link");
+  const active = await env.DB.prepare(
+    "SELECT owner_email FROM project_shares WHERE project_id = ? AND revoked_at IS NULL",
+  )
+    .bind(p.id)
+    .first<{ owner_email: string }>();
+  if (active) {
+    if (active.owner_email !== email) throw new HttpError(403, "Only the person who created this review link can manage it");
+    throw new HttpError(409, "A review link is already active. Revoke it before creating another.");
+  }
+  const id = newId();
+  const token = `${newId().replaceAll("-", "")}${newId().replaceAll("-", "")}`;
+  const createdAt = now();
+  await env.DB.prepare(
+    "INSERT INTO project_shares (id, project_id, owner_email, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+  )
+    .bind(id, p.id, email, await shareTokenHash(token), createdAt)
+    .run();
+  return json({ active: true, token, created_at: createdAt }, 201);
+};
+
+const revokeShare: Handler = async (_req, env, p, email = "") => {
+  await requireProject(env, p.id);
+  if (!email || email === "unknown") throw new HttpError(403, "A verified email is required to revoke a review link");
+  const share = await env.DB.prepare(
+    "SELECT id FROM project_shares WHERE project_id = ? AND owner_email = ? AND revoked_at IS NULL",
+  )
+    .bind(p.id, email)
+    .first<{ id: string }>();
+  if (!share) {
+    const otherOwner = await env.DB.prepare(
+      "SELECT id FROM project_shares WHERE project_id = ? AND revoked_at IS NULL",
+    )
+      .bind(p.id)
+      .first<{ id: string }>();
+    if (otherOwner) throw new HttpError(403, "Only the person who created this review link can manage it");
+    return json({ ok: true });
+  }
+  await env.DB.prepare("UPDATE project_shares SET revoked_at = ? WHERE id = ?")
+    .bind(now(), share.id)
+    .run();
+  return json({ ok: true });
+};
+
+const listShareComments: Handler = async (_req, env, p, email = "") => {
+  await requireProject(env, p.id);
+  if (!email || email === "unknown") throw new HttpError(403, "A verified email is required to read feedback");
+  const { results } = await env.DB.prepare(
+    `SELECT comments.id, comments.chapter_id, chapters.title AS chapter_title,
+            comments.display_name, comments.body, comments.created_at
+       FROM share_comments AS comments
+       JOIN project_shares AS shares ON shares.id = comments.share_id
+       JOIN chapters ON chapters.id = comments.chapter_id
+      WHERE shares.project_id = ? AND shares.owner_email = ?
+      ORDER BY comments.created_at DESC LIMIT 500`,
+  )
+    .bind(p.id, email)
+    .all<ShareComment>();
+  return json(results);
+};
+
+const deleteShareComment: Handler = async (_req, env, p, email = "") => {
+  if (!email || email === "unknown") throw new HttpError(403, "A verified email is required to delete feedback");
+  const result = await env.DB.prepare(
+    `DELETE FROM share_comments WHERE id = ? AND share_id IN (
+       SELECT id FROM project_shares WHERE project_id = ? AND owner_email = ?
+     )`,
+  )
+    .bind(p.commentId, p.id, email)
+    .run();
+  if (!result.meta.changes) throw new HttpError(404, "Feedback not found");
+  return json({ ok: true });
+};
+
+const getSharedProject: Handler = async (_req, env, p) => {
+  const share = await findActiveShare(env, p.token);
+  const project = await env.DB.prepare(
+    "SELECT title FROM projects WHERE id = ? AND deleted_at IS NULL",
+  )
+    .bind(share.project_id)
+    .first<{ title: string }>();
+  if (!project) throw new HttpError(404, "Review link not found");
+  const { results } = await env.DB.prepare(
+    `SELECT id, title, word_count FROM chapters
+      WHERE project_id = ? AND deleted_at IS NULL ORDER BY position`,
+  )
+    .bind(share.project_id)
+    .all<{ id: string; title: string; word_count: number }>();
+  return json({ project, chapters: results });
+};
+
+const getSharedChapter: Handler = async (_req, env, p) => {
+  const share = await findActiveShare(env, p.token);
+  const chapter = await env.DB.prepare(
+    `SELECT id, title FROM chapters
+      WHERE id = ? AND project_id = ? AND deleted_at IS NULL
+        AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)`,
+  )
+    .bind(p.chapterId, share.project_id)
+    .first<{ id: string; title: string }>();
+  if (!chapter) throw new HttpError(404, "Chapter not found");
+  const obj = await env.BUCKET.get(chapterKey(share.project_id, chapter.id));
+  return json({ ...chapter, content: obj ? await obj.text() : "" });
+};
+
+const createShareComment: Handler = async (req, env, p) => {
+  const share = await findActiveShare(env, p.token);
+  const b = await body<{ chapterId?: unknown; displayName?: unknown; body?: unknown }>(req);
+  if (typeof b.chapterId !== "string" || typeof b.body !== "string") {
+    throw new HttpError(400, "chapterId and comment body are required");
+  }
+  const comment = b.body.trim();
+  if (!comment || comment.length > 5000) throw new HttpError(400, "Comments must be between 1 and 5,000 characters");
+  if (b.displayName !== undefined && typeof b.displayName !== "string") {
+    throw new HttpError(400, "displayName must be text");
+  }
+  const displayName = typeof b.displayName === "string" ? b.displayName.trim().slice(0, 80) : "";
+  const chapter = await env.DB.prepare(
+    `SELECT id FROM chapters
+      WHERE id = ? AND project_id = ? AND deleted_at IS NULL
+        AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)`,
+  )
+    .bind(b.chapterId, share.project_id)
+    .first<{ id: string }>();
+  if (!chapter) throw new HttpError(404, "Chapter not found");
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const count = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM share_comments WHERE share_id = ? AND created_at >= ?",
+  )
+    .bind(share.id, since)
+    .first<{ count: number }>();
+  if ((count?.count ?? 0) >= 50) throw new HttpError(429, "This review link has received a lot of comments. Try again later.");
+  await env.DB.prepare(
+    "INSERT INTO share_comments (id, share_id, chapter_id, display_name, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  )
+    .bind(newId(), share.id, chapter.id, displayName, comment, now())
+    .run();
+  return json({ ok: true }, 201);
 };
 
 // ---------- story bible ----------
@@ -977,16 +1198,48 @@ const routes: Array<[string, string, Handler]> = [
   ["DELETE", "/api/chapters/:id", deleteChapter],
   ["GET", "/api/chapters/:id/history", listHistory],
   ["GET", "/api/chapters/:id/history/:snapshotId", getSnapshot],
+  ["GET", "/api/projects/:id/share", getShareStatus],
+  ["POST", "/api/projects/:id/share", createShare],
+  ["DELETE", "/api/projects/:id/share", revokeShare],
+  ["GET", "/api/projects/:id/share/comments", listShareComments],
+  ["DELETE", "/api/projects/:id/share/comments/:commentId", deleteShareComment],
 ];
 
-const compiled = routes.map(([method, path, handler]) => {
-  const names: string[] = [];
-  const pattern = path.replace(/:(\w+)/g, (_, n) => {
-    names.push(n);
-    return "([^/]+)";
+const publicRoutes: Array<[string, string, Handler]> = [
+  ["GET", "/api/share/:token", getSharedProject],
+  ["GET", "/api/share/:token/chapters/:chapterId", getSharedChapter],
+  ["POST", "/api/share/:token/comments", createShareComment],
+];
+
+function compileRoutes(routesToCompile: Array<[string, string, Handler]>) {
+  return routesToCompile.map(([method, path, handler]) => {
+    const names: string[] = [];
+    const pattern = path.replace(/:(\w+)/g, (_, n) => {
+      names.push(n);
+      return "([^/]+)";
+    });
+    return { method, re: new RegExp(`^${pattern}$`), names, handler };
   });
-  return { method, re: new RegExp(`^${pattern}$`), names, handler };
-});
+}
+
+const compiled = compileRoutes(routes);
+const compiledPublic = compileRoutes(publicRoutes);
+
+function matchRoute(
+  routesToMatch: ReturnType<typeof compileRoutes>,
+  req: Request,
+  pathname: string,
+) {
+  for (const route of routesToMatch) {
+    if (route.method !== req.method) continue;
+    const match = pathname.match(route.re);
+    if (!match) continue;
+    const params: Params = {};
+    route.names.forEach((name, i) => (params[name] = decodeURIComponent(match[i + 1])));
+    return { route, params };
+  }
+  return null;
+}
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -994,15 +1247,11 @@ export default {
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
 
     try {
-      await authorize(req, env);
-      for (const r of compiled) {
-        if (r.method !== req.method) continue;
-        const m = url.pathname.match(r.re);
-        if (!m) continue;
-        const params: Params = {};
-        r.names.forEach((n, i) => (params[n] = decodeURIComponent(m[i + 1])));
-        return await r.handler(req, env, params);
-      }
+      const publicMatch = matchRoute(compiledPublic, req, url.pathname);
+      if (publicMatch) return await publicMatch.route.handler(req, env, publicMatch.params);
+      const email = await authorize(req, env);
+      const match = matchRoute(compiled, req, url.pathname);
+      if (match) return await match.route.handler(req, env, match.params, email);
       return json({ error: "Not found" }, 404);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message, ...e.extra }, e.status);

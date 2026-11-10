@@ -8,6 +8,23 @@ export interface SearchMatch {
   index: number;
 }
 
+export function replaceBookText(
+  content: string,
+  query: string,
+  replacement: string,
+  caseSensitive = false,
+): { content: string; count: number } {
+  if (!query) return { content, count: 0 };
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(escaped, caseSensitive ? "gu" : "giu");
+  let count = 0;
+  const replaced = content.replace(pattern, () => {
+    count++;
+    return replacement;
+  });
+  return { content: replaced, count };
+}
+
 export function findBookMatches(
   chapters: ChapterMeta[],
   contents: Map<string, string>,

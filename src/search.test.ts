@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChapterMeta } from "../shared/types";
-import { findBookMatches } from "./search";
+import { findBookMatches, replaceBookText } from "./search";
 
 const chapters: ChapterMeta[] = [
   { id: "one", project_id: "book", title: "First", synopsis: "", position: 0, word_count: 0, version: 0, updated_at: "" },
@@ -23,5 +23,20 @@ describe("whole-book search", () => {
 
   it("does not interpret punctuation in the query as a pattern", () => {
     expect(findBookMatches(chapters, new Map([["one", "a+b aab"]]), "a+b")).toHaveLength(1);
+  });
+
+  it("replaces literal matches, honoring case and replacement characters", () => {
+    expect(replaceBookText("Mara met mara.", "mara", "$&", false)).toEqual({
+      content: "$& met $&.",
+      count: 2,
+    });
+    expect(replaceBookText("Mara met mara.", "mara", "Mara", true)).toEqual({
+      content: "Mara met Mara.",
+      count: 1,
+    });
+  });
+
+  it("does nothing for an empty query", () => {
+    expect(replaceBookText("Keep this.", "", "changed")).toEqual({ content: "Keep this.", count: 0 });
   });
 });

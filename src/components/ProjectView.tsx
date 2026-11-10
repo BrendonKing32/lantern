@@ -7,6 +7,7 @@ import { ago } from "../when";
 import { RestoreIcon } from "./ProjectList";
 import { TargetMeter } from "./TargetMeter";
 import { ExportDialog } from "./ExportDialog";
+import { ShareDialog } from "./ShareDialog";
 import { Corkboard } from "./Corkboard";
 import { SceneBoard } from "./SceneBoard";
 import { SearchPanel } from "./SearchPanel";
@@ -58,6 +59,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const closeDrawer = useCallback(() => {
     setDrawerOpen(false);
     if (window.matchMedia("(max-width: 800px)").matches) drawerToggleRef.current?.focus();
@@ -165,7 +167,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
   const [scenesError, setScenesError] = useState<string | null>(null);
-  const [searchText, setSearchText] = useState<{ id: string; content: string } | null>(null);
+  const [searchText, setSearchText] = useState<{ id: string; content: string; version: number } | null>(null);
   // Words written today across all novels, and the daily goal (null: none).
   const [today, setToday] = useState<{ words: number; goal: number | null } | null>(null);
   const sessionStart = useRef<Record<string, number>>({});
@@ -294,7 +296,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const openSearch = () => {
     const text = editorControls.current?.text();
-    setSearchText(text !== undefined && selected ? { id: selected.id, content: text } : null);
+    setSearchText(text !== undefined && selected ? { id: selected.id, content: text, version: selected.version } : null);
     setView("search");
   };
 
@@ -596,6 +598,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
           <button className="btn btn-quiet" onClick={() => setExportOpen(true)}>
             Export
           </button>
+          {!offline && (
+            <button className="btn btn-quiet" onClick={() => setShareOpen(true)}>
+              Share
+            </button>
+          )}
           {view === "write" && (
             <button
               className={`btn btn-quiet history-toggle${historyOpen ? " is-on" : ""}`}
@@ -697,6 +704,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
           <SearchPanel
             chapters={chapters}
             currentChapter={searchText}
+            onReplaced={(id, info, content) => {
+              onSaved(id, info);
+              setLive((current) => ({ ...current, [id]: info.word_count }));
+              setSearchText((current) => current?.id === id ? { ...current, content, version: info.version } : current);
+            }}
             onOpen={(id, quote) => {
               setView("write");
               void openQuote(id, quote);
@@ -752,6 +764,13 @@ export function ProjectView({ projectId, chapterId }: Props) {
         )}
 
         {exportOpen && <ExportDialog detail={detail} onClose={() => setExportOpen(false)} />}
+        {shareOpen && (
+          <ShareDialog
+            projectId={projectId}
+            projectTitle={detail.project.title}
+            onClose={() => setShareOpen(false)}
+          />
+        )}
 
         <footer className="desk-status" aria-live="polite">
           <span className={`save-state save-${save.state}`} title={save.detail}>

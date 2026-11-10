@@ -8,6 +8,8 @@ const TABLES = [
   "ai_calls",
   "book_checks",
   "scenes",
+  "project_shares",
+  "share_comments",
 ] as const;
 
 const BACKUP_PREFIX = "backups/";
@@ -69,6 +71,8 @@ async function backupDatabase(env: BackupEnv): Promise<string> {
     "-- Lantern D1 backup. Restore only after downloading and reviewing this file.",
     "DELETE FROM \"book_checks\";",
     "DELETE FROM \"scenes\";",
+    "DELETE FROM \"share_comments\";",
+    "DELETE FROM \"project_shares\";",
     "DELETE FROM \"ai_calls\";",
     "DELETE FROM \"bible_entries\";",
     "DELETE FROM \"daily_words\";",
