@@ -43,3 +43,8 @@ AI_MONTHLY_BUDGET_USD = "10"   # estimated spend per calendar month (UTC)
 
 [triggers]
 crons = ["17 3 * * *"]
+
+# Workers Builds runs `wrangler preview` for pull request branches, which needs this block.
+# Empty on purpose: Previews don't inherit the bindings above, so a Preview can't touch
+# the real manuscripts, database or backups (its API calls won't work, but the UI builds).
+[previews]
