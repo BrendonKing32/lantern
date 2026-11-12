@@ -55,6 +55,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const drawerToggleRef = useRef<HTMLButtonElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
   const renameProjectRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDetailsElement>(null);
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -96,6 +97,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [drawerOpen]);
+  useEffect(() => {
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const menu = moreMenuRef.current;
+      if (menu?.open && event.target instanceof Node && !menu.contains(event.target)) menu.open = false;
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      const menu = moreMenuRef.current;
+      if (event.key === "Escape" && menu?.open) {
+        menu.open = false;
+        menu.querySelector("summary")?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
   // Write (the editor), the corkboard or the story guide. Remembered per novel for this tab.
   const viewKey = `lantern:view:${projectId}`;
   const [view, setViewState] = useState<View>(() => {
@@ -106,7 +126,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
       return "write";
     }
   });
+  const closeMoreMenu = () => {
+    if (moreMenuRef.current) moreMenuRef.current.open = false;
+  };
   const setView = (v: View) => {
+    closeMoreMenu();
     setViewState(v);
     setHistoryOpen(false);
     setCheckOpen(false);
@@ -575,70 +599,94 @@ export function ProjectView({ projectId, chapterId }: Props) {
             ))}
           </div>
           <span className="desk-spacer" />
-          <button
-            className={`btn btn-quiet${view === "search" ? " is-on" : ""}`}
-            aria-pressed={view === "search"}
-            onClick={openSearch}
-          >
-            Search
-          </button>
-          <button className="btn btn-quiet" onClick={() => setExportOpen(true)}>
-            Export
-          </button>
-          {!offline && (
-            <button className="btn btn-quiet" onClick={() => setShareOpen(true)}>
-              Share
-            </button>
-          )}
-          {view === "write" && (
+          <div className="desk-actions">
             <button
-              className={`btn btn-quiet history-toggle${historyOpen ? " is-on" : ""}`}
-              aria-pressed={historyOpen}
-              onClick={() => {
-                setPeek(null);
-                setCheckOpen(false);
-                setHistoryOpen((h) => !h);
-              }}
+              className={`btn btn-quiet${view === "search" ? " is-on" : ""}`}
+              aria-pressed={view === "search"}
+              onClick={openSearch}
             >
-              History
+              Search
             </button>
-          )}
-          {view === "write" && (
-            <button
-              className={`btn btn-quiet${checkOpen ? " is-on" : ""}`}
-              aria-pressed={checkOpen}
-              title="Check this chapter against the story guide"
-              onClick={() => {
-                setPeek(null);
-                setHistoryOpen(false);
-                setCheckOpen((c) => !c);
-              }}
-            >
-              Check
-            </button>
-          )}
-          {view === "write" && (
-            <select
-              className={`theme-picker grammar-picker${grammarOn ? " is-on" : ""}`}
-              aria-label="Grammar checking"
-              title="Underline grammar and spelling problems (checked on this device by Harper)"
-              value={grammarOn ? dialect : "off"}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "off") return setGrammarOn(false);
-                void changeDialect(v as Dialect);
-                setGrammarOn(true);
-              }}
-            >
-              <option value="off">Grammar off</option>
-              {DIALECTS.map((d) => (
-                <option key={d.id} value={d.id}>
-                  Grammar: {d.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <ThemePicker />
+            <details className="desk-more" ref={moreMenuRef}>
+              <summary className={`btn btn-quiet${historyOpen || checkOpen || grammarOn ? " is-on" : ""}`}>
+                More
+              </summary>
+              <div className="desk-more-menu">
+                <button
+                  className="btn btn-quiet"
+                  onClick={() => {
+                    closeMoreMenu();
+                    setExportOpen(true);
+                  }}
+                >
+                  Export
+                </button>
+                {!offline && (
+                  <button
+                    className="btn btn-quiet"
+                    onClick={() => {
+                      closeMoreMenu();
+                      setShareOpen(true);
+                    }}
+                  >
+                    Share
+                  </button>
+                )}
+                {view === "write" && (
+                  <>
+                    <span className="desk-more-divider" />
+                    <button
+                      className={`btn btn-quiet history-toggle${historyOpen ? " is-on" : ""}`}
+                      aria-pressed={historyOpen}
+                      onClick={() => {
+                        closeMoreMenu();
+                        setPeek(null);
+                        setCheckOpen(false);
+                        setHistoryOpen((h) => !h);
+                      }}
+                    >
+                      History
+                    </button>
+                    <button
+                      className={`btn btn-quiet${checkOpen ? " is-on" : ""}`}
+                      aria-pressed={checkOpen}
+                      title="Check this chapter against the story guide"
+                      onClick={() => {
+                        closeMoreMenu();
+                        setPeek(null);
+                        setHistoryOpen(false);
+                        setCheckOpen((c) => !c);
+                      }}
+                    >
+                      Check
+                    </button>
+                    <span className="desk-more-divider" />
+                    <select
+                      className={`theme-picker grammar-picker desk-more-select${grammarOn ? " is-on" : ""}`}
+                      aria-label="Grammar checking"
+                      title="Underline grammar and spelling problems (checked on this device by Harper)"
+                      value={grammarOn ? dialect : "off"}
+                      onChange={(e) => {
+                        closeMoreMenu();
+                        const v = e.target.value;
+                        if (v === "off") return setGrammarOn(false);
+                        void changeDialect(v as Dialect);
+                        setGrammarOn(true);
+                      }}
+                    >
+                      <option value="off">Grammar off</option>
+                      {DIALECTS.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          Grammar: {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+            </details>
+            <ThemePicker />
+          </div>
         </header>
 
         {view === "bible" ? (
