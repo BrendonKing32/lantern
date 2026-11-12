@@ -50,7 +50,6 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<Record<string, number>>({});
   const [save, setSave] = useState<{ state: SaveState; detail?: string }>({ state: "loading" });
-  const [dusk, setDusk] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
   const drawerToggleRef = useRef<HTMLButtonElement>(null);
@@ -232,26 +231,14 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (detail && selected && selected.id !== chapterId) navigate(projectId, selected.id, true);
   }, [detail, selected, chapterId, projectId]);
 
-  // Dusk mode: Cmd/Ctrl+Shift+D toggles, Esc leaves.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "d") {
-        e.preventDefault();
-        setDusk((d) => !d);
-      } else if (e.key === "Escape") {
-        if (drawerOpen) closeDrawer();
-        else setDusk(false);
-      }
+      if (e.key === "Escape" && drawerOpen) closeDrawer();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [drawerOpen, closeDrawer]);
-
-  useEffect(() => {
-    document.body.classList.toggle("dusk", dusk);
-    return () => document.body.classList.remove("dusk");
-  }, [dusk]);
 
   const wordsFor = useCallback((c: ChapterMeta) => live[c.id] ?? c.word_count, [live]);
   const bookWords = chapters.reduce((sum, c) => sum + wordsFor(c), 0);
@@ -652,14 +639,6 @@ export function ProjectView({ projectId, chapterId }: Props) {
             </select>
           )}
           <ThemePicker />
-          <button
-            className={`btn btn-quiet dusk-toggle${dusk ? " is-on" : ""}`}
-            aria-pressed={dusk}
-            onClick={() => setDusk((d) => !d)}
-            title="Dusk mode (⌘⇧D)"
-          >
-            Dusk
-          </button>
         </header>
 
         {view === "bible" ? (
