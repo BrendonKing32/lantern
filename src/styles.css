@@ -1,4 +1,4 @@
-/* Lantern: a dusk-indigo room, one pool of lamplight on the page.
+/* Lantern: a deep-indigo room, one pool of lamplight on the page.
    The lamp brightens (--glow) as words are added during a session. */
 
 @property --glow {
@@ -485,11 +485,6 @@ select {
 .drawer-toggle {
   display: none;
 }
-.dusk-toggle.is-on {
-  color: var(--lamp);
-  border-color: var(--lamp);
-}
-
 .page {
   width: 100%;
   max-width: calc(var(--measure) + 3rem);
@@ -695,7 +690,7 @@ select {
   color-scheme: light;
 }
 /* Cream cards need an edge against a cream room. */
-:root[data-theme="parchment"] body:not(.dusk) .card {
+:root[data-theme="parchment"] .card {
   --card-paper: #fffaf0;
   box-shadow: 0 0 0 1px var(--rule), 0 6px 14px rgb(var(--shadow-rgb) / 0.12);
 }
@@ -724,67 +719,6 @@ select {
   color: var(--wick);
 }
 
-/* ---------- Dusk mode: just you and the page, amber CRT ---------- */
-
-body.dusk {
-  --night: #120d07;
-  --page-text: #ffb54a;
-  --wick: #ffb54a;
-  --text-faint: #7a5626;
-  --text-soft: #b07f38;
-  --mark: #7d5320;
-  --lamp: #ffb54a;
-  --lamp-rgb: 255 181 74;
-  --rule: #3a2a14;
-  --selection: rgb(var(--lamp-rgb) / 0.22);
-  /* Dusk is its own world: reset everything a theme might have changed. */
-  --shade: #1a1209;
-  --chip: #2a1d0e;
-  --lamp-ink: #120d07;
-  --lamp-hover: #ffc56e;
-  --glow-rgb: 255 181 74;
-  --tint-rgb: 255 255 255;
-  --shadow-rgb: 0 0 0;
-  color-scheme: dark;
-  --font-prose: var(--font-mono);
-  --prose-size: 1.0625rem;
-  --prose-leading: 1.7;
-}
-body.dusk .workspace {
-  grid-template-columns: 0 1fr;
-}
-body.dusk .sidebar {
-  visibility: hidden;
-  border: 0;
-  padding: 0;
-}
-body.dusk .desk {
-  background: radial-gradient(ellipse 70% 70% at 50% 40%, #1c1409, var(--night) 75%);
-}
-body.dusk .desk-bar,
-body.dusk .desk-status {
-  opacity: 0.25;
-}
-body.dusk .desk-bar:hover,
-body.dusk .desk-bar:focus-within,
-body.dusk .desk-status:hover {
-  opacity: 1;
-}
-body.dusk .desk-status {
-  background: none;
-}
-body.dusk .cm-content {
-  text-shadow: 0 0 6px rgb(var(--lamp-rgb) / 0.45);
-}
-body.dusk::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 10;
-  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgb(0 0 0 / 0.16) 2px 3px);
-}
-
 /* ---------- small screens: chapters become a drawer ---------- */
 
 @media (max-width: 800px) {
@@ -806,14 +740,9 @@ body.dusk::after {
     transition: transform 0.25s ease;
     visibility: hidden;
   }
-  .drawer-open .sidebar,
-  body.dusk .drawer-open .sidebar {
+  .drawer-open .sidebar {
     transform: none;
     visibility: visible;
-  }
-  body.dusk .drawer-open .sidebar {
-    padding: 1.1rem 0.75rem 1rem;
-    border-right: 1px solid var(--rule);
   }
   .drawer-open .scrim {
     display: block;
@@ -834,9 +763,6 @@ body.dusk::after {
   }
   :root {
     --prose-size: 1.125rem;
-  }
-  body.dusk .workspace {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -972,10 +898,6 @@ body.dusk::after {
   color: var(--page-text);
   font: 400 1rem/1.7 var(--font-prose);
 }
-body.dusk .history {
-  background: var(--night);
-}
-
 /* ---------- offline ---------- */
 
 .offline-note {
@@ -1860,16 +1782,6 @@ body.dusk .history {
 .card-add:hover {
   color: var(--wick);
   border-color: var(--text-faint);
-}
-
-/* Dusk: amber phosphor cards instead of paper. */
-body.dusk .card {
-  --card-paper: #1a1209;
-  --card-ink: var(--lamp);
-  --card-faint: var(--text-soft);
-  --card-rule: var(--mark);
-  --card-line: rgb(var(--lamp-rgb) / 0.08);
-  box-shadow: 0 0 0 1px var(--rule);
 }
 
 @media (max-width: 800px) {

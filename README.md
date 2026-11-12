@@ -2,7 +2,7 @@
 
 A markdown novel-writing app on Cloudflare. Milestone 1 covers projects, a
 drag-to-reorder chapter list, a live-markdown editor with autosave, word
-counts, conflict protection across devices, and Dusk mode.
+counts, and conflict protection across devices.
 
 - **Front end:** React, TypeScript, and CodeMirror 6, served as static assets
 - **API:** a Cloudflare Worker (`worker/index.ts`)
@@ -198,8 +198,7 @@ Local data is simulated and lives in `.wrangler/`. It never touches your real bu
   misspellings. The checker downloads once (about 8.5 MB compressed) the first time it runs,
   then works offline. The US/UK choice belongs to the novel, so every device checks it
   the same way; each device keeps its own on/off setting, dictionary and ignored problems. With Grammar off, the browser's own spellcheck is used instead.
-- **Dusk mode:** the Dusk button or ⌘⇧D. Press Esc to leave.
-- **Themes:** pick Lantern, Hearth, Pine, Tide, or Parchment (a light theme) from the menu on the shelf or in the desk bar. Each device remembers its own choice. Dusk mode works on top of any theme.
+- **Themes:** pick Lantern, Hearth, Pine, Tide, or Parchment (a light theme) from the menu on the shelf or in the desk bar. Each device remembers its own choice.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
   full glow when you meet the goal; without one, at 1,000 words in a session.
 - **Daily goal and streak:** the panel at the top of the shelf shows today's words, your
