@@ -721,7 +721,7 @@ select {
 
 /* ---------- small screens: chapters become a drawer ---------- */
 
-@media (max-width: 800px) {
+@media (max-width: 1024px) {
   .shelf {
     padding: 2rem 1rem 4rem;
   }
@@ -763,6 +763,26 @@ select {
   }
   :root {
     --prose-size: 1.125rem;
+  }
+}
+
+/* Tablets (iPad portrait) keep a comfortable reading column and clear the notch/home bar. */
+@media (min-width: 801px) and (max-width: 1024px) {
+  .page {
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+  }
+  .sidebar {
+    width: 20rem;
+  }
+}
+@supports (padding: max(0px)) {
+  .sidebar {
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  .page {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 

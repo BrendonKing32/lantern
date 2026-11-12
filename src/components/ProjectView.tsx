@@ -61,11 +61,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
   const closeDrawer = useCallback(() => {
     setDrawerOpen(false);
-    if (window.matchMedia("(max-width: 800px)").matches) drawerToggleRef.current?.focus();
+    if (window.matchMedia("(max-width: 1024px)").matches) drawerToggleRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    const mobile = window.matchMedia("(max-width: 800px)");
+    const mobile = window.matchMedia("(max-width: 1024px)");
     const onChange = () => {
       if (!mobile.matches) setDrawerOpen(false);
     };
@@ -74,7 +74,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, []);
 
   useEffect(() => {
-    if (!drawerOpen || !window.matchMedia("(max-width: 800px)").matches) return;
+    if (!drawerOpen || !window.matchMedia("(max-width: 1024px)").matches) return;
     drawerCloseRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Tab") {
