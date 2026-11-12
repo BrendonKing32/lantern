@@ -477,6 +477,9 @@ select {
   column-gap: 0.45rem;
   align-items: center;
   padding: 0.75rem 1rem;
+  background: var(--night);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: 0 4px 14px rgb(var(--shadow-rgb) / 0.12);
   transition: opacity 0.3s;
 }
 .desk-spacer {
