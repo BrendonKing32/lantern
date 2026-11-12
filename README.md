@@ -148,6 +148,20 @@ npm run dev                      # UI with hot reload on :5173 (proxies /api)
 
 Local data is simulated and lives in `.wrangler/`. It never touches your real bucket.
 
+## Installing as an app
+
+Open Lantern in Chrome or Edge over HTTPS (or localhost), then use the browser's
+address-bar install icon or **Install page as app** menu item. Lantern opens in
+its own window and starts on the shelf. Sign-in and offline writing work just as
+they do in a browser tab; installation does not make server-only features
+available offline.
+
+The manifest and app icons contain no private data. If Cloudflare Access blocks
+Chromium from fetching them during installation, add Access **Bypass**
+applications for `lantern.bkbuilds.dev/manifest.webmanifest` and
+`lantern.bkbuilds.dev/icons/*`, each with an **Everyone** policy. Keep the writing
+app and private API protected.
+
 ## Using it
 
 - **Rename** a chapter or the novel: double-click its title, or use the pencil button.
