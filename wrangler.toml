@@ -2,9 +2,13 @@ name = "lantern"
 main = "worker/index.ts"
 compatibility_date = "2026-10-01"
 
-# Only reachable through the custom domain, with private paths behind Access.
+# Production is only reachable through the custom domain, with private paths behind Access.
 workers_dev = false
-preview_urls = false
+# Pull request Previews get a workers.dev link. Previews have no bindings or vars (see
+# [previews] below), so the private API refuses every call there and no manuscript data
+# is reachable. Turn on Cloudflare Access for Preview URLs in the dashboard to keep even
+# the app shell private.
+preview_urls = true
 
 routes = [
   { pattern = "lantern.bkbuilds.dev", custom_domain = true }
