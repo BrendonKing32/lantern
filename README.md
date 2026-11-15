@@ -57,6 +57,12 @@ domain is created automatically because bkbuilds.dev is on Cloudflare.
 The `workers.dev` URL is turned off. Cloudflare Access protects the writing
 app and private API; the explicitly bypassed paths above serve unlisted reviews.
 
+Pull request Previews do get a `workers.dev` link (`preview_urls = true`), so you can
+try a change before merging it. A Preview has none of the production bindings or Access
+values, so it shows the app but its private API refuses every request. To keep Preview
+links private too, open the Worker in the Cloudflare dashboard, go to
+**Settings → Domains & Routes**, and select **Enable Cloudflare Access** for Preview URLs.
+
 ### Automatic deploys from GitHub (optional)
 
 Every push and pull request runs the **CI** workflow (tests, typecheck and build).
