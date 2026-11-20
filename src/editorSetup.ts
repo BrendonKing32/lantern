@@ -61,56 +61,66 @@ const proseBlocks = ViewPlugin.fromClass(
   { decorations: (plugin) => plugin.decorations },
 );
 
-type CaretPosition = Pick<DOMRect, "left" | "top" | "bottom">;
+/** Caret position relative to the editor's outer element. */
+interface CaretBox {
+  left: number;
+  top: number;
+  height: number;
+}
 
+const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** True for a keystroke-sized edit that leaves the caret on the same line. */
+function isTypingStep(update: ViewUpdate): boolean {
+  const before = update.startState.selection.main;
+  const after = update.state.selection.main;
+  if (!update.docChanged || !before.empty || !after.empty || Math.abs(after.head - before.head) > 2) return false;
+  if (!update.transactions.some((tr) => tr.isUserEvent("input.type") || tr.isUserEvent("delete"))) return false;
+  let changes = 0;
+  let small = true;
+  update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+    changes++;
+    if (
+      toA - fromA > 2 ||
+      toB - fromB > 2 ||
+      update.startState.doc.sliceString(fromA, toA).includes("\n") ||
+      inserted.toString().includes("\n")
+    ) {
+      small = false;
+    }
+  });
+  return changes === 1 && small;
+}
+
+// Glides a drawn caret between positions while typing. CodeMirror forbids
+// reading layout during an update, so positions are read in its measure phase.
 const caretAnimation = ViewPlugin.fromClass(
   class {
-    private position: number;
-    private coords: CaretPosition | null;
-    private active = false;
+    private box: CaretBox | null = null;
+    private glide = false;
+    private pending = false;
+    private moving = false;
     private timer: number | undefined;
     private readonly cursor = document.createElement("span");
 
     constructor(private readonly view: EditorView) {
-      this.position = view.state.selection.main.head;
-      this.coords = this.readCoords(this.position);
       this.cursor.className = "cm-animated-cursor";
       this.cursor.setAttribute("aria-hidden", "true");
-      view.dom.append(this.cursor);
+      // First child, so CSS can hide the real caret as a later sibling.
+      view.dom.prepend(this.cursor);
+      this.schedule();
     }
 
     update(update: ViewUpdate) {
-      if (!update.docChanged && !update.selectionSet) {
-        if (!this.active && update.geometryChanged) this.coords = this.readCoords(this.position);
+      if (update.docChanged || update.selectionSet) {
+        // Several updates can land before one measurement; glide only if all were typing.
+        this.glide = (this.pending ? this.glide : true) && isTypingStep(update);
+      } else if (!update.geometryChanged) {
         return;
+      } else if (!this.pending) {
+        this.glide = false;
       }
-
-      const previousPosition = this.position;
-      const nextPosition = update.state.selection.main.head;
-      const nextCoords = this.readCoords(nextPosition);
-      if (
-        update.docChanged &&
-        update.selectionSet &&
-        update.transactions.some(
-          (transaction) => transaction.isUserEvent("input.type") || transaction.isUserEvent("delete"),
-        ) &&
-        update.startState.selection.main.empty &&
-        update.state.selection.main.empty &&
-        Math.abs(nextPosition - previousPosition) <= 2 &&
-        this.isSingleLineEdit(update) &&
-        this.coords &&
-        nextCoords &&
-        Math.abs(nextCoords.top - this.coords.top) < 1 &&
-        this.view.hasFocus &&
-        !window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      ) {
-        this.animate(this.coords, nextCoords);
-      } else {
-        this.stop();
-      }
-
-      this.position = nextPosition;
-      this.coords = nextCoords;
+      this.schedule();
     }
 
     destroy() {
@@ -118,58 +128,56 @@ const caretAnimation = ViewPlugin.fromClass(
       this.cursor.remove();
     }
 
-    private readCoords(position: number): CaretPosition | null {
-      const coords = this.view.coordsAtPos(position);
-      return coords ? { left: coords.left, top: coords.top, bottom: coords.bottom } : null;
-    }
-
-    private isSingleLineEdit(update: ViewUpdate): boolean {
-      let found = false;
-      let valid = true;
-      update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
-        if (
-          found ||
-          toA - fromA > 2 ||
-          toB - fromB > 2 ||
-          update.startState.doc.sliceString(fromA, toA).includes("\n") ||
-          inserted.toString().includes("\n") ||
-          update.startState.doc.lineAt(fromA).number !== update.state.doc.lineAt(fromB).number
-        ) {
-          valid = false;
-        }
-        found = true;
+    private schedule() {
+      this.pending = true;
+      this.view.requestMeasure({
+        key: this,
+        read: (view): CaretBox | null => {
+          const coords = view.coordsAtPos(view.state.selection.main.head);
+          if (!coords) return null;
+          const origin = view.dom.getBoundingClientRect();
+          return { left: coords.left - origin.left, top: coords.top - origin.top, height: coords.bottom - coords.top };
+        },
+        write: (next) => {
+          const from = this.box;
+          const glide = this.glide;
+          this.box = next;
+          this.pending = false;
+          this.glide = false;
+          if (glide && from && next && Math.abs(from.top - next.top) < 1 && this.view.hasFocus && !prefersReducedMotion()) {
+            this.animate(from, next);
+          } else {
+            this.stop();
+          }
+        },
       });
-      return found && valid;
     }
 
-    private animate(from: CaretPosition, to: CaretPosition) {
-      if (!this.active) {
-        this.cursor.style.display = "block";
+    private animate(from: CaretBox, to: CaretBox) {
+      if (!this.moving) {
         this.cursor.style.transition = "none";
-        this.moveTo(from);
-        this.view.dom.classList.add("cm-caret-animating");
-        void this.cursor.offsetWidth;
+        this.place(from);
+        this.cursor.classList.add("is-moving");
+        void this.cursor.offsetWidth; // start the transition from `from`
         this.cursor.style.removeProperty("transition");
+        this.moving = true;
       }
-      this.moveTo(to);
-      this.active = true;
+      this.place(to);
       window.clearTimeout(this.timer);
-      this.timer = window.setTimeout(() => this.stop(), 100);
+      this.timer = window.setTimeout(() => this.stop(), 140);
     }
 
-    private moveTo(coords: CaretPosition) {
-      const bounds = this.view.dom.getBoundingClientRect();
-      this.cursor.style.height = `${coords.bottom - coords.top}px`;
-      this.cursor.style.transform = `translate3d(${coords.left - bounds.left}px, ${coords.top - bounds.top}px, 0)`;
+    private place(box: CaretBox) {
+      this.cursor.style.height = `${box.height}px`;
+      this.cursor.style.transform = `translate3d(${box.left}px, ${box.top}px, 0)`;
     }
 
     private stop() {
       window.clearTimeout(this.timer);
       this.timer = undefined;
-      if (!this.active) return;
-      this.active = false;
-      this.cursor.style.display = "none";
-      this.view.dom.classList.remove("cm-caret-animating");
+      if (!this.moving) return;
+      this.moving = false;
+      this.cursor.classList.remove("is-moving");
     }
   },
 );
@@ -222,16 +230,17 @@ const proseTheme = EditorView.theme({
   },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--lamp)", borderLeftWidth: "2px" },
   ".cm-animated-cursor": {
+    display: "none",
     position: "absolute",
     top: "0",
     left: "0",
     borderLeft: "2px solid var(--lamp)",
     pointerEvents: "none",
     zIndex: "2",
-    transition: "transform 85ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+    transition: "transform 100ms cubic-bezier(0.2, 0.8, 0.2, 1)",
   },
-  "&.cm-caret-animating .cm-cursor": { visibility: "hidden" },
-  "&.cm-caret-animating .cm-content": { caretColor: "transparent" },
+  ".cm-animated-cursor.is-moving": { display: "block" },
+  ".cm-animated-cursor.is-moving ~ .cm-scroller .cm-cursor": { visibility: "hidden" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
     { backgroundColor: "var(--selection)" },
   ".cm-placeholder": { color: "var(--text-faint)", fontStyle: "italic" },
