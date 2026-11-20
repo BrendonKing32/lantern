@@ -829,6 +829,9 @@ select {
   :root {
     transition: none;
   }
+  .cm-editor .cm-animated-cursor {
+    transition: none;
+  }
   .sidebar {
     transition: none;
   }
