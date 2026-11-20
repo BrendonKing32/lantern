@@ -3,6 +3,7 @@ import { api, describeError } from "../api";
 import { isNetworkError } from "../sync";
 import { countWords } from "../../shared/wordcount";
 import type { Snapshot, SnapshotReason, SnapshotWithContent } from "../../shared/types";
+import { HistoryComparison } from "./HistoryComparison";
 
 interface Props {
   chapterId: string;
@@ -44,7 +45,12 @@ export function HistoryPanel({ chapterId, title, currentText, canRestore, onRest
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<SnapshotWithContent | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  const [comparing, setComparing] = useState(false);
   const nowWords = countWords(currentText());
+  const closePreview = () => {
+    setComparing(false);
+    setPreview(null);
+  };
 
   useEffect(() => {
     let live = true;
@@ -63,13 +69,14 @@ export function HistoryPanel({ chapterId, title, currentText, canRestore, onRest
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        if (preview) setPreview(null);
+        if (comparing) setComparing(false);
+        else if (preview) closePreview();
         else onClose();
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [preview, onClose]);
+  }, [comparing, preview, onClose]);
 
   const open = async (s: Snapshot) => {
     setOpening(s.id);
@@ -92,7 +99,7 @@ export function HistoryPanel({ chapterId, title, currentText, canRestore, onRest
     <aside className="history" aria-label={`History of ${title}`}>
       <header className="history-head">
         {preview ? (
-          <button className="btn btn-quiet" onClick={() => setPreview(null)}>
+          <button className="btn btn-quiet" onClick={closePreview}>
             ← All versions
           </button>
         ) : (
@@ -109,11 +116,17 @@ export function HistoryPanel({ chapterId, title, currentText, canRestore, onRest
           <p className="history-meta">
             {when(preview.created_at)} · {preview.word_count.toLocaleString()} words, {delta(preview.word_count, nowWords)}
           </p>
-          <button className="btn btn-lamp" onClick={restore} disabled={!canRestore}>
-            Restore this version
-          </button>
+          <div className="history-actions">
+            <button className="btn btn-lamp" onClick={restore} disabled={!canRestore}>
+              Restore this version
+            </button>
+            <button className="btn btn-quiet" onClick={() => setComparing(!comparing)}>
+              {comparing ? "Read snapshot" : "Compare with current draft"}
+            </button>
+          </div>
           {!canRestore && <p className="history-note">Choose a version in the notice first.</p>}
-          <div className="history-text">{preview.content}</div>
+          {comparing ? <HistoryComparison snapshot={preview.content} currentText={currentText} />
+            : <div className="history-text">{preview.content}</div>}
         </div>
       ) : (
         <div className="history-body">

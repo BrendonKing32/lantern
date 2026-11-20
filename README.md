@@ -241,7 +241,9 @@ app and private API protected.
   safely check for an unsaved draft.
 - **History:** the History button shows earlier versions of the open chapter. Lantern keeps a
   copy at most every 10 minutes while you write, plus one before every restore, whole-book
-  replacement, and before you replace another device's version. Pick one to read it, then **Restore this version**. Restoring
+  replacement, and before you replace another device's version. Pick one to read it or
+  **Compare with current draft** to see added and removed lines, including unsaved edits.
+  Refresh the comparison to include newer edits. To revert the chapter, use **Restore this version**. Restoring
   is itself undoable from History. Copies live in R2 under each chapter's `history/` folder.
 - **Offline:** once a novel has been opened online, the app, the shelf and every chapter of that
   novel are kept on the device, so Lantern opens and lets you write with no connection. Unsaved

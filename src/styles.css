@@ -916,7 +916,10 @@ select {
   color: var(--text-soft);
   font-size: 0.8125rem;
 }
-.history-preview .btn-lamp {
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   margin-bottom: 1rem;
 }
 .history-text {
@@ -927,6 +930,30 @@ select {
   color: var(--page-text);
   font: 400 1rem/1.7 var(--font-prose);
 }
+.history-diff {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+.history-diff-added,
+.history-diff-removed {
+  display: grid;
+  grid-template-columns: 1em minmax(0, 1fr);
+  gap: 0.4rem;
+  padding-inline: 0.4rem;
+}
+.history-diff-added {
+  background: rgb(var(--lamp-rgb) / 0.12);
+}
+.history-diff-removed {
+  background: rgb(var(--rose-rgb) / 0.12);
+}
+.history-diff-gap {
+  padding: 0.4rem;
+  color: var(--text-soft);
+  font: 400 0.8125rem var(--font-ui);
+}
+
 /* ---------- offline ---------- */
 
 .offline-note {
