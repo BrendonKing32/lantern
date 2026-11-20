@@ -27,6 +27,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@lezer/highlight": "^1.2.5",
     "@uiw/react-codemirror": "^4.25.12",
+    "diff": "^8.0.3",
     "fflate": "^0.8.3",
     "harper.js": "^3.0.0",
     "jose": "^6.2.13",
