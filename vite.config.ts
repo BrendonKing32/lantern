@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -10,5 +11,10 @@ export default defineConfig({
   optimizeDeps: { exclude: ["harper.js"] },
   server: {
     proxy: { "/api": "http://localhost:8787" },
+  },
+  // Worker tests run in Node, where `cloudflare:workers` doesn't exist.
+  test: {
+    alias: { "cloudflare:workers": fileURLToPath(new URL("./test/cloudflare-workers.ts", import.meta.url)) },
+    server: { deps: { inline: ["@cloudflare/workers-oauth-provider"] } },
   },
 });

@@ -48,6 +48,7 @@ import {
   revokeShare,
 } from "./handlers/sharing";
 import { getStats, setGoal } from "./handlers/stats";
+import { handleOAuth, isOAuthPath } from "./mcp/oauth";
 
 export type { Env } from "./env";
 
@@ -134,8 +135,10 @@ function matchRoute(
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
+    // The Claude connector: /mcp, /authorize and the OAuth endpoints.
+    if (isOAuthPath(url.pathname) && ctx) return handleOAuth(req, env, ctx);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
 
     try {
