@@ -93,10 +93,14 @@ npx wrangler r2 bucket create lantern-backups
 The Worker runs the backup at 03:17 UTC. Each complete backup contains a
 restorable SQL export of every D1 table, every object in `lantern-manuscripts`
 (including chapter history), and a manifest. Backups older than 30 days are
-deleted. A backup is marked complete only after confirming that no chapter
-version changed while its text was copied. Check the Worker logs for
-`scheduled backup failed`; an incomplete run has no manifest and should not be
-used for recovery.
+deleted. A backup is marked complete only when it is a consistent snapshot of
+both stores: after copying the objects, the Worker exports the database again
+and lists the bucket again, and it writes the manifest only if the second export
+is identical to the first and every object (chapters and history alike) still
+has the version that was copied, with none added or removed. Any change to a
+database row or a manuscript object during the run leaves it incomplete; the
+next scheduled run tries again. Check the Worker logs for `scheduled backup
+failed`; an incomplete run has no manifest and should not be used for recovery.
 
 The backup bucket is separate but in the same Cloudflare account, so it helps
 recover from accidental changes or loss of the primary bucket/database; it
