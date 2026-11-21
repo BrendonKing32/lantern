@@ -1374,6 +1374,9 @@ select {
   background: var(--shade);
   box-shadow: 0 12px 30px rgb(var(--shadow-rgb) / 0.35);
 }
+.desk-more:not([open]) .desk-more-menu {
+  display: none;
+}
 .desk-more-menu .btn {
   width: 100%;
   padding: 0.45rem 0.65rem;
@@ -2677,4 +2680,73 @@ select {
 }
 .cm-editor .cm-tooltip-lint .cm-diagnosticAction:hover {
   filter: brightness(1.12);
+}
+
+/* ---------- phones: read first, edit lightly ---------- */
+
+@media (max-width: 600px) {
+  .book-name,
+  .page-title {
+    overflow-wrap: anywhere;
+  }
+  .desk-bar {
+    flex-wrap: nowrap;
+    column-gap: 0.35rem;
+    padding: 0.4rem max(0.6rem, env(safe-area-inset-right)) 0.4rem max(0.6rem, env(safe-area-inset-left));
+  }
+  .desk-bar > .btn,
+  .desk-more summary {
+    min-height: 2.75rem;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.9375rem;
+  }
+  .desk-spacer {
+    order: 0;
+  }
+  .desk-actions {
+    order: 0;
+    flex: 0 0 auto;
+  }
+  .desk-more-menu {
+    position: fixed;
+    top: calc(3.6rem + env(safe-area-inset-top));
+    right: max(0.6rem, env(safe-area-inset-right));
+    width: min(18rem, calc(100vw - 1.2rem));
+    max-height: calc(100dvh - 5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .desk-more-menu .btn,
+  .desk-more-menu .theme-picker,
+  .desk-more-select {
+    min-height: 2.75rem;
+  }
+  .desk-more-menu [role="group"] {
+    display: grid;
+    gap: 0.15rem;
+  }
+  .desk-more-menu .is-on {
+    color: var(--lamp);
+    background: var(--night);
+  }
+  .desk-more-menu .theme-picker {
+    width: 100%;
+    padding: 0.45rem 0.65rem;
+    border-radius: 8px;
+    text-align: left;
+  }
+  .page {
+    padding: 1rem max(1.15rem, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(1.15rem, env(safe-area-inset-left));
+  }
+  .page-title {
+    margin-bottom: 1.4rem;
+  }
+  .page-reading .cm-content {
+    caret-color: transparent;
+  }
+  .desk-status {
+    flex-wrap: wrap;
+    gap: 0.4rem 0.9rem;
+    padding: 0.5rem max(1rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  }
 }

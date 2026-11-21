@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ThemePicker } from "./ThemePicker";
 import { api, describeError } from "../api";
 import { navigate } from "../router";
@@ -25,6 +26,12 @@ import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Proje
 
 type View = "write" | "board" | "scenes" | "search" | "bible";
 const VIEWS: View[] = ["write", "board", "scenes", "search", "bible"];
+const VIEW_LABELS = [
+  ["write", "Write"],
+  ["board", "Corkboard"],
+  ["scenes", "Scenes"],
+  ["bible", "Story Guide"],
+] as const;
 
 // With no daily goal, session words at which the lamp reaches full brightness.
 const FULL_GLOW_WORDS = 1000;
@@ -51,6 +58,17 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [live, setLive] = useState<Record<string, number>>({});
   const [save, setSave] = useState<{ state: SaveState; detail?: string }>({ state: "loading" });
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [phone, setPhone] = useState(() => window.matchMedia("(max-width: 600px)").matches);
+  const [editingChapter, setEditingChapter] = useState<string | null>(null);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 600px)");
+    const onChange = () => {
+      setPhone(media.matches);
+      setEditingChapter(null);
+    };
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
   const sidebarRef = useRef<HTMLElement>(null);
   const drawerToggleRef = useRef<HTMLButtonElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
@@ -61,7 +79,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [exportOpen, setExportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const closeDrawer = useCallback(() => {
-    setDrawerOpen(false);
+    // Commit first so the desk is no longer inert when focus returns to it.
+    flushSync(() => setDrawerOpen(false));
     if (window.matchMedia("(max-width: 1024px)").matches) drawerToggleRef.current?.focus();
   }, []);
 
@@ -135,6 +154,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     // outside Write. Start fresh so a return never shows a stale state.
     if (v !== view) setSave({ state: "loading" });
     setViewState(v);
+    setEditingChapter(null);
     setHistoryOpen(false);
     setCheckOpen(false);
     setPeek(null);
@@ -226,6 +246,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const chapters = detail?.chapters ?? [];
   const selected = chapters.find((c) => c.id === chapterId) ?? chapters[0];
+  const readOnly = phone && editingChapter !== selected?.id;
+  useEffect(() => setEditingChapter(null), [selected?.id]);
   useEffect(() => {
     if (view !== "scenes") return;
     setScenes(null);
@@ -304,6 +326,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
   const select = (id: string) => {
+    setEditingChapter(null);
     if (drawerOpen) closeDrawer();
     navigate(projectId, id);
   };
@@ -485,6 +508,26 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   if (!detail) return <div className="screen-message">Opening…</div>;
 
+  const viewButtons = VIEW_LABELS.map(([v, label]) => (
+    <button
+      key={v}
+      className={`btn btn-quiet${view === v ? " is-on" : ""}`}
+      aria-pressed={view === v}
+      onClick={() => setView(v)}
+    >
+      {label}
+    </button>
+  ));
+  const searchButton = (
+    <button
+      className={`btn btn-quiet${view === "search" ? " is-on" : ""}`}
+      aria-pressed={view === "search"}
+      onClick={openSearch}
+    >
+      Search
+    </button>
+  );
+
   return (
     <div className={`workspace${drawerOpen ? " drawer-open" : ""}`}>
       <aside id="novel-sidebar" ref={sidebarRef} className="sidebar" aria-label="Novel" role={drawerOpen ? "dialog" : undefined} aria-modal={drawerOpen || undefined}>
@@ -577,44 +620,38 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
       <button className="scrim" aria-label="Close chapters" onClick={closeDrawer} tabIndex={-1} />
 
-      <main className="desk">
+      <main className="desk" inert={drawerOpen}>
         <header className="desk-bar">
           <button ref={drawerToggleRef} className="btn btn-quiet drawer-toggle" aria-controls="novel-sidebar" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>
             Chapters
           </button>
-          <div className="view-switch" role="group" aria-label="View">
-            {(
-              [
-                ["write", "Write"],
-                ["board", "Corkboard"],
-                ["scenes", "Scenes"],
-                ["bible", "Story Guide"],
-              ] as const
-            ).map(([v, label]) => (
-              <button
-                key={v}
-                className={`btn btn-quiet${view === v ? " is-on" : ""}`}
-                aria-pressed={view === v}
-                onClick={() => setView(v)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {!phone && <div className="view-switch" role="group" aria-label="View">{viewButtons}</div>}
+          {phone && view === "write" && selected && (
+            <button
+              className={`btn${readOnly ? " btn-quiet" : " btn-lamp"}`}
+              disabled={save.state === "loading"}
+              aria-pressed={!readOnly}
+              onClick={() => setEditingChapter(readOnly ? selected.id : null)}
+            >
+              {readOnly ? "Edit" : "Done"}
+            </button>
+          )}
           <span className="desk-spacer" />
           <div className="desk-actions">
-            <button
-              className={`btn btn-quiet${view === "search" ? " is-on" : ""}`}
-              aria-pressed={view === "search"}
-              onClick={openSearch}
-            >
-              Search
-            </button>
+            {!phone && searchButton}
             <details className="desk-more" ref={moreMenuRef}>
               <summary className={`btn btn-quiet${historyOpen || checkOpen || grammarOn ? " is-on" : ""}`}>
                 More
               </summary>
               <div className="desk-more-menu">
+                {phone && (
+                  <>
+                    <div role="group" aria-label="View">{viewButtons}</div>
+                    {searchButton}
+                    <ThemePicker />
+                    <span className="desk-more-divider" />
+                  </>
+                )}
                 <button
                   className="btn btn-quiet"
                   onClick={() => {
@@ -688,7 +725,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                 )}
               </div>
             </details>
-            <ThemePicker />
+            {!phone && <ThemePicker />}
           </div>
         </header>
 
@@ -758,6 +795,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onOpenLink={openLink}
             grammarOn={grammarOn}
             dialect={dialect}
+            readOnly={readOnly}
             controls={editorControls}
           />
         )}
@@ -815,8 +853,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
           ) : (
             selected && <span>{wordsFor(selected).toLocaleString()} words</span>
           )}
-          {sessionWords > 0 && <span className="session">+{sessionWords.toLocaleString()} this session</span>}
-          {today?.goal && (
+          {!phone && sessionWords > 0 && <span className="session">+{sessionWords.toLocaleString()} this session</span>}
+          {!phone && today?.goal && (
             <span className={Math.max(0, today.words) >= today.goal ? "session" : undefined}>
               {Math.max(0, today.words).toLocaleString()} / {today.goal.toLocaleString()} today
             </span>

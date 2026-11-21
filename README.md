@@ -170,6 +170,9 @@ app and private API protected.
 
 ## Using it
 
+- **On phones** (600px wide or less), chapters open for reading so the keyboard stays away.
+  Tap **Edit** for a quick change and **Done** to go back to reading; saving works as usual.
+  The other views, Search and the theme are under **More**, and **Chapters** opens the list.
 - **Rename** a chapter or the novel: double-click its title, or use the pencil button.
 - **Reorder** chapters: drag the handle beside a chapter, or focus the handle and use Space plus the arrow keys.
 - **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
