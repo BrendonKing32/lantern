@@ -91,16 +91,20 @@ export function TodayPanel() {
   );
 }
 
-function Calendar({ stats }: { stats: Stats }) {
+export function Calendar({ stats }: { stats: Stats }) {
+  const [selectedDay, setSelectedDay] = useState(() => localDay());
   const words = new Map(stats.days.map((d) => [d.day, d.words]));
   const goal = stats.daily_goal;
   const peak = Math.max(1, ...stats.days.map((d) => d.words));
   const now = new Date();
   // Columns are weeks ending with this one; rows run Sunday to Saturday.
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() - (WEEKS - 1) * 7);
+  const firstDay = localDay(start);
   const today = localDay(now);
+  const dateOptions: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", year: "numeric" };
 
   const cells = [];
+  let selectedLabel = "";
   for (let i = 0; i < WEEKS * 7; i++) {
     const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
     const day = localDay(date);
@@ -108,7 +112,8 @@ function Calendar({ stats }: { stats: Stats }) {
     const w = words.get(day) ?? 0;
     // Shade by share of the goal, or of the busiest day when there's no goal.
     const level = w <= 0 ? 0 : Math.min(4, Math.ceil((w / (goal ?? peak)) * 4));
-    const label = `${date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}: ${w.toLocaleString()} words`;
+    const label = `${date.toLocaleDateString(undefined, { weekday: "short", ...dateOptions })}: ${w.toLocaleString()} ${w === 1 ? "word" : "words"}`;
+    if (!future && day === selectedDay) selectedLabel = label;
     cells.push(
       <span
         key={day}
@@ -120,8 +125,26 @@ function Calendar({ stats }: { stats: Stats }) {
     );
   }
   return (
-    <div className="calendar" aria-label="The last 12 weeks">
-      {cells}
+    <div className="calendar-section">
+      <p className="calendar-range">Writing activity: {start.toLocaleDateString(undefined, dateOptions)} – {now.toLocaleDateString(undefined, dateOptions)}</p>
+      <div className="calendar" aria-label="Writing activity over the last 12 weeks">
+        {cells}
+      </div>
+      <div className="calendar-legend">
+        <span>Less</span>
+        <span className="cal-day lv0" aria-hidden="true" />
+        <span className="cal-day lv1" aria-hidden="true" />
+        <span className="cal-day lv2" aria-hidden="true" />
+        <span className="cal-day lv3" aria-hidden="true" />
+        <span className="cal-day lv4" aria-hidden="true" />
+        <span>More</span>
+      </div>
+      <p className="calendar-hint">Darker means more net words, in quarters of {goal === null ? "the busiest day's count" : "the daily goal"}; the darkest shade means 100% or more. The lightest shade means zero or fewer net words.</p>
+      <div className="calendar-inspect">
+        <label htmlFor="calendar-date">Inspect a date</label>
+        <input id="calendar-date" type="date" min={firstDay} max={today} value={selectedDay} onChange={(e) => setSelectedDay(e.currentTarget.value)} />
+        <output aria-live="polite">{selectedLabel || "Choose a date in the range."}</output>
+      </div>
     </div>
   );
 }
