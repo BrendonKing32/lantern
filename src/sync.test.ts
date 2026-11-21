@@ -18,11 +18,13 @@ vi.mock("./api", () => ({
 }));
 
 vi.mock("./local", () => ({
+  DraftStorageError: class DraftStorageError extends Error {},
   drafts: { all: mocks.draftsAll, clearIf: mocks.draftsClearIf },
   chapters: { read: mocks.chapterRead, write: mocks.chapterWrite },
 }));
 
 import { ApiError } from "./api";
+import { DraftStorageError } from "./local";
 import { syncDrafts } from "./sync";
 
 const draft = { chapterId: "chapter-1", content: "A draft.", baseVersion: 4, savedAt: 123 };
@@ -50,7 +52,7 @@ describe("offline draft sync", () => {
     const result = { version: 5, word_count: 2, updated_at: "now" };
     mocks.saveChapter.mockResolvedValue(result);
 
-    await syncDrafts();
+    await expect(syncDrafts()).resolves.toBe("done");
 
     expect(mocks.saveChapter).toHaveBeenCalledWith(
       draft.chapterId,
@@ -71,5 +73,29 @@ describe("offline draft sync", () => {
 
     expect(mocks.draftsClearIf).not.toHaveBeenCalled();
     expect(mocks.chapterWrite).not.toHaveBeenCalled();
+  });
+
+  it("reports a storage failure instead of treating it as an empty queue", async () => {
+    mocks.draftsAll.mockRejectedValue(new DraftStorageError("couldn't read drafts"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(syncDrafts()).resolves.toBe("storage-error");
+
+    expect(mocks.saveChapter).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("reports an empty queue as done", async () => {
+    mocks.draftsAll.mockResolvedValue([]);
+
+    await expect(syncDrafts()).resolves.toBe("done");
+  });
+
+  it("reports offline when the server can't be reached", async () => {
+    mocks.saveChapter.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(syncDrafts()).resolves.toBe("offline");
+    expect(mocks.draftsClearIf).not.toHaveBeenCalled();
   });
 });

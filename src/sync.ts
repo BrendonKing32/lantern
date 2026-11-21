@@ -2,7 +2,8 @@
 // that sends unsaved drafts to the server once it's back.
 
 import { api, ApiError } from "./api";
-import { cache, chapters, drafts } from "./local";
+import { cache, chapters, DraftStorageError, drafts } from "./local";
+import type { Draft } from "./local";
 import type { BibleEntry, ChapterWithContent, ProjectDetail, ProjectSummary, SaveResult } from "../shared/types";
 
 export interface Loaded<T> {
@@ -114,6 +115,15 @@ async function prefetchChapters(detail: ProjectDetail) {
 /** Chapters open in an editor right now; the editor saves those itself. */
 export const openEditors = new Set<string>();
 
+/**
+ * How a sync pass ended:
+ *   done           every draft that could be sent was (some may wait for the writer)
+ *   offline        the server couldn't be reached; drafts stay queued
+ *   storage-error  the drafts on this device couldn't be read, so nothing was sent
+ *   busy           another pass was already running
+ */
+export type SyncOutcome = "done" | "offline" | "storage-error" | "busy";
+
 let syncing = false;
 
 /**
@@ -121,21 +131,33 @@ let syncing = false;
  * server. A draft that conflicts with a newer save elsewhere is left alone:
  * opening that chapter shows the usual "which version" choice.
  */
-export async function syncDrafts() {
-  if (syncing) return;
+export async function syncDrafts(): Promise<SyncOutcome> {
+  if (syncing) return "busy";
   syncing = true;
   try {
-    for (const d of await drafts.all()) {
+    let queue: Draft[];
+    try {
+      queue = await drafts.all();
+    } catch (e) {
+      // Not knowing what's queued is not the same as an empty queue.
+      if (e instanceof DraftStorageError) {
+        console.warn(e.message);
+        return "storage-error";
+      }
+      throw e;
+    }
+    for (const d of queue) {
       if (openEditors.has(d.chapterId)) continue;
       try {
         const res = await api.saveChapter(d.chapterId, d.content, d.baseVersion, { writtenAt: d.savedAt });
         await drafts.clearIf(d.chapterId, d.content);
         await rememberSaved(d.chapterId, d.content, res);
       } catch (e) {
-        if (isNetworkError(e)) return; // still offline; try again later
+        if (isNetworkError(e)) return "offline"; // still offline; try again later
         // 409 (saved elsewhere), 404 (chapter deleted) and the like wait for the writer.
       }
     }
+    return "done";
   } finally {
     syncing = false;
   }

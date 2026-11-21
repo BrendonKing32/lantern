@@ -1,4 +1,4 @@
-import { IDBFactory } from "fake-indexeddb";
+import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
@@ -32,6 +32,24 @@ describe("draft storage", () => {
 
     await expect(drafts.write("chapter-1", "A new scene.", 7)).rejects.toBeInstanceOf(DraftStorageError);
     await expect(drafts.read("chapter-1")).rejects.toBeInstanceOf(DraftStorageError);
+    await expect(drafts.all()).rejects.toBeInstanceOf(DraftStorageError);
+  });
+
+  it("tells an empty draft list apart from one it couldn't read", async () => {
+    const { DraftStorageError, drafts } = await import("./local");
+    await expect(drafts.all()).resolves.toEqual([]);
+
+    await drafts.write("chapter-1", "A new scene.", 7);
+    await expect(drafts.all()).resolves.toMatchObject([{ chapterId: "chapter-1" }]);
+
+    const getAll = vi.spyOn(IDBObjectStore.prototype, "getAll").mockImplementation(() => {
+      throw new DOMException("read failed", "UnknownError");
+    });
+    try {
+      await expect(drafts.all()).rejects.toBeInstanceOf(DraftStorageError);
+    } finally {
+      getAll.mockRestore();
+    }
   });
 
   describe("last chapter storage", () => {

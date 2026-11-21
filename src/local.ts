@@ -49,8 +49,8 @@ function open(): Promise<IDBDatabase | null> {
 type StoreName = "drafts" | "chapters" | "cache";
 
 export class DraftStorageError extends Error {
-  constructor() {
-    super("Lantern couldn't save this draft on this device.");
+  constructor(message = "Lantern couldn't save this draft on this device.") {
+    super(message);
     this.name = "DraftStorageError";
   }
 }
@@ -111,6 +111,28 @@ async function readDraft(chapterId: string): Promise<Draft | null> {
   });
 }
 
+const READ_ALL_FAILED = "Lantern couldn't read the unsaved drafts on this device.";
+
+/** Every draft on this device. Rejects with DraftStorageError if they can't be read, so a failure never looks like "no drafts". */
+async function allDrafts(): Promise<Draft[]> {
+  const db = await open();
+  if (!db) throw new DraftStorageError(READ_ALL_FAILED);
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction("drafts", "readonly");
+      const request = tx.objectStore("drafts").getAll();
+      let list: Draft[] | undefined;
+      request.onsuccess = () => {
+        list = request.result as Draft[];
+      };
+      tx.oncomplete = () => (list ? resolve(list) : reject(new DraftStorageError(READ_ALL_FAILED)));
+      tx.onerror = tx.onabort = () => reject(new DraftStorageError(READ_ALL_FAILED));
+    } catch {
+      reject(new DraftStorageError(READ_ALL_FAILED));
+    }
+  });
+}
+
 // Milestone 1 kept drafts in localStorage. Move any that are still there.
 async function migrateLegacyDrafts(db: IDBDatabase) {
   let legacy: Draft[] = [];
@@ -142,7 +164,7 @@ async function migrateLegacyDrafts(db: IDBDatabase) {
 
 export const drafts = {
   read: readDraft,
-  all: () => run<Draft[]>("drafts", "readonly", (s) => s.getAll()).then((d) => d ?? []),
+  all: allDrafts,
   write: writeDraft,
   /** Remove the draft, but only if it still holds `content` (a newer keystroke wins). */
   clearIf: (chapterId: string, content: string) =>
