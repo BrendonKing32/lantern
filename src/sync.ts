@@ -126,6 +126,25 @@ export type SyncOutcome = "done" | "offline" | "storage-error" | "busy";
 
 let syncing = false;
 
+// Whether the last sync pass couldn't read this device's drafts, for the
+// notice that tells the writer (see SyncNotice). Clears on the next good read.
+let draftsUnreadable = false;
+const listeners = new Set<() => void>();
+
+function setDraftsUnreadable(value: boolean) {
+  if (draftsUnreadable === value) return;
+  draftsUnreadable = value;
+  for (const l of listeners) l();
+}
+
+export const draftReadProblem = {
+  get: () => draftsUnreadable,
+  subscribe(listener: () => void) {
+    listeners.add(listener);
+    return () => void listeners.delete(listener);
+  },
+};
+
 /**
  * Send every draft left on this device (from chapters that aren't open) to the
  * server. A draft that conflicts with a newer save elsewhere is left alone:
@@ -142,10 +161,12 @@ export async function syncDrafts(): Promise<SyncOutcome> {
       // Not knowing what's queued is not the same as an empty queue.
       if (e instanceof DraftStorageError) {
         console.warn(e.message);
+        setDraftsUnreadable(true);
         return "storage-error";
       }
       throw e;
     }
+    setDraftsUnreadable(false);
     for (const d of queue) {
       if (openEditors.has(d.chapterId)) continue;
       try {

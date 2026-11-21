@@ -2845,3 +2845,35 @@ select {
     padding: 0.5rem max(1rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
   }
 }
+
+/* ---------- sync notice: drafts on this device couldn't be read ---------- */
+
+.sync-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  width: min(34rem, calc(100vw - 2rem));
+  z-index: 30;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid rgb(var(--rose-rgb) / 0.55);
+  border-radius: 10px;
+  background: var(--shade);
+  color: var(--wick);
+  box-shadow: 0 10px 30px rgb(var(--shadow-rgb) / 0.45);
+  font-size: 0.9375rem;
+}
+.sync-notice p {
+  margin: 0 0 0.75rem;
+  color: var(--text-soft);
+}
+.sync-notice strong {
+  display: block;
+  color: var(--rose);
+  margin-bottom: 0.25rem;
+}
+.sync-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

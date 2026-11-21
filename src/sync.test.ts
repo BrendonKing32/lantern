@@ -25,7 +25,7 @@ vi.mock("./local", () => ({
 
 import { ApiError } from "./api";
 import { DraftStorageError } from "./local";
-import { syncDrafts } from "./sync";
+import { draftReadProblem, syncDrafts } from "./sync";
 
 const draft = { chapterId: "chapter-1", content: "A draft.", baseVersion: 4, savedAt: 123 };
 
@@ -83,6 +83,26 @@ describe("offline draft sync", () => {
 
     expect(mocks.saveChapter).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("flags unreadable drafts for the notice until a later read succeeds", async () => {
+    mocks.saveChapter.mockResolvedValue({ version: 5, word_count: 2, updated_at: "now" });
+    await syncDrafts(); // start from a good read
+    expect(draftReadProblem.get()).toBe(false);
+    const listener = vi.fn();
+    const stop = draftReadProblem.subscribe(listener);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.draftsAll.mockRejectedValueOnce(new DraftStorageError("couldn't read drafts"));
+
+    await syncDrafts();
+    expect(draftReadProblem.get()).toBe(true);
+
+    await syncDrafts();
+    expect(draftReadProblem.get()).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    stop();
     warn.mockRestore();
   });
 
