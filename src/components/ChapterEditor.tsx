@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
-import { Compartment, EditorSelection } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { api, ApiError, describeError } from "../api";
 import { drafts } from "../local";
 import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync";
@@ -37,6 +37,7 @@ interface Props {
   grammarOn: boolean;
   /** The English the novel is written in. */
   dialect: Dialect;
+  readOnly: boolean;
   onCloseHistory: () => void;
   /** Filled in by the editor so other panels can read the text and point into it. */
   controls?: { current: EditorControls | null };
@@ -81,6 +82,7 @@ export function ChapterEditor({
   onOpenLink,
   grammarOn,
   dialect,
+  readOnly,
   controls,
 }: Props) {
   const [initialDoc, setInitialDoc] = useState<string | null>(null);
@@ -104,6 +106,14 @@ export function ChapterEditor({
   const linkHost = useRef({ entries, onOpenLink });
   linkHost.current = { entries, onOpenLink };
   const view = useRef<EditorView | null>(null);
+  const readingSlot = useRef(new Compartment());
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  const readingMode = (on: boolean) => [
+    EditorState.readOnly.of(on),
+    EditorView.editable.of(!on),
+    EditorView.contentAttributes.of({ "aria-readonly": String(on) }),
+  ];
   // Grammar checking sits in a compartment so it can be switched without
   // recreating the editor. The latest setting is read when an editor is made.
   const grammarSlot = useRef(new Compartment());
@@ -120,7 +130,18 @@ export function ChapterEditor({
     ...proseExtensions,
     wikilinks({ entries: () => linkHost.current.entries, open: (n) => linkHost.current.onOpenLink(n) }),
     grammarSlot.current.of(proofing(grammarOnRef.current)),
+    readingSlot.current.of(readingMode(readOnlyRef.current)),
   ]);
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
+    editor.dispatch({ effects: readingSlot.current.reconfigure(readingMode(readOnly)) });
+    if (readOnly) {
+      if (editor.hasFocus) editor.contentDOM.blur();
+    } else {
+      editor.focus();
+    }
+  }, [readOnly]);
   useEffect(() => {
     if (!view.current) return;
     view.current.dispatch({ effects: entriesChanged.of(null) });
@@ -149,7 +170,7 @@ export function ChapterEditor({
           selection: EditorSelection.range(at[0], at[1]),
           effects: EditorView.scrollIntoView(at[0], { y: "center" }),
         });
-        v.focus();
+        if (!readOnlyRef.current) v.focus();
         return true;
       },
     };
@@ -446,7 +467,7 @@ export function ChapterEditor({
         onClose={onCloseHistory}
       />
     )}
-    <article className="page">
+    <article className={`page${readOnly ? " page-reading" : ""}`}>
       {conflict && (
         <div className="conflict" role="alert">
           <p>
@@ -474,12 +495,15 @@ export function ChapterEditor({
           extensions={extensions}
           onCreateEditor={(v) => {
             view.current = v;
-            v.dispatch({ effects: grammarSlot.current.reconfigure(proofing(grammarOnRef.current)) });
+            v.dispatch({ effects: [
+              grammarSlot.current.reconfigure(proofing(grammarOnRef.current)),
+              readingSlot.current.reconfigure(readingMode(readOnlyRef.current)),
+            ] });
           }}
           basicSetup={basicSetup}
           theme="none"
           placeholder="Begin here."
-          autoFocus
+          autoFocus={!readOnly}
         />
       )}
     </article>
