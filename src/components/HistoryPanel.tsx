@@ -112,22 +112,31 @@ export function HistoryPanel({ chapterId, title, currentText, canRestore, onRest
       </header>
 
       {preview ? (
-        <div className="history-preview">
-          <p className="history-meta">
-            {when(preview.created_at)} · {preview.word_count.toLocaleString()} words, {delta(preview.word_count, nowWords)}
-          </p>
-          <div className="history-actions">
-            <button className="btn btn-lamp" onClick={restore} disabled={!canRestore}>
+        <>
+          <div className="history-preview">
+            <p className="history-meta">
+              {when(preview.created_at)} · {preview.word_count.toLocaleString()} words, {delta(preview.word_count, nowWords)}
+            </p>
+            <div className="history-view" role="group" aria-label="Show">
+              <button className={`btn${comparing ? "" : " is-on"}`} aria-pressed={!comparing} onClick={() => setComparing(false)}>
+                Read snapshot
+              </button>
+              <button className={`btn${comparing ? " is-on" : ""}`} aria-pressed={comparing} onClick={() => setComparing(true)}>
+                Compare with current draft
+              </button>
+            </div>
+            {comparing ? <HistoryComparison snapshot={preview.content} currentText={currentText} />
+              : <div className="history-text">{preview.content}</div>}
+          </div>
+          <footer className="history-restore">
+            <p className="history-note">
+              {canRestore ? "Restoring replaces the chapter. What's there now is kept in history." : "Choose a version in the notice first."}
+            </p>
+            <button className="btn" onClick={restore} disabled={!canRestore}>
               Restore this version
             </button>
-            <button className="btn btn-quiet" onClick={() => setComparing(!comparing)}>
-              {comparing ? "Read snapshot" : "Compare with current draft"}
-            </button>
-          </div>
-          {!canRestore && <p className="history-note">Choose a version in the notice first.</p>}
-          {comparing ? <HistoryComparison snapshot={preview.content} currentText={currentText} />
-            : <div className="history-text">{preview.content}</div>}
-        </div>
+          </footer>
+        </>
       ) : (
         <div className="history-body">
           <p className="history-note">
