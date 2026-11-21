@@ -1,26 +1,6 @@
-import type {
-  AiStatus,
-  BookCheckEvent,
-  BookCheckResult,
-  BibleEntryDraft,
-  CheckResult,
-  BibleEntry,
-  BibleKind,
-  ChapterMeta,
-  ChapterWithContent,
-  DeletedChapter,
-  DeletedProject,
-  Dialect,
-  ProjectDetail,
-  ProjectSummary,
-  SaveResult,
-  SceneMeta,
-  ShareComment,
-  SharedProject,
-  Snapshot,
-  SnapshotWithContent,
-  Stats,
-} from "../shared/types";
+import type { BibleEntry, BibleKind, BookCheckEvent, Dialect, SceneMeta } from "../shared/types";
+import * as schema from "./schemas";
+import { array, type Check, nullable, ShapeError } from "./validate";
 import { localDay } from "./when";
 
 export class ApiError extends Error {
@@ -33,9 +13,44 @@ export class ApiError extends Error {
   }
 }
 
+/** What an ApiError's data.code says when the reply wasn't what this page expects. */
+export const INVALID_RESPONSE = "invalid_response";
+
+const INVALID_MESSAGE = "Lantern sent back a reply this page couldn't read. Reload the page and try again.";
+
+// The server answered, but not with the shape this version of the page
+// expects (an old tab after a deploy, a proxy's HTML page, a cut-off reply).
+// It's an ApiError so callers don't mistake it for being offline.
+function invalidResponse(status: number, detail: string): ApiError {
+  return new ApiError(status, INVALID_MESSAGE, { error: INVALID_MESSAGE, code: INVALID_RESPONSE, detail });
+}
+
+function parse<T>(status: number, text: string, check: Check<T>): T {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw invalidResponse(status, "not JSON");
+  }
+  try {
+    return check(value, "");
+  } catch (e) {
+    if (e instanceof ShapeError) throw invalidResponse(status, e.message);
+    throw e;
+  }
+}
+
+async function errorFrom(res: Response): Promise<ApiError> {
+  const data: unknown = await res.json().catch(() => null);
+  const record = typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
+  const message = typeof record?.error === "string" ? record.error : res.statusText || `Request failed (${res.status})`;
+  return new ApiError(res.status, message, record);
+}
+
 // A network failure (offline, or an expired Access session redirecting to the
 // login page) throws a TypeError from fetch; callers treat that as "offline".
 async function request<T>(
+  check: Check<T>,
   method: string,
   path: string,
   body?: unknown,
@@ -48,55 +63,48 @@ async function request<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
     keepalive: opts.keepalive,
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText, data);
-  return data as T;
+  if (!res.ok) throw await errorFrom(res);
+  return parse(res.status, await res.text(), check);
 }
 
 export const api = {
-  listProjects: () => request<ProjectSummary[]>("GET", "/api/projects"),
-  createProject: (title: string) =>
-    request<{ id: string; title: string }>("POST", "/api/projects", { title }),
-  getProject: (id: string) => request<ProjectDetail>("GET", `/api/projects/${id}`),
-  renameProject: (id: string, title: string) =>
-    request<{ id: string; title: string }>("PATCH", `/api/projects/${id}`, { title }),
+  listProjects: () => request(array(schema.projectSummary), "GET", "/api/projects"),
+  createProject: (title: string) => request(schema.projectRef, "POST", "/api/projects", { title }),
+  getProject: (id: string) => request(schema.projectDetail, "GET", `/api/projects/${id}`),
+  renameProject: (id: string, title: string) => request(schema.projectRef, "PATCH", `/api/projects/${id}`, { title }),
   setArchived: (id: string, archived: boolean) =>
-    request<{ id: string; archived_at: string | null }>("PATCH", `/api/projects/${id}`, { archived }),
-  deleteProject: (id: string) => request<{ ok: true }>("DELETE", `/api/projects/${id}`),
-  bible: (projectId: string) => request<BibleEntry[]>("GET", `/api/projects/${projectId}/bible`),
+    request(schema.projectArchived, "PATCH", `/api/projects/${id}`, { archived }),
+  deleteProject: (id: string) => request(schema.ok, "DELETE", `/api/projects/${id}`),
+  bible: (projectId: string) => request(array(schema.bibleEntry), "GET", `/api/projects/${projectId}/bible`),
   createEntry: (projectId: string, entry: { name: string; kind: BibleKind; aliases?: string[]; body?: string }) =>
-    request<BibleEntry>("POST", `/api/projects/${projectId}/bible`, entry),
+    request(schema.bibleEntry, "POST", `/api/projects/${projectId}/bible`, entry),
   updateEntry: (id: string, patch: Partial<Pick<BibleEntry, "name" | "kind" | "aliases" | "body">>) =>
-    request<BibleEntry>("PATCH", `/api/bible/${id}`, patch),
-  deleteEntry: (id: string) => request<{ ok: true }>("DELETE", `/api/bible/${id}`),
+    request(schema.bibleEntry, "PATCH", `/api/bible/${id}`, patch),
+  deleteEntry: (id: string) => request(schema.ok, "DELETE", `/api/bible/${id}`),
   checkChapter: (chapterId: string, content: string) =>
-    request<CheckResult>("POST", `/api/chapters/${chapterId}/check`, { content }),
+    request(schema.checkResult, "POST", `/api/chapters/${chapterId}/check`, { content }),
   draftBibleEntry: (chapterId: string, content: string, quote: string) =>
-    request<BibleEntryDraft>("POST", `/api/chapters/${chapterId}/draft-entry`, { content, quote }),
-  lastBookCheck: (projectId: string) => request<BookCheckResult | null>("GET", `/api/projects/${projectId}/check-book`),
-  aiStatus: () => request<AiStatus>("GET", "/api/ai/status"),
-  aiTest: () =>
-    request<{ ok: boolean; reply: string; model: string; ms: number; cost_usd: number }>("POST", "/api/ai/test"),
-  stats: () => request<Stats>("GET", `/api/stats?today=${localDay()}`),
-  setGoal: (dailyGoal: number | null) =>
-    request<{ daily_goal: number | null }>("PUT", "/api/goal", { daily_goal: dailyGoal }),
+    request(schema.bibleEntryDraft, "POST", `/api/chapters/${chapterId}/draft-entry`, { content, quote }),
+  lastBookCheck: (projectId: string) =>
+    request(nullable(schema.bookCheckResult), "GET", `/api/projects/${projectId}/check-book`),
+  aiStatus: () => request(schema.aiStatus, "GET", "/api/ai/status"),
+  aiTest: () => request(schema.aiTest, "POST", "/api/ai/test"),
+  stats: () => request(schema.stats, "GET", `/api/stats?today=${localDay()}`),
+  setGoal: (dailyGoal: number | null) => request(schema.goal, "PUT", "/api/goal", { daily_goal: dailyGoal }),
   setTarget: (projectId: string, words: number | null, date: string | null) =>
-    request<{ target_words: number | null; target_date: string | null }>(
-      "PUT",
-      `/api/projects/${projectId}/target`,
-      { target_words: words, target_date: date },
-    ),
+    request(schema.target, "PUT", `/api/projects/${projectId}/target`, { target_words: words, target_date: date }),
   setDialect: (projectId: string, dialect: Dialect) =>
-    request<{ dialect: Dialect }>("PUT", `/api/projects/${projectId}/dialect`, { dialect }),
-  deletedProjects: () => request<DeletedProject[]>("GET", "/api/trash/projects"),
-  restoreProject: (id: string) => request<ProjectSummary>("POST", `/api/projects/${id}/restore`),
-  deletedChapters: (projectId: string) => request<DeletedChapter[]>("GET", `/api/projects/${projectId}/trash`),
-  restoreChapter: (id: string) => request<ChapterMeta>("POST", `/api/chapters/${id}/restore`),
+    request(schema.dialectSetting, "PUT", `/api/projects/${projectId}/dialect`, { dialect }),
+  deletedProjects: () => request(array(schema.deletedProject), "GET", "/api/trash/projects"),
+  restoreProject: (id: string) => request(schema.projectSummary, "POST", `/api/projects/${id}/restore`),
+  deletedChapters: (projectId: string) =>
+    request(array(schema.deletedChapter), "GET", `/api/projects/${projectId}/trash`),
+  restoreChapter: (id: string) => request(schema.chapterMeta, "POST", `/api/chapters/${id}/restore`),
   createChapter: (projectId: string, title: string) =>
-    request<ChapterMeta>("POST", `/api/projects/${projectId}/chapters`, { title }),
+    request(schema.chapterMeta, "POST", `/api/projects/${projectId}/chapters`, { title }),
   reorder: (projectId: string, chapterIds: string[]) =>
-    request<{ ok: true }>("PUT", `/api/projects/${projectId}/order`, { chapterIds }),
-  getChapter: (id: string) => request<ChapterWithContent>("GET", `/api/chapters/${id}`),
+    request(schema.ok, "PUT", `/api/projects/${projectId}/order`, { chapterIds }),
+  getChapter: (id: string) => request(schema.chapterWithContent, "GET", `/api/chapters/${id}`),
   /** `snapshot` asks the server to keep the text being replaced in history. */
   saveChapter: (
     id: string,
@@ -109,7 +117,8 @@ export const api = {
       writtenAt?: number;
     } = {},
   ) =>
-    request<SaveResult>(
+    request(
+      schema.saveResult,
       "PUT",
       `/api/chapters/${id}`,
       // `day` credits the words to the local date they were written on.
@@ -123,39 +132,37 @@ export const api = {
       { keepalive: opts.keepalive },
     ),
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
-    request<ChapterMeta>("PATCH", `/api/chapters/${id}`, patch),
-  scenes: (projectId: string) => request<SceneMeta[]>("GET", `/api/projects/${projectId}/scenes`),
-  createScene: (chapterId: string) => request<SceneMeta>("POST", `/api/chapters/${chapterId}/scenes`),
+    request(schema.chapterMeta, "PATCH", `/api/chapters/${id}`, patch),
+  scenes: (projectId: string) => request(array(schema.sceneMeta), "GET", `/api/projects/${projectId}/scenes`),
+  createScene: (chapterId: string) => request(schema.sceneMeta, "POST", `/api/chapters/${chapterId}/scenes`),
   updateScene: (
     id: string,
     patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status">>,
-  ) => request<SceneMeta>("PATCH", `/api/scenes/${id}`, patch),
-  deleteScene: (id: string) => request<{ ok: true }>("DELETE", `/api/scenes/${id}`),
+  ) => request(schema.sceneMeta, "PATCH", `/api/scenes/${id}`, patch),
+  deleteScene: (id: string) => request(schema.ok, "DELETE", `/api/scenes/${id}`),
   reorderScenes: (projectId: string, chapterId: string, sceneIds: string[]) =>
-    request<{ ok: true }>("PUT", `/api/projects/${projectId}/scenes/order`, { chapterId, sceneIds }),
-  deleteChapter: (id: string) => request<{ ok: true }>("DELETE", `/api/chapters/${id}`),
-  listHistory: (chapterId: string) => request<Snapshot[]>("GET", `/api/chapters/${chapterId}/history`),
+    request(schema.ok, "PUT", `/api/projects/${projectId}/scenes/order`, { chapterId, sceneIds }),
+  deleteChapter: (id: string) => request(schema.ok, "DELETE", `/api/chapters/${id}`),
+  listHistory: (chapterId: string) => request(array(schema.snapshot), "GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>
-    request<SnapshotWithContent>("GET", `/api/chapters/${chapterId}/history/${snapshotId}`),
-  shareStatus: (projectId: string) =>
-    request<{ active: boolean; created_at: string | null }>("GET", `/api/projects/${projectId}/share`),
-  createShare: (projectId: string) =>
-    request<{ active: true; token: string; created_at: string }>("POST", `/api/projects/${projectId}/share`),
-  revokeShare: (projectId: string) =>
-    request<{ ok: true }>("DELETE", `/api/projects/${projectId}/share`),
+    request(schema.snapshotWithContent, "GET", `/api/chapters/${chapterId}/history/${snapshotId}`),
+  shareStatus: (projectId: string) => request(schema.shareStatus, "GET", `/api/projects/${projectId}/share`),
+  createShare: (projectId: string) => request(schema.shareCreated, "POST", `/api/projects/${projectId}/share`),
+  revokeShare: (projectId: string) => request(schema.ok, "DELETE", `/api/projects/${projectId}/share`),
   shareComments: (projectId: string) =>
-    request<ShareComment[]>("GET", `/api/projects/${projectId}/share/comments`),
+    request(array(schema.shareComment), "GET", `/api/projects/${projectId}/share/comments`),
   deleteShareComment: (projectId: string, commentId: string) =>
-    request<{ ok: true }>("DELETE", `/api/projects/${projectId}/share/comments/${commentId}`),
+    request(schema.ok, "DELETE", `/api/projects/${projectId}/share/comments/${commentId}`),
   getSharedProject: (token: string) =>
-    request<SharedProject>("GET", `/api/share/${encodeURIComponent(token)}`),
+    request(schema.sharedProject, "GET", `/api/share/${encodeURIComponent(token)}`),
   getSharedChapter: (token: string, chapterId: string) =>
-    request<{ id: string; title: string; content: string }>(
+    request(
+      schema.sharedChapter,
       "GET",
       `/api/share/${encodeURIComponent(token)}/chapters/${encodeURIComponent(chapterId)}`,
     ),
   postShareComment: (token: string, chapterId: string, displayName: string, comment: string) =>
-    request<{ ok: true }>("POST", `/api/share/${encodeURIComponent(token)}/comments`, {
+    request(schema.ok, "POST", `/api/share/${encodeURIComponent(token)}/comments`, {
       chapterId,
       displayName,
       body: comment,
@@ -189,11 +196,20 @@ export async function streamBookCheck(
     body: JSON.stringify({ overrides }),
     signal,
   });
-  if (!res.ok || !res.body) {
-    const data = await res.json().catch(() => null);
-    throw new ApiError(res.status, data?.error ?? res.statusText, data);
-  }
+  if (!res.ok || !res.body) throw await errorFrom(res);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  // Each line is checked before onEvent sees it. A bad line ends the check
+  // with an ApiError and stops reading the rest of the reply.
+  const deliver = async (line: string) => {
+    let event: BookCheckEvent;
+    try {
+      event = parse(res.status, line, schema.bookCheckEvent);
+    } catch (e) {
+      await reader.cancel().catch(() => {});
+      throw e;
+    }
+    onEvent(event);
+  };
   let buffered = "";
   for (;;) {
     const { value, done } = await reader.read();
@@ -202,8 +218,10 @@ export async function streamBookCheck(
     while ((nl = buffered.indexOf("\n")) >= 0) {
       const line = buffered.slice(0, nl).trim();
       buffered = buffered.slice(nl + 1);
-      if (line) onEvent(JSON.parse(line) as BookCheckEvent);
+      if (line) await deliver(line);
     }
     if (done) break;
   }
+  // The server ends every line with a newline, so anything left was cut off.
+  if (buffered.trim()) await deliver(buffered.trim());
 }
