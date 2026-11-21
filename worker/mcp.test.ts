@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import worker, { type Env } from "./index";
 import { findMatches, READ_LIMIT } from "./mcp/tools";
-import { isOAuthPath, publicOrigin, redirectAllowed } from "./mcp/oauth";
+import { isOAuthPath, pageCsp, publicOrigin, redirectAllowed } from "./mcp/oauth";
 import { createMcpServer } from "./mcp/server";
 
 // ---------- fakes ----------
@@ -437,6 +437,19 @@ describe("connector sign-in", () => {
     });
     const body = (await call.json()) as { result: { content: { text: string }[] } };
     expect(JSON.parse(body.result.content[0].text)[0].title).toBe("The Lamplighter");
+  });
+
+  it("lets the consent form's redirect reach Claude, and nowhere else", async () => {
+    // Browsers apply form-action to the redirect after Allow or Deny; with only
+    // 'self', Chrome stays on the page after approving and a second click fails.
+    const e = env();
+    const { client_id } = await register(e);
+    const { challenge } = await pkce();
+    const consent = await send(e, authorizeUrl(client_id, challenge));
+    const csp = consent.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("form-action 'self' https://claude.ai;");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(pageCsp()).toContain("form-action 'self';");
   });
 
   it("rejects a forged or reused consent form", async () => {

@@ -59,13 +59,22 @@ type OAuthEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
 const escape = (value: string) => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-const PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+/**
+ * The consent page's CSP. Browsers apply form-action to every redirect a form
+ * submission follows, so the Allow and Deny forms, which post here and are
+ * then redirected back to the client, must name the client's callback origin
+ * as well as 'self'. Only the one origin already checked against
+ * MCP_REDIRECT_HOSTS is added.
+ */
+export function pageCsp(formTarget?: string): string {
+  const formAction = formTarget ? `'self' ${new URL(formTarget).origin}` : "'self'";
+  return `default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`;
+}
 
-function page(title: string, body: string, status = 200, headers = new Headers()): Response {
+function page(title: string, body: string, status = 200, headers = new Headers(), formTarget?: string): Response {
   headers.set("content-type", "text/html; charset=utf-8");
   headers.set("cache-control", "no-store");
-  headers.set("content-security-policy", PAGE_CSP);
+  headers.set("content-security-policy", pageCsp(formTarget));
   headers.set("x-frame-options", "DENY");
   headers.set("referrer-policy", "no-referrer");
   return new Response(
@@ -120,6 +129,7 @@ function consentPage(details: ConsentDescription, handle: string, email: string,
 </form>`,
     200,
     headers,
+    details.redirectUri,
   );
 }
 
