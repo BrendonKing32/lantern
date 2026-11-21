@@ -191,7 +191,8 @@ const proseStyle = HighlightStyle.define([
   { tag: t.strikethrough, textDecoration: "line-through" },
   { tag: t.quote, fontStyle: "italic", color: "var(--text-soft)" },
   { tag: t.link, textDecoration: "underline", textDecorationColor: "var(--mark)" },
-  { tag: t.url, color: "var(--mark)" },
+  // URLs are readable text, so they use the faint token (4.5:1+); --mark is for syntax.
+  { tag: t.url, color: "var(--text-faint)" },
   { tag: [t.processingInstruction, t.contentSeparator, t.list], color: "var(--mark)" },
   { tag: t.monospace, fontFamily: "var(--font-mono)", fontSize: "0.9em" },
 ]);
