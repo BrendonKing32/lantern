@@ -969,11 +969,51 @@ select {
   color: var(--text-soft);
   font-size: 0.8125rem;
 }
-.history-actions {
+.history-view {
+  display: flex;
+  gap: 0.1rem;
+  margin-bottom: 1rem;
+  padding: 0.15rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: rgb(var(--tint-rgb) / 0.025);
+}
+.history-view .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border-color: transparent;
+  color: var(--text-soft);
+  font-size: 0.875rem;
+  line-height: 1.25;
+}
+.history-view .btn:hover {
+  color: var(--wick);
+}
+.history-view .btn.is-on {
+  color: var(--lamp);
+  border-color: var(--rule);
+  background: var(--shade);
+}
+.history-restore {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--rule);
+}
+.history-restore .history-note {
+  flex: 1 1 12rem;
+  margin: 0;
+}
+.history-restore .btn {
+  flex: 0 0 auto;
+}
+.history-restore .btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .history-text {
   white-space: pre-wrap;
