@@ -5,7 +5,7 @@ drag-to-reorder chapter list, a live-markdown editor with autosave, word
 counts, and conflict protection across devices.
 
 - **Front end:** React, TypeScript, and CodeMirror 6, served as static assets
-- **API:** a Cloudflare Worker (`worker/index.ts`)
+- **API:** a Cloudflare Worker (`worker/index.ts` is the entry point and route table; handlers live in `worker/handlers/`, one module per feature)
 - **Text:** plain `.md` files in R2 (`lantern-manuscripts`), one per chapter
 - **Metadata:** D1 (`lantern-db`), holding projects, chapter order, titles, word counts, and versions
 - **Login:** Cloudflare Access in front of `lantern.bkbuilds.dev`
