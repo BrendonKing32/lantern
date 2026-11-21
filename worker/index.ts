@@ -5,6 +5,7 @@ import { AiError, aiStatus, guardedMessage, type AiEnv } from "./ai";
 import { checkChapter, draftBibleEntry } from "./check";
 import { prepareBookCheck } from "./bookCheck";
 import { createBackup, type BackupEnv } from "./backups";
+import { ChangelogError, fetchChangelog } from "./changelog";
 import type {
   BibleEntry,
   BibleKind,
@@ -27,6 +28,7 @@ export interface Env extends AiEnv, BackupEnv {
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUD: string;
   DEV_BYPASS?: string;
+  GITHUB_CHANGELOG_TOKEN?: string;
 }
 
 const MAX_CHAPTER_BYTES = 5 * 1024 * 1024;
@@ -1161,8 +1163,15 @@ const lastBookCheck: Handler = async (_req, env, p) => {
 
 // ---------- router ----------
 
+const getChangelog: Handler = async (_req, env) => {
+  const token = env.GITHUB_CHANGELOG_TOKEN?.trim();
+  if (!token) throw new HttpError(503, "Changelog isn't configured. Add the GITHUB_CHANGELOG_TOKEN secret to Lantern.");
+  return json(await fetchChangelog(token));
+};
+
 const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/projects", listProjects],
+  ["GET", "/api/changelog", getChangelog],
   ["GET", "/api/stats", getStats],
   ["GET", "/api/ai/status", getAiStatus],
   ["POST", "/api/ai/test", testAi],
@@ -1256,6 +1265,7 @@ export default {
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message, ...e.extra }, e.status);
       if (e instanceof AiError) return json({ error: e.message, code: e.code }, e.status);
+      if (e instanceof ChangelogError) return json({ error: e.message }, 502);
       console.error(e);
       return json({ error: "Server error" }, 500);
     }

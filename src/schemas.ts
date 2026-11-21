@@ -8,6 +8,7 @@ import {
   type BibleEntryDraft,
   type BookCheckEvent,
   type BookCheckResult,
+  type ChangelogEntry,
   type ChapterMeta,
   type ChapterWithContent,
   type CheckResult,
@@ -27,6 +28,13 @@ import {
 import { array, boolean, type Check, literal, nullable, number, object, optional, string, tagged } from "./validate";
 
 export const ok = object({ ok: literal(true) });
+
+export const changelogEntry: Check<ChangelogEntry> = object({
+  number,
+  title: string,
+  merged_at: string,
+  url: string,
+});
 
 export const projectSummary: Check<ProjectSummary> = object({
   id: string,

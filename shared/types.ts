@@ -1,3 +1,10 @@
+export interface ChangelogEntry {
+  number: number;
+  title: string;
+  merged_at: string;
+  url: string;
+}
+
 export interface ProjectSummary {
   id: string;
   title: string;

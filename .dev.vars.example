@@ -1,6 +1,9 @@
 # Copy to .dev.vars for local development only. Never deploy with this set.
 DEV_BYPASS=true
 
+# Optional, for the PR changelog. Use a fine-grained token with read-only Pull requests access.
+# GITHUB_CHANGELOG_TOKEN=...
+
 # Optional, for trying Claude features locally. Use a key with a low spend limit.
 # ANTHROPIC_API_KEY=sk-ant-...
 # Override the limits from wrangler.toml for local testing:
