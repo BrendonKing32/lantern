@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, describeError, streamBookCheck } from "../api";
-import { drafts } from "../local";
+import { DraftStorageError, drafts } from "../local";
 import { entriesMentioned } from "../../shared/wikilinks";
 import type {
   AiStatus,
@@ -565,7 +565,7 @@ function BookCheck({
         else if (e.type === "error") setError(e.error);
       });
     } catch (e) {
-      if (alive.current) setError(e instanceof ApiError || e instanceof TypeError ? describeError(e) : "The check stopped unexpectedly. Try again.");
+      if (alive.current) setError(e instanceof DraftStorageError ? `${e.message} The check wasn't run, so it couldn't use writing that isn't saved yet.` : e instanceof ApiError || e instanceof TypeError ? describeError(e) : "The check stopped unexpectedly. Try again.");
     } finally {
       if (alive.current) {
         setRunning(null);

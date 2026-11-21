@@ -22,7 +22,8 @@ const LEGACY_PREFIX = "lantern:draft:";
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
 function open(): Promise<IDBDatabase | null> {
-  dbPromise ??= new Promise<IDBDatabase | null>((resolve) => {
+  if (dbPromise) return dbPromise;
+  const opening: Promise<IDBDatabase | null> = new Promise<IDBDatabase | null>((resolve) => {
     let req: IDBOpenDBRequest;
     try {
       req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -30,27 +31,60 @@ function open(): Promise<IDBDatabase | null> {
       resolve(null);
       return;
     }
+    let settled = false;
+    const settle = (db: IDBDatabase | null) => {
+      // A request reported as blocked can still succeed later; don't keep that
+      // stray connection open, since we've already given up on it.
+      if (settled) return db?.close();
+      settled = true;
+      resolve(db);
+    };
     req.onupgradeneeded = () => {
       const db = req.result;
       db.createObjectStore("drafts", { keyPath: "chapterId" });
       db.createObjectStore("chapters", { keyPath: "id" });
       db.createObjectStore("cache");
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
-    req.onblocked = () => resolve(null);
+    req.onsuccess = () => {
+      const db = req.result;
+      // The browser can close the connection itself (storage cleared, disk
+      // trouble). Open a fresh one next time rather than reusing a dead one.
+      db.onclose = () => {
+        if (dbPromise === opening) dbPromise = null;
+      };
+      settle(db);
+    };
+    req.onerror = () => settle(null);
+    req.onblocked = () => settle(null);
   }).then(async (db) => {
-    if (db) await migrateLegacyDrafts(db);
+    if (db) {
+      try {
+        await migrateLegacyDrafts(db);
+      } catch {
+        /* the old drafts stay in localStorage for next time */
+      }
+    }
     return db;
   });
-  return dbPromise;
+  dbPromise = opening;
+  return opening;
+}
+
+/**
+ * Try opening this device's storage again if the last attempt failed, so a
+ * failure (a blocked upgrade, a busy disk) doesn't last until the page reloads.
+ * A working connection is left alone.
+ */
+export async function reopenStorage(): Promise<void> {
+  const current = dbPromise;
+  if (current && (await current) === null && dbPromise === current) dbPromise = null;
 }
 
 type StoreName = "drafts" | "chapters" | "cache";
 
 export class DraftStorageError extends Error {
-  constructor() {
-    super("Lantern couldn't save this draft on this device.");
+  constructor(message = "Lantern couldn't save this draft on this device.") {
+    super(message);
     this.name = "DraftStorageError";
   }
 }
@@ -111,6 +145,28 @@ async function readDraft(chapterId: string): Promise<Draft | null> {
   });
 }
 
+const READ_ALL_FAILED = "Lantern couldn't read the unsaved drafts on this device.";
+
+/** Every draft on this device. Rejects with DraftStorageError if they can't be read, so a failure never looks like "no drafts". */
+async function allDrafts(): Promise<Draft[]> {
+  const db = await open();
+  if (!db) throw new DraftStorageError(READ_ALL_FAILED);
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction("drafts", "readonly");
+      const request = tx.objectStore("drafts").getAll();
+      let list: Draft[] | undefined;
+      request.onsuccess = () => {
+        list = request.result as Draft[];
+      };
+      tx.oncomplete = () => (list ? resolve(list) : reject(new DraftStorageError(READ_ALL_FAILED)));
+      tx.onerror = tx.onabort = () => reject(new DraftStorageError(READ_ALL_FAILED));
+    } catch {
+      reject(new DraftStorageError(READ_ALL_FAILED));
+    }
+  });
+}
+
 // Milestone 1 kept drafts in localStorage. Move any that are still there.
 async function migrateLegacyDrafts(db: IDBDatabase) {
   let legacy: Draft[] = [];
@@ -142,7 +198,7 @@ async function migrateLegacyDrafts(db: IDBDatabase) {
 
 export const drafts = {
   read: readDraft,
-  all: () => run<Draft[]>("drafts", "readonly", (s) => s.getAll()).then((d) => d ?? []),
+  all: allDrafts,
   write: writeDraft,
   /** Remove the draft, but only if it still holds `content` (a newer keystroke wins). */
   clearIf: (chapterId: string, content: string) =>
