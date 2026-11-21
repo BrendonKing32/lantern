@@ -5,7 +5,7 @@ const problem = vi.hoisted(() => ({ unreadable: false }));
 
 vi.mock("../sync", () => ({
   draftReadProblem: { get: () => problem.unreadable, subscribe: () => () => undefined },
-  retryDraftSync: vi.fn(),
+  syncDrafts: vi.fn(),
 }));
 
 import { SyncNotice } from "./SyncNotice";

@@ -156,6 +156,8 @@ export async function syncDrafts(): Promise<SyncOutcome> {
   try {
     let queue: Draft[];
     try {
+      // If storage failed to open earlier, try again rather than waiting for a reload.
+      await reopenStorage();
       queue = await drafts.all();
     } catch (e) {
       // Not knowing what's queued is not the same as an empty queue.
@@ -182,12 +184,6 @@ export async function syncDrafts(): Promise<SyncOutcome> {
   } finally {
     syncing = false;
   }
-}
-
-/** The notice's "Try again": reopen this device's storage if it had failed, then sync. */
-export async function retryDraftSync(): Promise<SyncOutcome> {
-  await reopenStorage();
-  return syncDrafts();
 }
 
 export function startSync() {

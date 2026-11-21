@@ -27,7 +27,7 @@ vi.mock("./local", () => ({
 
 import { ApiError } from "./api";
 import { DraftStorageError } from "./local";
-import { draftReadProblem, retryDraftSync, syncDrafts } from "./sync";
+import { draftReadProblem, syncDrafts } from "./sync";
 
 const draft = { chapterId: "chapter-1", content: "A draft.", baseVersion: 4, savedAt: 123 };
 
@@ -121,7 +121,7 @@ describe("offline draft sync", () => {
     expect(mocks.draftsClearIf).not.toHaveBeenCalled();
   });
 
-  it("reopens storage before retrying from the notice", async () => {
+  it("reopens storage that failed earlier before reading the queue", async () => {
     const order: string[] = [];
     mocks.reopenStorage.mockImplementation(async () => void order.push("reopen"));
     mocks.draftsAll.mockImplementation(async () => {
@@ -129,7 +129,7 @@ describe("offline draft sync", () => {
       return [];
     });
 
-    await expect(retryDraftSync()).resolves.toBe("done");
+    await expect(syncDrafts()).resolves.toBe("done");
     expect(order).toEqual(["reopen", "read"]);
   });
 });

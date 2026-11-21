@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { draftReadProblem, retryDraftSync } from "../sync";
+import { draftReadProblem, syncDrafts } from "../sync";
 
 /**
  * A notice shown while Lantern can't read the unsaved drafts kept on this
@@ -20,7 +20,7 @@ export function SyncNotice() {
   const retry = async () => {
     setRetrying(true);
     try {
-      await retryDraftSync();
+      await syncDrafts();
     } finally {
       setRetrying(false);
     }
