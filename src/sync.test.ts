@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   saveChapter: vi.fn(),
   draftsAll: vi.fn(),
   draftsClearIf: vi.fn(),
+  reopenStorage: vi.fn(),
   chapterRead: vi.fn(),
   chapterWrite: vi.fn(),
 }));
@@ -18,12 +19,15 @@ vi.mock("./api", () => ({
 }));
 
 vi.mock("./local", () => ({
+  DraftStorageError: class DraftStorageError extends Error {},
   drafts: { all: mocks.draftsAll, clearIf: mocks.draftsClearIf },
   chapters: { read: mocks.chapterRead, write: mocks.chapterWrite },
+  reopenStorage: mocks.reopenStorage,
 }));
 
 import { ApiError } from "./api";
-import { syncDrafts } from "./sync";
+import { DraftStorageError } from "./local";
+import { draftReadProblem, syncDrafts } from "./sync";
 
 const draft = { chapterId: "chapter-1", content: "A draft.", baseVersion: 4, savedAt: 123 };
 
@@ -50,7 +54,7 @@ describe("offline draft sync", () => {
     const result = { version: 5, word_count: 2, updated_at: "now" };
     mocks.saveChapter.mockResolvedValue(result);
 
-    await syncDrafts();
+    await expect(syncDrafts()).resolves.toBe("done");
 
     expect(mocks.saveChapter).toHaveBeenCalledWith(
       draft.chapterId,
@@ -71,5 +75,61 @@ describe("offline draft sync", () => {
 
     expect(mocks.draftsClearIf).not.toHaveBeenCalled();
     expect(mocks.chapterWrite).not.toHaveBeenCalled();
+  });
+
+  it("reports a storage failure instead of treating it as an empty queue", async () => {
+    mocks.draftsAll.mockRejectedValue(new DraftStorageError("couldn't read drafts"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(syncDrafts()).resolves.toBe("storage-error");
+
+    expect(mocks.saveChapter).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("flags unreadable drafts for the notice until a later read succeeds", async () => {
+    mocks.saveChapter.mockResolvedValue({ version: 5, word_count: 2, updated_at: "now" });
+    await syncDrafts(); // start from a good read
+    expect(draftReadProblem.get()).toBe(false);
+    const listener = vi.fn();
+    const stop = draftReadProblem.subscribe(listener);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.draftsAll.mockRejectedValueOnce(new DraftStorageError("couldn't read drafts"));
+
+    await syncDrafts();
+    expect(draftReadProblem.get()).toBe(true);
+
+    await syncDrafts();
+    expect(draftReadProblem.get()).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    stop();
+    warn.mockRestore();
+  });
+
+  it("reports an empty queue as done", async () => {
+    mocks.draftsAll.mockResolvedValue([]);
+
+    await expect(syncDrafts()).resolves.toBe("done");
+  });
+
+  it("reports offline when the server can't be reached", async () => {
+    mocks.saveChapter.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(syncDrafts()).resolves.toBe("offline");
+    expect(mocks.draftsClearIf).not.toHaveBeenCalled();
+  });
+
+  it("reopens storage that failed earlier before reading the queue", async () => {
+    const order: string[] = [];
+    mocks.reopenStorage.mockImplementation(async () => void order.push("reopen"));
+    mocks.draftsAll.mockImplementation(async () => {
+      order.push("read");
+      return [];
+    });
+
+    await expect(syncDrafts()).resolves.toBe("done");
+    expect(order).toEqual(["reopen", "read"]);
   });
 });
