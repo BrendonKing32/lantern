@@ -205,6 +205,7 @@ function Book({ project: p, onArchive, onRestore, onDelete }: BookProps) {
           {p.chapter_count === 1 ? "chapter" : "chapters"}
         </span>
         <span className="book-meta book-edited">{lastEdited(p.updated_at)}</span>
+        <span className="book-meta">Continue writing →</span>
       </a>
       <span className="book-tools">
         {onArchive && (

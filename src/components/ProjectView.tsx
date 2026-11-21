@@ -16,6 +16,7 @@ import { BibleView } from "./BibleView";
 import { LinkPeek } from "./LinkPeek";
 import { loadBible } from "../sync";
 import { cache } from "../local";
+import { selectChapter } from "../resume";
 import { entryIndex, linkKey } from "../../shared/wikilinks";
 import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
@@ -138,6 +139,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   // Write (the editor), the corkboard or the story guide. Remembered per novel for this tab.
   const viewKey = `lantern:view:${projectId}`;
   const [view, setViewState] = useState<View>(() => {
+    if (!chapterId) return "write";
     try {
       const v = sessionStorage.getItem(viewKey) as View | null;
       return v && VIEWS.includes(v) ? v : "write";
@@ -210,6 +212,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
   const [offline, setOffline] = useState(false);
+  const [lastChapterId, setLastChapterId] = useState<string | null>(null);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
   const [scenesError, setScenesError] = useState<string | null>(null);
@@ -218,9 +221,10 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [today, setToday] = useState<{ words: number; goal: number | null } | null>(null);
   const sessionStart = useRef<Record<string, number>>({});
 
-  const load = useCallback(() => {
-    loadProject(projectId)
-      .then(({ data, offline }) => {
+  const load = useCallback((initial = false) => {
+    Promise.all([loadProject(projectId), initial ? cache.lastChapter(projectId) : Promise.resolve(null)])
+      .then(([{ data, offline }, lastChapter]) => {
+        if (initial) setLastChapterId(lastChapter);
         setDetail(data);
         setOffline(offline);
         setError(null);
@@ -228,7 +232,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
       .catch((e) => setError(describeError(e)));
   }, [projectId]);
 
-  useEffect(load, [load]);
+  useEffect(() => load(true), [load]);
   // Fetch the export code in the background, so the service worker keeps it
   // and exporting works offline too.
   useEffect(() => {
@@ -245,7 +249,12 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [projectId]);
 
   const chapters = detail?.chapters ?? [];
-  const selected = chapters.find((c) => c.id === chapterId) ?? chapters[0];
+  const selected = selectChapter(chapters, chapterId, lastChapterId);
+  useEffect(() => {
+    if (!selected) return;
+    setLastChapterId(selected.id);
+    void cache.setLastChapter(projectId, selected.id);
+  }, [projectId, selected?.id]);
   const readOnly = phone && editingChapter !== selected?.id;
   useEffect(() => setEditingChapter(null), [selected?.id]);
   useEffect(() => {
@@ -464,6 +473,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
       const idx = chapters.findIndex((x) => x.id === c.id);
       const rest = chapters.filter((x) => x.id !== c.id);
       setDetail((d) => (d ? { ...d, chapters: rest } : d));
+      if (detail) void cache.setProject({ ...detail, chapters: rest });
       if (c.id === selected?.id) navigate(projectId, rest[Math.max(0, idx - 1)].id, true);
     } catch (e) {
       alert(describeError(e));

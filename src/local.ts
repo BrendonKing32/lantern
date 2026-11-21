@@ -172,6 +172,10 @@ export const cache = {
   project: (id: string) =>
     run<ProjectDetail>("cache", "readonly", (s) => s.get(`project:${id}`)).then((v) => v ?? null),
   setProject: (d: ProjectDetail) => run("cache", "readwrite", (s) => s.put(d, `project:${d.project.id}`)),
+  lastChapter: (projectId: string) =>
+    run<string>("cache", "readonly", (s) => s.get(`lastChapter:${projectId}`)).then((v) => typeof v === "string" ? v : null),
+  setLastChapter: (projectId: string, chapterId: string) =>
+    run("cache", "readwrite", (s) => s.put(chapterId, `lastChapter:${projectId}`)),
   bible: (projectId: string) =>
     run<BibleEntry[]>("cache", "readonly", (s) => s.get(`bible:${projectId}`)).then((v) => v ?? null),
   setBible: (projectId: string, list: BibleEntry[]) => run("cache", "readwrite", (s) => s.put(list, `bible:${projectId}`)),
