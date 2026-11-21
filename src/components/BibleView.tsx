@@ -153,51 +153,116 @@ interface EditorProps {
 
 const SAVE_DELAY = 800;
 
+type EntryPatch = Partial<Pick<BibleEntry, "name" | "kind" | "aliases" | "body">>;
+type EntryField = keyof EntryPatch;
+type EntryStatus = { state: "saved" | "saving" | "editing" } | { state: "error"; detail: string };
+
+const parseAliases = (text: string) => text.split(",").map((a) => a.trim()).filter(Boolean);
+const sameList = (a: string[], b: string[]) => a.join("\n") === b.join("\n");
+
 function EntryEditor({ entry, offline, onSaved, onDeleted, chapters, onOpenChapter }: EditorProps) {
   const [name, setName] = useState(entry.name);
   const [aliases, setAliases] = useState(entry.aliases.join(", "));
   const [body, setBody] = useState(entry.body);
-  const [status, setStatus] = useState<"saved" | "saving" | "editing" | string>("saved");
+  const [kind, setKind] = useState(entry.kind);
+  const [status, setStatus] = useState<EntryStatus>({ state: "saved" });
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const latest = useRef(entry);
   latest.current = entry;
+  const onSavedRef = useRef(onSaved);
+  onSavedRef.current = onSaved;
+  const fields = useRef({ name, aliases, body, kind });
+  fields.current = { name, aliases, body, kind };
+  const inFlight = useRef(0);
+  // Fields whose last save failed, and why. They stay as typed until a save works.
+  const failed = useRef<{ fields: Set<EntryField>; detail: string }>({ fields: new Set(), detail: "" });
+  const alive = useRef(true);
 
-  const save = async (patch: Partial<Pick<BibleEntry, "name" | "kind" | "aliases" | "body">>) => {
-    setStatus("saving");
+  /** What's on screen but not yet on the server. */
+  const unsaved = (): EntryPatch => {
+    const e = latest.current;
+    const f = fields.current;
+    const patch: EntryPatch = {};
+    const n = f.name.trim();
+    if (n && n !== e.name) patch.name = n;
+    const list = parseAliases(f.aliases);
+    if (!sameList(list, e.aliases)) patch.aliases = list;
+    if (f.body !== e.body) patch.body = f.body;
+    if (f.kind !== e.kind) patch.kind = f.kind;
+    return patch;
+  };
+
+  const refresh = () => {
+    if (!alive.current) return;
+    if (inFlight.current > 0) setStatus({ state: "saving" });
+    else if (failed.current.fields.size > 0) setStatus({ state: "error", detail: failed.current.detail });
+    else if (timer.current !== undefined) setStatus({ state: "editing" });
+    else setStatus({ state: "saved" });
+  };
+
+  const save = async (patch: EntryPatch) => {
+    const keys = Object.keys(patch) as EntryField[];
+    if (!keys.length) return refresh();
+    inFlight.current++;
+    refresh();
     try {
       const e = await api.updateEntry(entry.id, patch);
-      onSaved(e);
-      setStatus("saved");
-      return e;
+      onSavedRef.current(e);
+      latest.current = e;
+      for (const k of keys) failed.current.fields.delete(k);
     } catch (err) {
-      setStatus(describeError(err));
-      return null;
+      for (const k of keys) failed.current.fields.add(k);
+      failed.current.detail = describeError(err);
+    } finally {
+      inFlight.current--;
+      refresh();
     }
   };
 
-  // Notes save shortly after you stop typing, and on leaving the entry.
-  const bodyRef = useRef(body);
-  bodyRef.current = body;
-  useEffect(
-    () => () => {
-      window.clearTimeout(timer.current);
-      if (bodyRef.current !== latest.current.body) void api.updateEntry(entry.id, { body: bodyRef.current }).then(onSaved, () => {});
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-
-  const commitName = async () => {
-    const n = name.trim();
-    if (!n || n === entry.name) return setName(entry.name);
-    const e = await save({ name: n });
-    if (!e) setName(entry.name);
+  const cancelTimer = () => {
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
   };
-  const commitAliases = async () => {
-    const list = aliases.split(",").map((a) => a.trim()).filter(Boolean);
-    if (list.join("\n") === entry.aliases.join("\n")) return;
-    const e = await save({ aliases: list });
-    setAliases((e ?? entry).aliases.join(", "));
+
+  /** Try every unsaved change again, exactly as it's typed now. */
+  const retry = () => {
+    cancelTimer();
+    const patch = unsaved();
+    if (!Object.keys(patch).length) failed.current.fields.clear();
+    void save(patch);
+  };
+
+  // Changes save on leaving the entry. Warn before closing the page with any unsaved.
+  useEffect(() => {
+    alive.current = true;
+    const warn = (ev: BeforeUnloadEvent) => {
+      if (Object.keys(unsaved()).length) ev.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => {
+      alive.current = false;
+      window.removeEventListener("beforeunload", warn);
+      cancelTimer();
+      const patch = unsaved();
+      if (Object.keys(patch).length) void api.updateEntry(entry.id, patch).then((e) => onSavedRef.current(e), () => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const commitName = () => {
+    const n = name.trim();
+    if (!n) {
+      setName(entry.name);
+      failed.current.fields.delete("name");
+      return refresh();
+    }
+    setName(n);
+    if (n !== entry.name) void save({ name: n });
+  };
+  const commitAliases = () => {
+    const list = parseAliases(aliases);
+    if (!sameList(list, entry.aliases)) void save({ aliases: list });
   };
 
   const remove = async () => {
@@ -206,7 +271,7 @@ function EntryEditor({ entry, offline, onSaved, onDeleted, chapters, onOpenChapt
       await api.deleteEntry(entry.id);
       onDeleted();
     } catch (err) {
-      setStatus(describeError(err));
+      setDeleteError(describeError(err));
     }
   };
 
@@ -215,10 +280,14 @@ function EntryEditor({ entry, offline, onSaved, onDeleted, chapters, onOpenChapt
       <header className="entry-head">
         <select
           className="entry-kind"
-          value={entry.kind}
+          value={kind}
           disabled={offline}
           aria-label="Kind"
-          onChange={(e) => void save({ kind: e.target.value as BibleKind })}
+          onChange={(e) => {
+            const next = e.target.value as BibleKind;
+            setKind(next);
+            void save({ kind: next });
+          }}
         >
           {BIBLE_KINDS.map((k) => (
             <option key={k} value={k}>
@@ -226,14 +295,34 @@ function EntryEditor({ entry, offline, onSaved, onDeleted, chapters, onOpenChapt
             </option>
           ))}
         </select>
-        <span className="entry-status" aria-live="polite">
-          {status === "saved" ? "Saved" : status === "saving" ? "Saving" : status === "editing" ? "Editing" : status}
+        <span
+          className={`entry-status${status.state === "error" ? " is-error" : ""}`}
+          role={status.state === "error" ? "alert" : undefined}
+          aria-live="polite"
+        >
+          {status.state === "error"
+            ? `Not saved: ${status.detail}`
+            : status.state === "saving"
+              ? "Saving"
+              : status.state === "editing"
+                ? "Editing"
+                : "Saved"}
         </span>
+        {status.state === "error" && !offline && (
+          <button className="btn btn-quiet" onClick={retry}>
+            Try again
+          </button>
+        )}
         <span className="desk-spacer" />
         <button className="btn btn-quiet" onClick={remove} disabled={offline}>
           Delete
         </button>
       </header>
+      {deleteError && (
+        <p className="bible-note bible-error" role="alert">
+          Not deleted: {deleteError}
+        </p>
+      )}
 
       <input
         className="entry-name"
@@ -280,10 +369,13 @@ function EntryEditor({ entry, offline, onSaved, onDeleted, chapters, onOpenChapt
         }
         onChange={(e) => {
           setBody(e.target.value);
-          setStatus("editing");
           window.clearTimeout(timer.current);
           const text = e.target.value;
-          timer.current = window.setTimeout(() => void save({ body: text }), SAVE_DELAY);
+          timer.current = window.setTimeout(() => {
+            timer.current = undefined;
+            void save({ body: text });
+          }, SAVE_DELAY);
+          refresh();
         }}
       />
 

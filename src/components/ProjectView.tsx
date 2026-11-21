@@ -131,6 +131,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
   };
   const setView = (v: View) => {
     closeMoreMenu();
+    // The footer's save state belongs to the chapter editor, which unmounts
+    // outside Write. Start fresh so a return never shows a stale state.
+    if (v !== view) setSave({ state: "loading" });
     setViewState(v);
     setHistoryOpen(false);
     setCheckOpen(false);
@@ -800,9 +803,12 @@ export function ProjectView({ projectId, chapterId }: Props) {
         )}
 
         <footer className="desk-status" aria-live="polite">
-          <span className={`save-state save-${save.state}`} title={save.detail}>
-            {save.state === "error" && save.detail ? `Not saved: ${save.detail}` : STATUS_TEXT[save.state]}
-          </span>
+          {/* Only the chapter editor reports here; other views show their own save state. */}
+          {view === "write" && selected && (
+            <span className={`save-state save-${save.state}`} title={save.detail}>
+              {save.state === "error" && save.detail ? `Not saved: ${save.detail}` : STATUS_TEXT[save.state]}
+            </span>
+          )}
           <span className="desk-spacer" />
           {view !== "write" ? (
             <span>{bookWords.toLocaleString()} words in the book</span>
