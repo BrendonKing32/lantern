@@ -1430,6 +1430,15 @@ select {
   margin: 0.2rem 0.35rem;
   background: var(--rule);
 }
+.desk-more-menu .theme-picker {
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  text-align: left;
+}
+.desk-more-menu .theme-picker:not(.grammar-picker) {
+  padding-right: 1.95rem;
+}
 .desk-more-select {
   width: 100%;
   padding: 0.45rem 0.65rem;
@@ -2034,25 +2043,28 @@ select {
   .scene-fields {
     grid-template-columns: 1fr;
   }
-  /* Keep the main views together on a second row on narrow screens. */
+  /* One row on tablets: the theme picker lives in More, and the views sit
+     beside Chapters. The bar still wraps rather than push buttons off-screen. */
   .desk-bar {
     flex-wrap: wrap;
     row-gap: 0.25rem;
+    column-gap: 0.3rem;
     padding: 0.5rem 0.75rem;
   }
-  .desk-spacer {
-    order: 2;
-  }
+  /* Views wrap inside the switch instead of scrolling out of sight with large text. */
   .view-switch {
-    order: 3;
+    flex-wrap: wrap;
     max-width: 100%;
-    overflow-x: auto;
+    border-radius: 1.25rem;
   }
   .view-switch .btn {
     flex: 0 0 auto;
+    padding: 0.35rem 0.5rem;
   }
-  .desk-actions {
-    order: 4;
+  .desk-bar > .btn,
+  .desk-actions > .btn,
+  .desk-more summary {
+    padding-inline: 0.75rem;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2734,8 +2746,8 @@ select {
   .page-title {
     overflow-wrap: anywhere;
   }
+  /* One row at normal text sizes; larger text wraps rather than clipping More. */
   .desk-bar {
-    flex-wrap: nowrap;
     column-gap: 0.35rem;
     padding: 0.4rem max(0.6rem, env(safe-area-inset-right)) 0.4rem max(0.6rem, env(safe-area-inset-left));
   }
@@ -2752,12 +2764,16 @@ select {
     order: 0;
     flex: 0 0 auto;
   }
+  /* Anchor the menu to the bar itself so it clears however many rows the bar has. */
+  .desk-more {
+    position: static;
+  }
   .desk-more-menu {
-    position: fixed;
-    top: calc(3.6rem + env(safe-area-inset-top));
+    top: calc(100% + 0.4rem);
     right: max(0.6rem, env(safe-area-inset-right));
     width: min(18rem, calc(100vw - 1.2rem));
-    max-height: calc(100dvh - 5rem);
+    min-width: 0;
+    max-height: calc(100dvh - 100% - 1.5rem);
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -2773,15 +2789,6 @@ select {
   .desk-more-menu .is-on {
     color: var(--lamp);
     background: var(--night);
-  }
-  .desk-more-menu .theme-picker {
-    width: 100%;
-    padding: 0.45rem 0.65rem;
-    border-radius: 8px;
-    text-align: left;
-  }
-  .desk-more-menu .theme-picker:not(.grammar-picker) {
-    padding-right: 1.95rem;
   }
   .page {
     padding: 1rem max(1.15rem, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(1.15rem, env(safe-area-inset-left));
