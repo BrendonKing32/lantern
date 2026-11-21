@@ -125,7 +125,8 @@ export interface Stats {
   days: DayWords[];
 }
 
-export type SnapshotReason = "auto" | "restore" | "conflict" | "replace";
+/** Why a copy was kept. "claude": the text as it was before Claude edited it through the connector. */
+export type SnapshotReason = "auto" | "restore" | "conflict" | "replace" | "claude";
 
 export interface Snapshot {
   id: string;

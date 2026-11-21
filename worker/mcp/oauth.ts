@@ -16,7 +16,7 @@ import OAuthProvider, {
 import { authorize as accessUser } from "../auth";
 import type { Env } from "../env";
 import { HttpError } from "../http";
-import { mcpApiHandler, READ_SCOPE, type McpProps } from "./server";
+import { mcpApiHandler, READ_SCOPE, WRITE_SCOPE, type McpProps } from "./server";
 
 export const MCP_PATH = "/mcp";
 export const AUTHORIZE_PATH = "/authorize";
@@ -94,6 +94,13 @@ function page(title: string, body: string, status = 200, headers = new Headers()
   ul { padding-left:20px; margin:0 0 16px; }
   .warn { color:var(--text); border-left:3px solid var(--amber); padding-left:10px; }
   .row { display:flex; gap:10px; margin-top:20px; }
+  fieldset { border:0; padding:0; margin:4px 0 16px; }
+  legend { color:var(--text); font-weight:600; margin-bottom:8px; }
+  .choice { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; margin-bottom:8px; border:1px solid var(--line);
+            border-radius:10px; cursor:pointer; color:var(--muted); }
+  .choice strong { display:block; }
+  .choice input { margin-top:5px; accent-color:var(--amber); }
+  .choice:has(input:checked) { border-color:var(--amber); }
   button { flex:1; font:inherit; font-size:1rem; padding:10px 14px; border-radius:10px; cursor:pointer;
            border:1px solid var(--line); background:transparent; color:var(--text); }
   button.allow { background:var(--amber); border-color:var(--amber); color:#1b140c; font-weight:600; }
@@ -111,17 +118,26 @@ function consentPage(details: ConsentDescription, handle: string, email: string,
     : "This app registered itself, so its name isn't verified.";
   return page(
     `Connect ${details.clientName}`,
-    `<h1>Let ${name} read your novels?</h1>
+    `<h1>Connect ${name} to Lantern?</h1>
 <p>${origin} Access will be sent to <strong>${escape(details.redirectHost)}</strong>.</p>
-<p>Signed in as <strong>${escape(email)}</strong>. If you allow it, it can:</p>
-<ul>
-  <li>List your novels and read their outlines, chapters and scene cards</li>
-  <li>Read the story guide and search the text</li>
-  <li>Read earlier versions in History</li>
-</ul>
-<p>It can't change, add or delete anything. You can disconnect it at any time from the app you're connecting.</p>
+<p>Signed in as <strong>${escape(email)}</strong>.</p>
 <form method="post">
   <input type="hidden" name="handle" value="${escape(handle)}">
+  <fieldset>
+    <legend>What may it do?</legend>
+    <label class="choice">
+      <input type="radio" name="access" value="read" checked>
+      <span><strong>Read only</strong>
+      Read your novels' outlines, chapters, scene cards, story guide and History, and search the text.</span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="access" value="edit">
+      <span><strong>Read and edit</strong>
+      Also edit chapter text, add chapters, and change synopses, scene cards and the story guide.
+      Before every chapter edit the previous text is kept in History, so you can undo it there.</span>
+    </label>
+  </fieldset>
+  <p>It can never delete anything. You can disconnect it at any time from the app you're connecting.</p>
   <div class="row">
     <button type="submit" name="decision" value="deny">Deny</button>
     <button type="submit" name="decision" value="approve" class="allow">Allow</button>
@@ -136,8 +152,10 @@ function consentPage(details: ConsentDescription, handle: string, email: string,
 const refused = (message: string, status = 400) =>
   page("Can't connect", `<h1>Can't connect</h1><p>${escape(message)}</p>`, status);
 
-function grantedScopes(requested: string[]): string[] {
-  return requested.includes("offline_access") ? [READ_SCOPE, "offline_access"] : [READ_SCOPE];
+/** What the author chose on the consent page, whatever the client asked for. */
+export function grantedScopes(requested: string[], canEdit: boolean): string[] {
+  const scope = canEdit ? [READ_SCOPE, WRITE_SCOPE] : [READ_SCOPE];
+  return requested.includes("offline_access") ? [...scope, "offline_access"] : scope;
 }
 
 async function handleAuthorize(req: Request, env: OAuthEnv): Promise<Response> {
@@ -173,7 +191,7 @@ async function handleAuthorize(req: Request, env: OAuthEnv): Promise<Response> {
     const approved = await oauth.approveConsent(req, handle);
     // Checked again on the stored request, never on anything the form sent.
     if (!redirectAllowed(env, approved.request.redirectUri)) return refused("That app isn't allowed to connect.", 403);
-    const scope = grantedScopes(approved.request.scope);
+    const scope = grantedScopes(approved.request.scope, form.get("access") === "edit");
     const props: McpProps = { email };
     const { redirectTo } = await oauth.completeAuthorization({
       request: { ...approved.request, scope },
@@ -221,7 +239,7 @@ function providerFor(origin: string): OAuthProvider<Env> {
       authorizeEndpoint: AUTHORIZE_PATH,
       tokenEndpoint: TOKEN_PATH,
       clientRegistrationEndpoint: REGISTER_PATH,
-      scopesSupported: [READ_SCOPE, "offline_access"],
+      scopesSupported: [READ_SCOPE, WRITE_SCOPE, "offline_access"],
       resourceMetadata: {
         resource: `${origin}${MCP_PATH}`,
         authorization_servers: [origin],

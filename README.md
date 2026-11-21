@@ -151,10 +151,34 @@ spend limit is a second, independent cap.
 
 Lantern can be added to claude.ai as a **custom connector**, so you can talk about the
 book in any Claude chat (web, desktop or phone) and Claude reads the real manuscript.
-For now the connector is **read-only**: Claude can list novels, read outlines,
-chapters, scene cards, the story guide and History, and search the text, but it can't
-change anything. Connector calls are part of your claude.ai plan and don't use the
-API key or the limits above.
+When you connect, you choose what Claude may do:
+
+- **Read only:** list novels, read outlines, chapters, scene cards, the story guide and
+  History, and search the text.
+- **Read and edit:** also edit chapter text (exact passages, or adding to the end), add
+  chapters, rename chapters and change synopses, and add or change story guide entries
+  and scene cards. Nothing can be deleted through the connector.
+
+Connector calls are part of your claude.ai plan and don't use the API key or the limits above.
+
+### How Claude's edits are kept safe
+
+- **Nothing you wrote is overwritten unseen.** Every chapter edit names the version
+  Claude read. If you've saved since, the edit is refused and Claude reads the chapter again.
+- **Every chapter edit can be undone.** The text it replaces goes into the chapter's
+  History first, marked **Before an edit by Claude**; if that copy can't be kept, nothing
+  is changed. Restore it from History to undo.
+- **Small, exact changes.** Claude replaces passages it quotes exactly, and each must
+  appear exactly once, so an edit can't land in the wrong place.
+- **Your streak is yours.** Claude's words don't count toward your daily words.
+- **An open chapter catches up.** If Claude edits the chapter you have open and nothing
+  on screen is unsaved, the editor shows the change within about 30 seconds (at once
+  when you come back to the window), and undo takes it back out. If you have unsaved
+  writing, Lantern asks which version to keep, as it does for two devices.
+- Story guide, scene and chapter-detail changes follow the same rules as edits in the app.
+
+To change what an existing connection may do, disconnect it in claude.ai and connect
+again, choosing the other option.
 
 ### How sign-in works
 
@@ -308,7 +332,7 @@ app and private API protected.
   safely check for an unsaved draft.
 - **History:** the History button shows earlier versions of the open chapter. Lantern keeps a
   copy at most every 10 minutes while you write, plus one before every restore, whole-book
-  replacement, and before you replace another device's version. Pick one to read it, or switch to
+  replacement and edit by Claude, and before you replace another device's version. Pick one to read it, or switch to
   **Compare with current draft** to see added and removed lines, including unsaved edits.
   Refresh the comparison to include newer edits. To revert the chapter, use **Restore this version**
   at the bottom of the panel; it asks before changing anything. Restoring
@@ -317,8 +341,9 @@ app and private API protected.
   novel are kept on the device, so Lantern opens and lets you write with no connection. Unsaved
   writing from any chapter is sent when you reconnect. Creating, renaming, reordering, deleting
   and restoring still need a connection.
-- **Two devices:** if a chapter was saved somewhere else while you were writing,
-  Lantern stops and asks which version to keep instead of overwriting either one.
+- **Two devices:** if a chapter was saved somewhere else while you were writing (on another
+  device, or by Claude), Lantern stops and asks which version to keep instead of overwriting
+  either one. With nothing unsaved, an open chapter picks up the newer version by itself.
 - **Deleted chapters** move to **Recently deleted** under the chapter list. The arrow button
   puts one back at the end of the book, with its text and history intact.
 - **Archive a novel:** on the shelf, hover it and use the box button. Archived novels

@@ -143,7 +143,8 @@ export function registerTools(server: McpServer, env: Env) {
     {
       title: "Read a chapter",
       description:
-        "The chapter's saved markdown text. [[Name]] and [[Name|shown words]] are links to story guide " +
+        "The chapter's saved markdown text and its version (edits need it as base_version). " +
+        "[[Name]] and [[Name|shown words]] are links to story guide " +
         `entries. Long chapters come back in slices of ${READ_LIMIT.toLocaleString("en-US")} characters; ` +
         "pass the offset the reply gives to read on.",
       inputSchema: {
