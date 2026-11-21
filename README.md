@@ -63,6 +63,11 @@ values, so it shows the app but its private API refuses every request. To keep P
 links private too, open the Worker in the Cloudflare dashboard, go to
 **Settings → Domains & Routes**, and select **Enable Cloudflare Access** for Preview URLs.
 
+Workers Builds creates those Previews. Set its deploy command for non-production branches
+(**Settings → Builds**) to `npm run preview`. That runs `wrangler preview` and retries it up to
+three times when Cloudflare's API fails on its side, such as
+`internal server error [code: 10500]`. Other errors fail the build straight away.
+
 ### Automatic deploys from GitHub (optional)
 
 Every push and pull request runs the **CI** workflow (tests, typecheck and build).
