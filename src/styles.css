@@ -1155,6 +1155,40 @@ select {
   gap: 3px;
   justify-content: start;
 }
+.calendar-range,
+.calendar-hint {
+  margin: 0 0 0.5rem;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+}
+.calendar-legend {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0.5rem 0;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+.calendar-legend .cal-day {
+  width: 10px;
+  height: 10px;
+}
+.calendar-legend span:first-child { margin-right: 0.25rem; }
+.calendar-legend span:last-child { margin-left: 0.25rem; }
+.calendar-inspect {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+}
+.calendar-inspect input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--night);
+}
 .cal-day {
   border-radius: 2px;
   background: var(--rule);
