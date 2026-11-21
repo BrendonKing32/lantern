@@ -2128,6 +2128,9 @@ select {
   color: var(--text-faint);
   font-size: 0.8125rem;
 }
+.entry-status.is-error {
+  color: var(--rose);
+}
 .entry-name {
   width: 100%;
   padding: 0;
