@@ -69,8 +69,8 @@ Every push and pull request runs the **CI** workflow (tests, typecheck and build
 The **Deploy** workflow publishes `main` to Cloudflare, but it stays off until you turn it on:
 
 1. Create a Cloudflare API token (**My Profile → API Tokens → Create Token**) using the
-   **Edit Cloudflare Workers** template, and add **Account → D1 → Edit** and
-   **Account → Workers R2 Storage → Edit** permissions.
+   **Edit Cloudflare Workers** template, and add **Account → D1 → Edit**,
+   **Account → Workers R2 Storage → Edit** and **Account → Workers KV Storage → Edit** permissions.
 2. In the GitHub repo, go to **Settings → Secrets and variables → Actions** and add:
    - Secrets: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (the account ID is on your Cloudflare dashboard's overview page)
    - Variable: `CLOUDFLARE_DEPLOY` set to `true`
@@ -146,6 +146,65 @@ Every call goes through the same safeguards (`worker/ai.ts`):
 The model and both limits are in `wrangler.toml` under `[vars]`. Costs shown are
 estimates from published prices; the Anthropic Console has the actual bill, and its
 spend limit is a second, independent cap.
+
+## Connect Claude chat (optional)
+
+Lantern can be added to claude.ai as a **custom connector**, so you can talk about the
+book in any Claude chat (web, desktop or phone) and Claude reads the real manuscript.
+For now the connector is **read-only**: Claude can list novels, read outlines,
+chapters, scene cards, the story guide and History, and search the text, but it can't
+change anything. Connector calls are part of your claude.ai plan and don't use the
+API key or the limits above.
+
+### How sign-in works
+
+The Worker is its own OAuth server (`worker/mcp/oauth.ts`, built on
+`@cloudflare/workers-oauth-provider`). When you connect, claude.ai opens
+`/authorize`, which stays **behind Cloudflare Access** like the rest of the app, so you
+sign in exactly as you do now. Lantern then asks whether to allow the connection and
+names where access will be sent. It only ever sends tokens to the hosts in
+`MCP_REDIRECT_HOSTS` (`claude.ai` and `claude.com`), so a link someone else crafts
+can't get a token. Tokens last an hour and Claude refreshes them; a connection
+unused for 30 days has to be approved again. Grants and tokens are kept in the
+`OAUTH_KV` namespace, hashed or encrypted.
+
+### Setup
+
+1. **Deploy.** The first `npm run deploy` after this change creates the KV namespace
+   `lantern-oauth-kv` by itself. If you deploy from GitHub, add **Workers KV Storage →
+   Edit** to the API token first (see above).
+2. **Let Claude's servers reach the connector.** In **Zero Trust → Access → Applications**,
+   add **Bypass** applications, each with an **Everyone** policy, for:
+   - `lantern.bkbuilds.dev/mcp`
+   - `lantern.bkbuilds.dev/oauth/*`
+   - `lantern.bkbuilds.dev/.well-known/*`
+
+   Do **not** bypass `/authorize`: Access is what makes it yours. `/mcp` refuses any
+   request without a valid token, and the other paths only issue tokens to a sign-in
+   that went through `/authorize`.
+3. **Add the connector.** In claude.ai, open **Settings → Connectors → Add custom
+   connector**, name it Lantern, and enter `https://lantern.bkbuilds.dev/mcp`.
+   Select **Connect**, sign in through Access, and choose **Allow**.
+4. In a chat, turn Lantern on from the tools menu and ask something like
+   "Read chapter 3 of my novel and tell me where the pacing drags."
+
+To disconnect, remove the connector in claude.ai. To cut off every connection from
+the server side immediately, delete the keys in the `lantern-oauth-kv` namespace in
+the Cloudflare dashboard; claude.ai will ask you to connect again.
+
+### Trying it locally
+
+```sh
+cp .dev.vars.example .dev.vars
+npm run db:migrate:local
+npx wrangler dev --local-upstream 127.0.0.1:8787
+```
+
+Point any MCP client that supports OAuth at `http://127.0.0.1:8787/mcp`. With
+`DEV_BYPASS` the consent page appears without an Access sign-in, and clients may call
+back to `localhost`, which production never allows. (Use `127.0.0.1`
+with `--local-upstream`: without it, the Worker sees the production hostname and
+sends you to https.)
 
 ## Local development
 
