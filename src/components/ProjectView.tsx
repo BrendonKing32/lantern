@@ -60,7 +60,15 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [save, setSave] = useState<{ state: SaveState; detail?: string }>({ state: "loading" });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [phone, setPhone] = useState(() => window.matchMedia("(max-width: 600px)").matches);
+  // Tablet-portrait widths: the theme picker moves into More so the bar stays one row.
+  const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 800px)").matches);
   const [editingChapter, setEditingChapter] = useState<string | null>(null);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 800px)");
+    const onChange = () => setNarrow(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 600px)");
     const onChange = () => {
@@ -662,6 +670,12 @@ export function ProjectView({ projectId, chapterId }: Props) {
                     <span className="desk-more-divider" />
                   </>
                 )}
+                {narrow && !phone && (
+                  <>
+                    <ThemePicker />
+                    <span className="desk-more-divider" />
+                  </>
+                )}
                 <button
                   className="btn btn-quiet"
                   onClick={() => {
@@ -735,7 +749,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                 )}
               </div>
             </details>
-            {!phone && <ThemePicker />}
+            {!narrow && <ThemePicker />}
           </div>
         </header>
 
