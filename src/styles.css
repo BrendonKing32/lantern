@@ -1736,6 +1736,14 @@ select {
   gap: 0.25rem;
   margin-top: auto;
 }
+.scene-actions .btn:disabled,
+.scene-actions .btn:disabled:hover {
+  border-color: var(--rule);
+  border-style: dashed;
+  color: var(--text-faint);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .scene-delete {
   margin-left: auto;
 }
