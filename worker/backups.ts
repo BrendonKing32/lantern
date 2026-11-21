@@ -56,7 +56,13 @@ function insertStatements(table: string, rows: Record<string, unknown>[]): strin
   });
 }
 
-async function backupDatabase(env: BackupEnv): Promise<string> {
+interface DatabaseExport {
+  sql: string;
+  chapterCount: number;
+}
+
+// D1 runs a batch as one transaction, so every table is read from the same state.
+async function exportDatabase(env: BackupEnv): Promise<DatabaseExport> {
   const statements = await env.DB.batch(
     TABLES.map((table) => env.DB.prepare(`SELECT * FROM ${table}`)),
   );
@@ -83,36 +89,52 @@ async function backupDatabase(env: BackupEnv): Promise<string> {
     ...TABLES.flatMap((table) => insertStatements(table, rows.get(table) ?? [])),
     "",
   ].join("\n");
-  return sql;
+  return { sql, chapterCount: rows.get("chapters")?.length ?? 0 };
 }
 
-async function listKeys(bucket: R2Bucket): Promise<string[]> {
-  const keys: string[] = [];
+async function listObjects(bucket: R2Bucket): Promise<R2Object[]> {
+  const objects: R2Object[] = [];
   let cursor: string | undefined;
   do {
     const page = await bucket.list({ cursor, limit: 1000 });
-    keys.push(...page.objects.map((object) => object.key));
+    objects.push(...page.objects);
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-  return keys;
+  return objects;
 }
 
-async function chapterVersions(env: BackupEnv): Promise<Map<string, number>> {
-  const { results } = await env.DB.prepare("SELECT id, version FROM chapters").all<{ id: string; version: number }>();
-  return new Map(results.map(({ id, version }) => [id, version]));
+async function listKeys(bucket: R2Bucket): Promise<string[]> {
+  return (await listObjects(bucket)).map((object) => object.key);
 }
 
-async function copyManuscripts(env: BackupEnv, backupId: string): Promise<string[]> {
-  const keys = await listKeys(env.BUCKET);
-  for (const key of keys) {
+// R2 gives every upload a new version, so equal versions mean an object is unchanged.
+function objectVersions(objects: R2Object[]): Map<string, string> {
+  return new Map(objects.map((object) => [object.key, object.version]));
+}
+
+function sameVersions(a: Map<string, string>, b: Map<string, string>): boolean {
+  return a.size === b.size && [...a].every(([key, version]) => b.get(key) === version);
+}
+
+class ConcurrentChangeError extends Error {
+  constructor(what: string) {
+    super(`${what} changed during backup; this incomplete backup will not be marked ready`);
+  }
+}
+
+async function copyManuscripts(env: BackupEnv, backupId: string): Promise<Map<string, string>> {
+  const versions = objectVersions(await listObjects(env.BUCKET));
+  for (const [key, version] of versions) {
     const object = await env.BUCKET.get(key);
-    if (!object?.body) throw new Error(`Could not read manuscript object ${key}`);
+    if (!object) throw new ConcurrentChangeError(`Manuscript object ${key}`);
+    if (!object.body) throw new Error(`Could not read manuscript object ${key}`);
+    if (object.version !== version) throw new ConcurrentChangeError(`Manuscript object ${key}`);
     await env.BACKUPS.put(`${BACKUP_PREFIX}${backupId}/r2/${key}`, object.body, {
       httpMetadata: object.httpMetadata,
       customMetadata: object.customMetadata,
     });
   }
-  return keys;
+  return versions;
 }
 
 async function deleteExpiredBackups(bucket: R2Bucket, now: Date): Promise<void> {
@@ -131,15 +153,19 @@ export async function createBackup(env: BackupEnv): Promise<void> {
   const started = new Date();
   const backupId = started.toISOString().replace(/[:.]/g, "-");
   const prefix = `${BACKUP_PREFIX}${backupId}/`;
-  const before = await chapterVersions(env);
-  const database = await backupDatabase(env);
-  const objects = await copyManuscripts(env, backupId);
-  const after = await chapterVersions(env);
-  if (before.size !== after.size || [...before].some(([id, version]) => after.get(id) !== version)) {
-    throw new Error("Chapter versions changed during backup; this incomplete backup will not be marked ready");
+  // Snapshot protocol: export D1, copy R2, then export D1 and list R2 again. If the
+  // database export is identical and every object kept the version that was copied,
+  // the database and objects existed together at the moment of the second export.
+  const database = await exportDatabase(env);
+  const copied = await copyManuscripts(env, backupId);
+  const databaseAfter = await exportDatabase(env);
+  if (databaseAfter.sql !== database.sql) throw new ConcurrentChangeError("The database");
+  if (!sameVersions(copied, objectVersions(await listObjects(env.BUCKET)))) {
+    throw new ConcurrentChangeError("Manuscript storage");
   }
+  const objects = [...copied.keys()];
 
-  await env.BACKUPS.put(`${prefix}database.sql`, database, {
+  await env.BACKUPS.put(`${prefix}database.sql`, database.sql, {
     httpMetadata: { contentType: "application/sql; charset=utf-8" },
   });
   await env.BACKUPS.put(`${prefix}r2-objects.json`, JSON.stringify(objects), {
@@ -154,7 +180,7 @@ export async function createBackup(env: BackupEnv): Promise<void> {
       database_file: `${prefix}database.sql`,
       r2_objects_file: `${prefix}r2-objects.json`,
       r2_object_count: objects.length,
-      chapter_count: before.size,
+      chapter_count: database.chapterCount,
     }),
     { httpMetadata: { contentType: "application/json; charset=utf-8" } },
   );
