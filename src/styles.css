@@ -387,12 +387,12 @@ select {
   min-width: 0;
   display: grid;
   grid-template-columns: 1.6rem 1fr auto;
-  align-items: baseline;
+  align-items: center;
   gap: 0.3rem;
   border: 0;
   background: none;
   text-align: left;
-  padding: 0.5rem 0.5rem;
+  padding: 0.5rem;
   cursor: pointer;
 }
 .chapter-num {
@@ -401,9 +401,10 @@ select {
   font-size: 0.8125rem;
 }
 .chapter-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.35;
 }
 .chapter-words {
   color: var(--text-faint);
@@ -425,6 +426,45 @@ select {
 }
 .chapter.is-selected .chapter-tools {
   background: var(--chip);
+}
+.chapter-actions {
+  position: relative;
+  display: none;
+  flex: none;
+}
+.chapter-actions summary {
+  list-style: none;
+  cursor: pointer;
+}
+.chapter-actions summary::-webkit-details-marker {
+  display: none;
+}
+.chapter-actions-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.2rem);
+  z-index: 5;
+  min-width: 10rem;
+  padding: 0.25rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--shade);
+  box-shadow: 0 10px 24px rgb(var(--shadow-rgb) / 0.35);
+}
+.chapter-actions-menu button {
+  width: 100%;
+  min-height: 2.75rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--wick);
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+}
+.chapter-actions-menu button:hover,
+.chapter-actions-menu button:focus-visible {
+  background: rgb(var(--tint-rgb) / 0.08);
 }
 .chapter-rename {
   flex: 1;
@@ -812,16 +852,18 @@ select {
     padding-right: 6rem;
   }
   .chapter-tools {
-    position: static;
-    display: flex;
-    padding: 0;
-    background: none;
+    display: none;
   }
-  .chapter.is-selected .chapter-tools {
-    background: none;
+  .chapter:hover .chapter-tools,
+  .chapter:focus-within .chapter-tools {
+    display: none;
+  }
+  .chapter-actions {
+    display: block;
   }
   .chapter-open {
     min-height: 2.75rem;
+    padding-right: 0.25rem;
   }
 }
 

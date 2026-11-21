@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -17,6 +17,11 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { ChapterMeta } from "../../shared/types";
+import {
+  CHAPTER_ACTIONS_OPEN_EVENT,
+  closeOtherChapterActions,
+  shouldCloseChapterActions,
+} from "../chapterActions";
 
 interface Props {
   chapters: ChapterMeta[];
@@ -80,6 +85,36 @@ function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDe
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(chapter.title);
   const chapterButtonRef = useRef<HTMLButtonElement>(null);
+  const actionsRef = useRef<HTMLDetailsElement>(null);
+  const actionsToggleRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent) => {
+      if (shouldCloseChapterActions(actionsRef.current, event.target as Node)) {
+        if (actionsRef.current) actionsRef.current.open = false;
+      }
+    };
+    const closeOnFocusOutside = (event: FocusEvent) => {
+      if (shouldCloseChapterActions(actionsRef.current, event.target as Node)) {
+        if (actionsRef.current) actionsRef.current.open = false;
+      }
+    };
+    const closeOthers = (event: Event) => {
+      closeOtherChapterActions(
+        (event as CustomEvent<HTMLDetailsElement>).detail,
+        actionsRef.current,
+      );
+    };
+
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("focusin", closeOnFocusOutside);
+    window.addEventListener(CHAPTER_ACTIONS_OPEN_EVENT, closeOthers);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("focusin", closeOnFocusOutside);
+      window.removeEventListener(CHAPTER_ACTIONS_OPEN_EVENT, closeOthers);
+    };
+  }, []);
 
   const commit = () => {
     setRenaming(false);
@@ -141,24 +176,76 @@ function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDe
         </button>
       )}
       {!renaming && (
-        <span className="chapter-tools">
-          <button
-            className="icon-btn"
-            aria-label={`Rename ${chapter.title}`}
-            onClick={() => setRenaming(true)}
-            onPointerDown={(e) => e.stopPropagation()}
+        <>
+          <span className="chapter-tools">
+            <button
+              className="icon-btn"
+              aria-label={`Rename ${chapter.title}`}
+              onClick={() => setRenaming(true)}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3z" /></svg>
+            </button>
+            <button
+              className="icon-btn"
+              aria-label={`Delete ${chapter.title}`}
+              onClick={() => onDelete(chapter)}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+            </button>
+          </span>
+          <details
+            ref={actionsRef}
+            className="chapter-actions"
+            onToggle={(e) => {
+              if (e.currentTarget.open) {
+                window.dispatchEvent(
+                  new CustomEvent(CHAPTER_ACTIONS_OPEN_EVENT, {
+                    detail: e.currentTarget,
+                  }),
+                );
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && actionsRef.current?.open) {
+                e.preventDefault();
+                actionsRef.current.open = false;
+                actionsToggleRef.current?.focus();
+              }
+            }}
           >
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3z" /></svg>
-          </button>
-          <button
-            className="icon-btn"
-            aria-label={`Delete ${chapter.title}`}
-            onClick={() => onDelete(chapter)}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
-          </button>
-        </span>
+            <summary
+              ref={actionsToggleRef}
+              className="icon-btn"
+              aria-label={`Actions for ${chapter.title}`}
+              title="Chapter actions"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r=".75" /><circle cx="8" cy="8" r=".75" /><circle cx="13" cy="8" r=".75" /></svg>
+            </summary>
+            <div className="chapter-actions-menu">
+              <button
+                type="button"
+                onClick={() => {
+                  actionsRef.current?.removeAttribute("open");
+                  setRenaming(true);
+                }}
+              >
+                Rename
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  actionsRef.current?.removeAttribute("open");
+                  onDelete(chapter);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </details>
+        </>
       )}
     </li>
   );
