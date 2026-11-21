@@ -1,11 +1,23 @@
 // Lantern's service worker: keeps the app shell, its built files and fonts on
 // this device so Lantern opens without a connection. It never touches /api
-// (the app keeps its own data in IndexedDB) or Cloudflare Access's /cdn-cgi.
+// (the app keeps its own data in IndexedDB), Cloudflare Access's /cdn-cgi, or
+// the pages the Worker renders itself for the Claude connector's sign-in.
 
-const SHELL = "lantern-shell-v1";
+// v2: v1 could save the connector's consent page as the app shell.
+const SHELL = "lantern-shell-v2";
 const ASSETS = "lantern-assets-v1";
 const FONTS = "lantern-fonts-v1";
 const KEEP = [SHELL, ASSETS, FONTS];
+
+// Served by the Worker, not the app. The browser must load these itself: the
+// sign-in's consent cookie is only kept on a real navigation, and none of
+// them is the app shell, so none may be saved as it.
+const PASS_THROUGH = ["/api/", "/cdn-cgi/", "/oauth/", "/.well-known/"];
+const PASS_THROUGH_EXACT = ["/authorize", "/mcp"];
+
+function passThrough(pathname) {
+  return PASS_THROUGH_EXACT.includes(pathname) || PASS_THROUGH.some((prefix) => pathname.startsWith(prefix));
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -32,7 +44,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
 
   if (url.origin === self.location.origin) {
-    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cdn-cgi/")) return;
+    if (passThrough(url.pathname)) return;
     if (req.mode === "navigate") return event.respondWith(page(req));
     if (url.pathname.startsWith("/assets/")) return event.respondWith(cacheFirst(ASSETS, req));
     return;
