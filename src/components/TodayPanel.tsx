@@ -139,7 +139,7 @@ export function Calendar({ stats }: { stats: Stats }) {
         <span className="cal-day lv4" aria-hidden="true" />
         <span>More</span>
       </div>
-      <p className="calendar-hint">Darker means more words, in quarters of {goal === null ? "the busiest day's count" : "the daily goal"}; the darkest shade means 100% or more. The lightest shade means no words.</p>
+      <p className="calendar-hint">Darker means more net words, in quarters of {goal === null ? "the busiest day's count" : "the daily goal"}; the darkest shade means 100% or more. The lightest shade means zero or fewer net words.</p>
       <div className="calendar-inspect">
         <label htmlFor="calendar-date">Inspect a date</label>
         <input id="calendar-date" type="date" min={firstDay} max={today} value={selectedDay} onChange={(e) => setSelectedDay(e.currentTarget.value)} />

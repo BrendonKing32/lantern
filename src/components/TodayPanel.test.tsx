@@ -37,7 +37,7 @@ describe("writing activity calendar", () => {
     const html = renderToStaticMarkup(<Calendar stats={{ ...stats, daily_goal: null }} />);
 
     expect(html).toContain("in quarters of the busiest day&#x27;s count");
-    expect(html).toContain("The lightest shade means no words.");
+    expect(html).toContain("The lightest shade means zero or fewer net words.");
     expect(html).toContain('class="cal-day lv4 is-today"');
     expect(html).toContain('aria-live="polite"');
   });
