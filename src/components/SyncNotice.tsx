@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { draftReadProblem, syncDrafts } from "../sync";
+import { draftReadProblem, retryDraftSync } from "../sync";
 
 /**
  * A notice shown while Lantern can't read the unsaved drafts kept on this
@@ -20,7 +20,7 @@ export function SyncNotice() {
   const retry = async () => {
     setRetrying(true);
     try {
-      await syncDrafts();
+      await retryDraftSync();
     } finally {
       setRetrying(false);
     }
@@ -30,8 +30,8 @@ export function SyncNotice() {
     <div className="sync-notice" role="alert">
       <p>
         <strong>Lantern can't read the unsaved drafts on this device.</strong> Any writing that hadn't reached the
-        server yet is still waiting here and won't be sent until it can be read. Try again in a moment, or reload the
-        page if this keeps happening.
+        server yet is still waiting here and won't be sent until it can be read. Try again in a moment. If it keeps
+        happening, this browser may be blocking storage for Lantern.
       </p>
       <div className="sync-notice-actions">
         <button className="btn btn-lamp" disabled={retrying} onClick={() => void retry()}>

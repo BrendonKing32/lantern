@@ -2,7 +2,7 @@
 // that sends unsaved drafts to the server once it's back.
 
 import { api, ApiError } from "./api";
-import { cache, chapters, DraftStorageError, drafts } from "./local";
+import { cache, chapters, DraftStorageError, drafts, reopenStorage } from "./local";
 import type { Draft } from "./local";
 import type { BibleEntry, ChapterWithContent, ProjectDetail, ProjectSummary, SaveResult } from "../shared/types";
 
@@ -182,6 +182,12 @@ export async function syncDrafts(): Promise<SyncOutcome> {
   } finally {
     syncing = false;
   }
+}
+
+/** The notice's "Try again": reopen this device's storage if it had failed, then sync. */
+export async function retryDraftSync(): Promise<SyncOutcome> {
+  await reopenStorage();
+  return syncDrafts();
 }
 
 export function startSync() {

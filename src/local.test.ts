@@ -1,4 +1,4 @@
-import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
+import { forceCloseDatabase, IDBFactory, IDBObjectStore } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
@@ -33,6 +33,57 @@ describe("draft storage", () => {
     await expect(drafts.write("chapter-1", "A new scene.", 7)).rejects.toBeInstanceOf(DraftStorageError);
     await expect(drafts.read("chapter-1")).rejects.toBeInstanceOf(DraftStorageError);
     await expect(drafts.all()).rejects.toBeInstanceOf(DraftStorageError);
+  });
+
+  it("opens storage again on request after a failed open, without a reload", async () => {
+    const working = new IDBFactory();
+    let available = false;
+    vi.stubGlobal("indexedDB", {
+      open: (...args: Parameters<IDBFactory["open"]>) => {
+        if (!available) throw new Error("blocked");
+        return working.open(...args);
+      },
+    });
+    const { DraftStorageError, drafts, reopenStorage } = await import("./local");
+
+    await expect(drafts.all()).rejects.toBeInstanceOf(DraftStorageError);
+    available = true;
+    // The failed open is remembered until something asks to try again.
+    await expect(drafts.all()).rejects.toBeInstanceOf(DraftStorageError);
+
+    await reopenStorage();
+    await expect(drafts.all()).resolves.toEqual([]);
+  });
+
+  it("keeps a working connection when asked to reopen", async () => {
+    const factory = new IDBFactory();
+    const open = vi.spyOn(factory, "open");
+    vi.stubGlobal("indexedDB", factory);
+    const { drafts, reopenStorage } = await import("./local");
+
+    await drafts.write("chapter-1", "A new scene.", 7);
+    await reopenStorage();
+    await expect(drafts.all()).resolves.toHaveLength(1);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a fresh connection after the browser closes it", async () => {
+    const factory = new IDBFactory();
+    const connections: IDBDatabase[] = [];
+    const realOpen = factory.open.bind(factory);
+    vi.spyOn(factory, "open").mockImplementation((...args) => {
+      const req = realOpen(...args);
+      req.addEventListener("success", () => connections.push(req.result));
+      return req;
+    });
+    vi.stubGlobal("indexedDB", factory);
+    const { drafts } = await import("./local");
+
+    await drafts.write("chapter-1", "A new scene.", 7);
+    forceCloseDatabase(connections[0] as unknown as Parameters<typeof forceCloseDatabase>[0]);
+
+    await expect(drafts.all()).resolves.toHaveLength(1);
+    expect(connections).toHaveLength(2);
   });
 
   it("tells an empty draft list apart from one it couldn't read", async () => {

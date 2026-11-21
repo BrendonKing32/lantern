@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   saveChapter: vi.fn(),
   draftsAll: vi.fn(),
   draftsClearIf: vi.fn(),
+  reopenStorage: vi.fn(),
   chapterRead: vi.fn(),
   chapterWrite: vi.fn(),
 }));
@@ -21,11 +22,12 @@ vi.mock("./local", () => ({
   DraftStorageError: class DraftStorageError extends Error {},
   drafts: { all: mocks.draftsAll, clearIf: mocks.draftsClearIf },
   chapters: { read: mocks.chapterRead, write: mocks.chapterWrite },
+  reopenStorage: mocks.reopenStorage,
 }));
 
 import { ApiError } from "./api";
 import { DraftStorageError } from "./local";
-import { draftReadProblem, syncDrafts } from "./sync";
+import { draftReadProblem, retryDraftSync, syncDrafts } from "./sync";
 
 const draft = { chapterId: "chapter-1", content: "A draft.", baseVersion: 4, savedAt: 123 };
 
@@ -117,5 +119,17 @@ describe("offline draft sync", () => {
 
     await expect(syncDrafts()).resolves.toBe("offline");
     expect(mocks.draftsClearIf).not.toHaveBeenCalled();
+  });
+
+  it("reopens storage before retrying from the notice", async () => {
+    const order: string[] = [];
+    mocks.reopenStorage.mockImplementation(async () => void order.push("reopen"));
+    mocks.draftsAll.mockImplementation(async () => {
+      order.push("read");
+      return [];
+    });
+
+    await expect(retryDraftSync()).resolves.toBe("done");
+    expect(order).toEqual(["reopen", "read"]);
   });
 });

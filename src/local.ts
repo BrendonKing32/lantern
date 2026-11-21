@@ -22,7 +22,8 @@ const LEGACY_PREFIX = "lantern:draft:";
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
 function open(): Promise<IDBDatabase | null> {
-  dbPromise ??= new Promise<IDBDatabase | null>((resolve) => {
+  if (dbPromise) return dbPromise;
+  const opening: Promise<IDBDatabase | null> = new Promise<IDBDatabase | null>((resolve) => {
     let req: IDBOpenDBRequest;
     try {
       req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -30,20 +31,53 @@ function open(): Promise<IDBDatabase | null> {
       resolve(null);
       return;
     }
+    let settled = false;
+    const settle = (db: IDBDatabase | null) => {
+      // A request reported as blocked can still succeed later; don't keep that
+      // stray connection open, since we've already given up on it.
+      if (settled) return db?.close();
+      settled = true;
+      resolve(db);
+    };
     req.onupgradeneeded = () => {
       const db = req.result;
       db.createObjectStore("drafts", { keyPath: "chapterId" });
       db.createObjectStore("chapters", { keyPath: "id" });
       db.createObjectStore("cache");
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
-    req.onblocked = () => resolve(null);
+    req.onsuccess = () => {
+      const db = req.result;
+      // The browser can close the connection itself (storage cleared, disk
+      // trouble). Open a fresh one next time rather than reusing a dead one.
+      db.onclose = () => {
+        if (dbPromise === opening) dbPromise = null;
+      };
+      settle(db);
+    };
+    req.onerror = () => settle(null);
+    req.onblocked = () => settle(null);
   }).then(async (db) => {
-    if (db) await migrateLegacyDrafts(db);
+    if (db) {
+      try {
+        await migrateLegacyDrafts(db);
+      } catch {
+        /* the old drafts stay in localStorage for next time */
+      }
+    }
     return db;
   });
-  return dbPromise;
+  dbPromise = opening;
+  return opening;
+}
+
+/**
+ * Try opening this device's storage again if the last attempt failed, so a
+ * failure (a blocked upgrade, a busy disk) doesn't last until the page reloads.
+ * A working connection is left alone.
+ */
+export async function reopenStorage(): Promise<void> {
+  const current = dbPromise;
+  if (current && (await current) === null && dbPromise === current) dbPromise = null;
 }
 
 type StoreName = "drafts" | "chapters" | "cache";
