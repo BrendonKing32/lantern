@@ -10,6 +10,7 @@ import {
   type BookCheckResult,
   type ChapterMeta,
   type ChapterWithContent,
+  type ClaudeChange,
   type CheckResult,
   type DeletedChapter,
   type DeletedProject,
@@ -228,6 +229,17 @@ export const snapshotWithContent: Check<SnapshotWithContent> = object({ ...snaps
 export const shareStatus = object({ active: boolean, created_at: nullable(string) });
 
 export const shareCreated = object({ active: literal(true), token: string, created_at: string });
+
+export const claudeChange: Check<ClaudeChange> = object({
+  id: string,
+  created_at: string,
+  action: string,
+  target_kind: literal("chapter", "entry", "scene"),
+  target_id: string,
+  chapter_id: nullable(string),
+  summary: string,
+  detail: string,
+});
 
 export const shareComment: Check<ShareComment> = object({
   id: string,

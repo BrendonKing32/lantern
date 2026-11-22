@@ -146,6 +146,8 @@ export const api = {
   listHistory: (chapterId: string) => request(array(schema.snapshot), "GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>
     request(schema.snapshotWithContent, "GET", `/api/chapters/${chapterId}/history/${snapshotId}`),
+  claudeChanges: (projectId: string) =>
+    request(array(schema.claudeChange), "GET", `/api/projects/${projectId}/claude-changes`),
   shareStatus: (projectId: string) => request(schema.shareStatus, "GET", `/api/projects/${projectId}/share`),
   createShare: (projectId: string) => request(schema.shareCreated, "POST", `/api/projects/${projectId}/share`),
   revokeShare: (projectId: string) => request(schema.ok, "DELETE", `/api/projects/${projectId}/share`),

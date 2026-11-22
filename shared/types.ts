@@ -125,6 +125,18 @@ export interface Stats {
   days: DayWords[];
 }
 
+/** One change Claude made through the connector, for More → Changes by Claude. */
+export interface ClaudeChange {
+  id: string;
+  created_at: string;
+  action: string;
+  target_kind: "chapter" | "entry" | "scene";
+  target_id: string;
+  chapter_id: string | null;
+  summary: string;
+  detail: string;
+}
+
 /** Why a copy was kept. "claude": the text as it was before Claude edited it through the connector. */
 export type SnapshotReason = "auto" | "restore" | "conflict" | "replace" | "claude";
 

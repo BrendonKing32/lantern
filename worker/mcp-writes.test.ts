@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Env } from "./index";
+import worker, { type Env } from "./index";
 import { createMcpServer } from "./mcp/server";
 import { applyEdits, EditError } from "./mcp/writes";
 import { memoryR2, sqliteD1 } from "./testing/d1";
@@ -20,7 +20,7 @@ let env: Env;
 beforeEach(() => {
   db = sqliteD1();
   bucket = memoryR2();
-  env = { DB: db, BUCKET: bucket, ASSETS: { fetch: async () => new Response() } } as unknown as Env;
+  env = { DB: db, BUCKET: bucket, ASSETS: { fetch: async () => new Response() }, DEV_BYPASS: "true" } as unknown as Env;
   const ts = "2026-11-01T00:00:00.000Z";
   db.raw.prepare("INSERT INTO projects (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)").run(NOVEL, "The Lamplighter", ts, ts);
   db.raw
@@ -207,5 +207,65 @@ describe("scene cards", () => {
     expect(scene).toMatchObject({ chapter_id: CH, title: "Landing", pov: "Mara", status: "drafted", position: 0 });
     const updated = JSON.parse(textOf(await call("update_scene", { scene_id: scene.id, summary: "She lands.", status: "planned" })));
     expect(updated).toMatchObject({ title: "Landing", summary: "She lands.", status: "planned" });
+  });
+});
+
+describe("Changes by Claude", () => {
+  const changes = async () => {
+    const res = await worker.fetch(new Request(`https://lantern.test/api/projects/${NOVEL}/claude-changes`), env);
+    expect(res.status).toBe(200);
+    return (await res.json()) as { action: string; target_kind: string; target_id: string; chapter_id: string | null; summary: string; detail: string }[];
+  };
+
+  it("records each change in plain words, newest first", async () => {
+    await call("edit_chapter", {
+      chapter_id: CH, base_version: 4,
+      edits: [{ old_text: "lit the lamp", new_text: "lit the old brass lamp" }, { old_text: "dark", new_text: "deep dark" }],
+    });
+    await call("append_to_chapter", { chapter_id: CH, base_version: 5, text: "Morning came." });
+    const entry = JSON.parse(textOf(await call("create_story_entry", { novel_id: NOVEL, kind: "place", name: "Tower" })));
+    await call("update_story_entry", { entry_id: entry.id, add_to_notes: "Brass lamp.", aliases: ["the spire"] });
+    const scene = JSON.parse(textOf(await call("create_scene", { chapter_id: CH, title: "Landing" })));
+    await call("update_scene", { scene_id: scene.id, pov: "Mara", status: "drafted" });
+    await call("update_chapter_details", { chapter_id: CH, synopsis: "She arrives." });
+
+    const list = await changes();
+    expect(list.map((c) => [c.summary, c.detail])).toEqual([
+      ["Changed the details of “Arrival”", "Synopsis"],
+      ["Changed the scene “Landing”", "Point of view, status"],
+      ["Added the scene “Landing”", "In “Arrival”"],
+      ["Changed the story guide entry “Tower”", "Other names, added to the notes"],
+      ["Added “Tower” to the story guide", "Place"],
+      ["Added to the end of “Arrival”", "+2 words"],
+      ["Edited “Arrival”", "2 passages · +3 words"],
+    ]);
+    expect(list[1]).toMatchObject({ target_kind: "scene", target_id: scene.id, chapter_id: CH });
+    expect(list[4]).toMatchObject({ target_kind: "entry", target_id: entry.id, chapter_id: null });
+    expect(list[6]).toMatchObject({ action: "edit_chapter", target_kind: "chapter", target_id: CH, chapter_id: CH });
+  });
+
+  it("records new chapters, and nothing for refused edits", async () => {
+    await call("edit_chapter", { chapter_id: CH, base_version: 1, edits: [{ old_text: "Mara", new_text: "Nell" }] });
+    expect(await changes()).toEqual([]);
+    await call("create_chapter", { novel_id: NOVEL, title: "The Storm", synopsis: "Rain.", text: "It rained hard." });
+    const [made] = await changes();
+    expect(made).toMatchObject({ summary: "Added the chapter “The Storm”", detail: "Chapter 2, 3 words, with a synopsis" });
+  });
+
+  it("keeps the edit when the log can't be written", async () => {
+    db.raw.exec("DROP TABLE claude_changes");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await call("edit_chapter", { chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }] });
+    log.mockRestore();
+    expect(r.isError).toBeFalsy();
+    expect(chapter().version).toBe(5);
+  });
+
+  it("drops changes older than 180 days", async () => {
+    db.raw.prepare(
+      "INSERT INTO claude_changes (id, project_id, created_at, action, target_kind, target_id, summary) VALUES ('old', ?, '2020-01-01T00:00:00.000Z', 'edit_chapter', 'chapter', ?, 'Old')",
+    ).run(NOVEL, CH);
+    await call("update_chapter_details", { chapter_id: CH, title: "Landfall" });
+    expect((await changes()).map((c) => c.summary)).toEqual(["Changed the details of “Landfall”"]);
   });
 });

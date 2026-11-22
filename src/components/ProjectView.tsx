@@ -9,6 +9,7 @@ import { RestoreIcon } from "./ProjectList";
 import { TargetMeter } from "./TargetMeter";
 import { ExportDialog } from "./ExportDialog";
 import { ShareDialog } from "./ShareDialog";
+import { ClaudeChangesDialog } from "./ClaudeChangesDialog";
 import { Corkboard } from "./Corkboard";
 import { SceneBoard } from "./SceneBoard";
 import { SearchPanel } from "./SearchPanel";
@@ -87,6 +88,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [unseenChanges, setUnseenChanges] = useState(0);
   const closeDrawer = useCallback(() => {
     // Commit first so the desk is no longer inert when focus returns to it.
     flushSync(() => setDrawerOpen(false));
@@ -257,6 +260,51 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [projectId]);
 
   const chapters = detail?.chapters ?? [];
+
+  // Changes by Claude: how many this device hasn't shown yet, checked when the
+  // novel opens and whenever the window comes back into focus.
+  const seenKey = `lantern:claude-seen:${projectId}`;
+  const lastSeen = () => {
+    try {
+      return localStorage.getItem(seenKey) ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const markSeen = useCallback(
+    (newest: string | null) => {
+      setUnseenChanges(0);
+      if (!newest) return;
+      try {
+        localStorage.setItem(seenKey, newest);
+      } catch {
+        /* only a convenience */
+      }
+    },
+    [seenKey],
+  );
+  useEffect(() => {
+    if (offline) return;
+    let live = true;
+    const check = () => {
+      if (document.visibilityState !== "visible") return;
+      api
+        .claudeChanges(projectId)
+        .then((list) => {
+          if (!live) return;
+          const seen = lastSeen();
+          setUnseenChanges(list.filter((c) => c.created_at > seen).length);
+        })
+        .catch(() => {});
+    };
+    check();
+    window.addEventListener("focus", check);
+    return () => {
+      live = false;
+      window.removeEventListener("focus", check);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, offline]);
   const selected = selectChapter(chapters, chapterId, lastChapterId);
   useEffect(() => {
     if (!selected) return;
@@ -658,8 +706,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
           <div className="desk-actions">
             {!phone && searchButton}
             <details className="desk-more" ref={moreMenuRef}>
-              <summary className={`btn btn-quiet${historyOpen || checkOpen || grammarOn ? " is-on" : ""}`}>
+              <summary className={`btn btn-quiet${historyOpen || checkOpen || grammarOn ? " is-on" : ""}${unseenChanges > 0 ? " has-news" : ""}`}>
                 More
+                {unseenChanges > 0 && <span className="visually-hidden"> ({unseenChanges} new changes by Claude)</span>}
               </summary>
               <div className="desk-more-menu">
                 {phone && (
@@ -694,6 +743,20 @@ export function ProjectView({ projectId, chapterId }: Props) {
                     }}
                   >
                     Share
+                  </button>
+                )}
+                {!offline && (
+                  <button
+                    className="btn btn-quiet"
+                    onClick={() => {
+                      closeMoreMenu();
+                      setChangesOpen(true);
+                    }}
+                  >
+                    Changes by Claude
+                    {unseenChanges > 0 && (
+                      <span className="news-count" aria-label={`${unseenChanges} new`}>{unseenChanges}</span>
+                    )}
                   </button>
                 )}
                 {view === "write" && (
@@ -856,6 +919,29 @@ export function ProjectView({ projectId, chapterId }: Props) {
         )}
 
         {exportOpen && <ExportDialog detail={detail} onClose={() => setExportOpen(false)} />}
+        {changesOpen && (
+          <ClaudeChangesDialog
+            projectId={projectId}
+            chapterIds={new Set(chapters.map((c) => c.id))}
+            entryIds={new Set(entries.map((e) => e.id))}
+            onOpenChapter={(id, withHistory) => {
+              setChangesOpen(false);
+              openFromBoard(id);
+              if (withHistory) setHistoryOpen(true);
+            }}
+            onOpenEntry={(id) => {
+              setChangesOpen(false);
+              setEntryId(id);
+              setView("bible");
+            }}
+            onOpenScenes={() => {
+              setChangesOpen(false);
+              setView("scenes");
+            }}
+            onSeen={markSeen}
+            onClose={() => setChangesOpen(false)}
+          />
+        )}
         {shareOpen && (
           <ShareDialog
             projectId={projectId}

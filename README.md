@@ -181,6 +181,10 @@ Connector calls are part of your claude.ai plan and don't use the API key or the
   when you come back to the window), and undo takes it back out. If you have unsaved
   writing, Lantern asks which version to keep, as it does for two devices.
 - Story guide, scene and chapter-detail changes follow the same rules as edits in the app.
+- **See everything Claude changed** under **More → Changes by Claude**: one line per change,
+  newest first, with links to the chapter (or its History), the story guide entry or the
+  scenes. A dot on **More** and a count show changes this device hasn't shown you yet.
+  The list keeps 180 days.
 
 To change what an existing connection may do, disconnect it in claude.ai and connect
 again, choosing the other option.

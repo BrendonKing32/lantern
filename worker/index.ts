@@ -14,6 +14,7 @@ import {
   testAi,
 } from "./handlers/claude";
 import { createEntry, deleteEntry, listBible, updateEntry } from "./handlers/bible";
+import { listClaudeChanges } from "./handlers/claudeChanges";
 import {
   createChapter,
   deleteChapter,
@@ -64,6 +65,7 @@ const routes: Array<[string, string, Handler]> = [
   ["POST", "/api/projects/:id/check-book", checkBook],
   ["GET", "/api/projects/:id/check-book", lastBookCheck],
   ["GET", "/api/projects/:id/bible", listBible],
+  ["GET", "/api/projects/:id/claude-changes", listClaudeChanges],
   ["GET", "/api/projects/:id/scenes", listScenes],
   ["PUT", "/api/projects/:id/scenes/order", reorderScenes],
   ["POST", "/api/chapters/:id/scenes", createScene],
