@@ -2877,3 +2877,95 @@ select {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+
+/* ---------- Changes by Claude ---------- */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.desk-more > summary.has-news {
+  position: relative;
+}
+.desk-more > summary.has-news::after {
+  content: "";
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--lamp);
+}
+.news-count {
+  display: inline-block;
+  min-width: 1.3rem;
+  margin-left: 0.45rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--lamp);
+  color: var(--lamp-ink);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.3rem;
+  text-align: center;
+}
+.claude-changes-day h3 {
+  margin: 1rem 0 0.5rem;
+  color: var(--text-soft);
+  font: 600 0.8125rem/1.4 var(--font-ui);
+  letter-spacing: 0.02em;
+}
+.claude-changes-day ol {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.claude-change {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.claude-change-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.claude-change-text strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.claude-change-text span {
+  color: var(--text-faint);
+  font-size: 0.8125rem;
+}
+.claude-change-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.25rem;
+}
+@media (max-width: 600px) {
+  .claude-change {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .claude-change-actions {
+    justify-content: flex-end;
+  }
+}
+/* The open More menu belongs above the side panels (History, Check, story
+   guide peeks); otherwise they cover it and its items can't be clicked. */
+.desk-bar:has(.desk-more[open]) {
+  z-index: 30;
+}

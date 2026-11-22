@@ -16,6 +16,7 @@ import { BIBLE_KINDS } from "../../shared/types";
 import { chapterKey, getChapterRow, MARKDOWN, MAX_CHAPTER_BYTES } from "../db";
 import type { Env } from "../env";
 import { createEntry, updateEntry } from "../handlers/bible";
+import { logClaudeChange } from "../handlers/claudeChanges";
 import { createChapter, updateChapter } from "../handlers/chapters";
 import { snapshotBeforeSave } from "../handlers/history";
 import { createScene, updateScene } from "../handlers/scenes";
@@ -126,7 +127,10 @@ export async function saveAsClaude(env: Env, chapterId: string, baseVersion: num
     throw e;
   }
   await env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id).run();
-  return { version: baseVersion + 1, word_count: words, previous_word_count: row.word_count, title: row.title };
+  return {
+    version: baseVersion + 1, word_count: words, previous_word_count: row.word_count,
+    title: row.title, project_id: row.project_id, chapter_id: row.id,
+  };
 }
 
 const conflict = (current: number) =>
@@ -141,6 +145,13 @@ async function readFor(env: Env, chapterId: string, baseVersion: number): Promis
   const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
   return { row, content: obj ? await obj.text() : "" };
 }
+
+const signed = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toLocaleString("en-US")}`;
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const listed = (parts: string[]) => {
+  const s = parts.join(", ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
 
 function saved(r: Awaited<ReturnType<typeof saveAsClaude>>) {
   const diff = r.word_count - r.previous_word_count;
@@ -190,7 +201,13 @@ export function registerWriteTools(server: McpServer, env: Env) {
         const { content } = await readFor(env, chapter_id, base_version);
         const next = applyEdits(content, edits);
         if (next === content) throw new EditError("Those edits don't change the text, so nothing was saved.");
-        return saved(await saveAsClaude(env, chapter_id, base_version, next));
+        const r = await saveAsClaude(env, chapter_id, base_version, next);
+        await logClaudeChange(env, {
+          project_id: r.project_id, action: "edit_chapter", target_kind: "chapter", target_id: r.chapter_id,
+          chapter_id: r.chapter_id, summary: `Edited “${r.title}”`,
+          detail: `${plural(edits.length, "passage")} · ${signed(r.word_count - r.previous_word_count)} words`,
+        });
+        return saved(r);
       }),
   );
 
@@ -209,7 +226,13 @@ export function registerWriteTools(server: McpServer, env: Env) {
         const { content } = await readFor(env, chapter_id, base_version);
         const body = content.replace(/\s+$/, "");
         const next = body ? `${body}\n\n${addition.replace(/^\s+/, "")}` : addition;
-        return saved(await saveAsClaude(env, chapter_id, base_version, next.endsWith("\n") ? next : `${next}\n`));
+        const r = await saveAsClaude(env, chapter_id, base_version, next.endsWith("\n") ? next : `${next}\n`);
+        await logClaudeChange(env, {
+          project_id: r.project_id, action: "append_to_chapter", target_kind: "chapter", target_id: r.chapter_id,
+          chapter_id: r.chapter_id, summary: `Added to the end of “${r.title}”`,
+          detail: `${signed(r.word_count - r.previous_word_count)} words`,
+        });
+        return saved(r);
       }),
   );
 
@@ -237,6 +260,11 @@ export function registerWriteTools(server: McpServer, env: Env) {
           version = r.version;
           words = r.word_count;
         }
+        await logClaudeChange(env, {
+          project_id: chapter.project_id, action: "create_chapter", target_kind: "chapter", target_id: chapter.id,
+          chapter_id: chapter.id, summary: `Added the chapter “${chapter.title}”`,
+          detail: listed([`chapter ${chapter.position + 1}`, plural(words, "word"), ...(synopsis ? ["with a synopsis"] : [])]),
+        });
         return data({ chapter_id: chapter.id, title: chapter.title, position: chapter.position + 1, version, word_count: words });
       }),
   );
@@ -257,6 +285,11 @@ export function registerWriteTools(server: McpServer, env: Env) {
       guarded(async () => {
         if (title === undefined && synopsis === undefined) throw new EditError("Give a title, a synopsis, or both.");
         const r = await viaApp<ChapterMeta>(updateChapter, { id: chapter_id }, "PATCH", { title, synopsis }, env);
+        await logClaudeChange(env, {
+          project_id: r.project_id, action: "update_chapter_details", target_kind: "chapter", target_id: r.id,
+          chapter_id: r.id, summary: `Changed the details of “${r.title}”`,
+          detail: listed([...(title !== undefined ? ["title"] : []), ...(synopsis !== undefined ? ["synopsis"] : [])]),
+        });
         return data({ chapter_id: r.id, title: r.title, synopsis: r.synopsis });
       }),
   );
@@ -280,6 +313,11 @@ export function registerWriteTools(server: McpServer, env: Env) {
     async ({ novel_id, kind, name, aliases, notes }) =>
       guarded(async () => {
         const e = await viaApp<BibleEntry>(createEntry, { id: novel_id }, "POST", { kind, name, aliases: aliases ?? [], body: notes ?? "" }, env);
+        await logClaudeChange(env, {
+          project_id: e.project_id, action: "create_story_entry", target_kind: "entry", target_id: e.id,
+          chapter_id: null, summary: `Added “${e.name}” to the story guide`,
+          detail: listed([e.kind, ...(e.aliases.length ? [`also ${e.aliases.join(", ")}`] : [])]),
+        });
         return data({ id: e.id, kind: e.kind, name: e.name, aliases: e.aliases });
       }),
   );
@@ -315,6 +353,17 @@ export function registerWriteTools(server: McpServer, env: Env) {
           body = current.body.trim() ? `${current.body.replace(/\s+$/, "")}\n\n${add_to_notes}` : add_to_notes;
         }
         const e = await viaApp<BibleEntry>(updateEntry, { id: entry_id }, "PATCH", { kind, name, aliases, body }, env);
+        await logClaudeChange(env, {
+          project_id: e.project_id, action: "update_story_entry", target_kind: "entry", target_id: e.id,
+          chapter_id: null, summary: `Changed the story guide entry “${e.name}”`,
+          detail: listed([
+            ...(name !== undefined ? ["name"] : []),
+            ...(kind !== undefined ? ["kind"] : []),
+            ...(aliases !== undefined ? ["other names"] : []),
+            ...(notes !== undefined ? ["notes"] : []),
+            ...(add_to_notes !== undefined ? ["added to the notes"] : []),
+          ]),
+        });
         return data({ id: e.id, kind: e.kind, name: e.name, aliases: e.aliases, notes: e.body });
       }),
   );
@@ -341,6 +390,12 @@ export function registerWriteTools(server: McpServer, env: Env) {
         const filled = Object.values(fields).some((v) => v !== undefined)
           ? await viaApp<SceneMeta>(updateScene, { id: scene.id }, "PATCH", fields, env)
           : scene;
+        const chapter = await getChapterRow(env, filled.chapter_id);
+        await logClaudeChange(env, {
+          project_id: filled.project_id, action: "create_scene", target_kind: "scene", target_id: filled.id,
+          chapter_id: filled.chapter_id, summary: `Added the scene “${filled.title}”`,
+          detail: `In “${chapter.title}”`,
+        });
         const { project_id: _p, created_at: _c, updated_at: _u, ...rest } = filled;
         return data(rest);
       }),
@@ -357,6 +412,12 @@ export function registerWriteTools(server: McpServer, env: Env) {
     async ({ scene_id, ...fields }) =>
       guarded(async () => {
         const s = await viaApp<SceneMeta>(updateScene, { id: scene_id }, "PATCH", fields, env);
+        const names: Record<string, string> = { title: "title", summary: "summary", pov: "point of view", location: "location", status: "status" };
+        await logClaudeChange(env, {
+          project_id: s.project_id, action: "update_scene", target_kind: "scene", target_id: s.id,
+          chapter_id: s.chapter_id, summary: `Changed the scene “${s.title}”`,
+          detail: listed(Object.entries(fields).filter(([, v]) => v !== undefined).map(([k]) => names[k] ?? k)),
+        });
         const { project_id: _p, created_at: _c, updated_at: _u, ...rest } = s;
         return data(rest);
       }),
