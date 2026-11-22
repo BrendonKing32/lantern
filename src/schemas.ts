@@ -203,7 +203,7 @@ export const saveResult: Check<SaveResult> = object({
 export const sceneMeta: Check<SceneMeta> = object({
   id: string,
   project_id: string,
-  chapter_id: string,
+  chapter_id: nullable(string),
   title: string,
   summary: string,
   pov: string,

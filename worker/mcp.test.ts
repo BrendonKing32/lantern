@@ -38,6 +38,7 @@ const entries = [
 
 const scenes = [
   { id: "s-1", chapter_id: "ch-1", title: "Landing", summary: "She lands.", pov: "Mara", location: "Harbour", status: "drafted", position: 0 },
+  { id: "s-2", chapter_id: null, title: "Storm", summary: "", pov: "", location: "", status: "planned", position: 0 },
 ];
 
 const snapshots = [{ id: "snap-1", chapter_id: "ch-1", version: 2, word_count: 3, reason: "auto", created_at: "2026-01-20T00:00:00.000Z" }];
@@ -242,6 +243,9 @@ describe("connector tools", () => {
       { id: "s-1", title: "Landing", summary: "She lands.", pov: "Mara", location: "Harbour", status: "drafted" },
     ]);
     expect(outline.chapters[1].scenes).toEqual([]);
+    expect(outline.unassigned_scenes).toEqual([
+      { id: "s-2", title: "Storm", summary: "", pov: "", location: "", status: "planned" },
+    ]);
   });
 
   it("reads a chapter with its version", async () => {

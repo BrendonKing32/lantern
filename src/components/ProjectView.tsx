@@ -470,9 +470,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
     select(id);
   };
 
-  const addScene = async (chapterId: string): Promise<SceneMeta | null> => {
+  const addScene = async (chapterId: string | null): Promise<SceneMeta | null> => {
     try {
-      const scene = await api.createScene(chapterId);
+      const scene = await api.createScene(projectId, chapterId);
       setScenes((list) => [...(list ?? []), scene]);
       return scene;
     } catch (e) {
@@ -483,7 +483,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const updateScene = async (
     scene: SceneMeta,
-    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status">>,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">>,
   ) => {
     try {
       const updated = await api.updateScene(scene.id, patch);
@@ -504,7 +504,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
-  const reorderScenes = async (chapterId: string, sceneIds: string[]) => {
+  const reorderScenes = async (chapterId: string | null, sceneIds: string[]) => {
     setScenes((list) => list?.map((scene) => {
       if (scene.chapter_id !== chapterId) return scene;
       return { ...scene, position: sceneIds.indexOf(scene.id) };

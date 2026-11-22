@@ -97,7 +97,8 @@ export function registerTools(server: McpServer, env: Env) {
       title: "Get a novel's outline",
       description:
         "The novel's chapters in reading order (id, number, title, synopsis, word count) with each " +
-        "chapter's scene cards, plus the novel's target length and English dialect.",
+        "chapter's scene cards, the scene cards not yet placed in any chapter (unassigned_scenes), " +
+        "plus the novel's target length and English dialect.",
       inputSchema: { novel_id: z.string().describe("From list_novels") },
       annotations: READ_ONLY,
     },
@@ -112,7 +113,7 @@ export function registerTools(server: McpServer, env: Env) {
           .bind(novel_id)
           .all<Omit<SceneMeta, "project_id" | "created_at" | "updated_at">>(),
       ]);
-      const scenesByChapter = new Map<string, unknown[]>();
+      const scenesByChapter = new Map<string | null, unknown[]>();
       for (const { chapter_id, position: _, ...scene } of scenesResult.results) {
         const list = scenesByChapter.get(chapter_id) ?? [];
         list.push(scene);
@@ -134,6 +135,7 @@ export function registerTools(server: McpServer, env: Env) {
           updated_at: c.updated_at,
           scenes: scenesByChapter.get(c.id) ?? [],
         })),
+        unassigned_scenes: scenesByChapter.get(null) ?? [],
       });
     },
   );
