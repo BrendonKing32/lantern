@@ -217,7 +217,7 @@ const snapshotFields = {
   id: string,
   version: number,
   word_count: number,
-  reason: literal("auto", "restore", "conflict", "replace"),
+  reason: literal("auto", "restore", "conflict", "replace", "claude"),
   created_at: string,
 };
 

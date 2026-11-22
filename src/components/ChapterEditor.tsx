@@ -10,6 +10,7 @@ import { basicSetup, proseExtensions } from "../editorSetup";
 import { entriesChanged, wikilinks } from "../wikilinkEditor";
 import { grammar, recheckGrammar } from "../grammar";
 import { countWords } from "../../shared/wordcount";
+import { minimalChange } from "../minimalChange";
 import type { BibleEntry, ChapterWithContent, Dialect, SaveResult } from "../../shared/types";
 
 export type SaveState =
@@ -66,6 +67,9 @@ function locate(doc: string, quote: string): [number, number] | null {
   return head ? [head.index, head.index + head[0].length] : null;
 }
 
+/** How often an open chapter checks for changes saved elsewhere (Claude, another device). */
+const REFRESH_INTERVAL = 30_000;
+
 const SAVE_DELAY = 1200;
 const RETRY_DELAY = 5000;
 const WORD_COUNT_DELAY = 150;
@@ -100,6 +104,8 @@ export function ChapterEditor({
   const timer = useRef<number | undefined>(undefined);
   const wordCountTimer = useRef<number | undefined>(undefined);
   const alive = useRef(true);
+  const applyingRemote = useRef(false); // set while text saved elsewhere is put on screen
+  const refreshing = useRef(false);
 
   // [[links]]: the extension reads the latest entries and click handler from
   // refs, so it's built once and the editor never has to be recreated.
@@ -389,8 +395,62 @@ export function ChapterEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapterId, schedule]);
 
+  // Pick up changes saved elsewhere, such as an edit Claude made through the
+  // connector, while nothing on this screen is unsaved. With unsaved writing
+  // the next save meets the newer version and asks which to keep, as before.
+  const loaded = initialDoc !== null;
+  useEffect(() => {
+    if (!loaded) return;
+    const quiet = () => !dirty.current && !inFlight.current && !blocked.current;
+    const check = async () => {
+      if (document.visibilityState !== "visible" || refreshing.current || !quiet()) return;
+      refreshing.current = true;
+      try {
+        const server = await api.getChapter(chapterId);
+        if (!alive.current || !quiet() || server.version <= version.current) return;
+        version.current = server.version;
+        if (server.content !== text.current) {
+          const v = view.current;
+          if (v && v.state.doc.toString() === text.current) {
+            // Replace only what changed, so the cursor and scroll stay put;
+            // undo takes the change back out like any other edit.
+            applyingRemote.current = true;
+            try {
+              v.dispatch({ changes: minimalChange(text.current, server.content) });
+            } finally {
+              applyingRemote.current = false;
+            }
+          } else {
+            setInitialDoc(server.content);
+            setEditorKey((k) => k + 1);
+          }
+          text.current = server.content;
+          flushWordCount();
+        }
+        const info = { version: server.version, word_count: server.word_count, updated_at: server.updated_at };
+        cb.current.onSaved(chapterId, info);
+        void rememberSaved(chapterId, server.content, info);
+      } catch {
+        // Offline or signed out: the next check tries again.
+      } finally {
+        refreshing.current = false;
+      }
+    };
+    const onVisible = () => void check();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    const poll = window.setInterval(onVisible, REFRESH_INTERVAL);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      window.clearInterval(poll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterId, loaded]);
+
   const handleChange = useCallback(
     (value: string) => {
+      if (applyingRemote.current) return; // already saved; not the writer's typing
       text.current = value;
       dirty.current = true;
       persistDraft(value, version.current);
@@ -471,7 +531,8 @@ export function ChapterEditor({
       {conflict && (
         <div className="conflict" role="alert">
           <p>
-            <strong>This chapter was saved on another device</strong> while you were writing here.
+            <strong>This chapter was saved somewhere else</strong> (on another device, or by Claude) while
+            you were writing here.
             The other version has {countWords(conflict.content).toLocaleString()} words.
           </p>
           <div className="conflict-actions">

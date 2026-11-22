@@ -354,7 +354,7 @@ function authorizeUrl(clientId: string, challenge: string, redirect = REDIRECT) 
 const cookiesFrom = (res: Response) =>
   res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
 
-async function signIn(e: Env) {
+async function signIn(e: Env, access?: "read" | "edit") {
   const { client_id } = await register(e);
   const { verifier, challenge } = await pkce();
   const consent = await send(e, authorizeUrl(client_id, challenge));
@@ -364,7 +364,7 @@ async function signIn(e: Env) {
   const approve = await send(e, "/authorize", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", cookie: cookiesFrom(consent) },
-    body: new URLSearchParams({ handle, decision: "approve" }),
+    body: new URLSearchParams({ handle, decision: "approve", ...(access ? { access } : {}) }),
   });
   expect(approve.status).toBe(302);
   const back = new URL(approve.headers.get("location") ?? "");
@@ -417,7 +417,9 @@ describe("connector sign-in", () => {
   it("asks before connecting, then serves the tools with the token", async () => {
     const e = env();
     const { html, token } = await signIn(e);
-    expect(html).toContain("Let Claude read your novels?");
+    expect(html).toContain("Connect Claude to Lantern?");
+    expect(html).toMatch(/name="access" value="read" checked/);
+    expect(token.scope.split(" ")).not.toContain("lantern:write");
     expect(html).toContain("claude.ai");
     expect(html).toContain("dev@localhost");
     expect(token.scope.split(" ")).toContain("lantern:read");
@@ -450,6 +452,19 @@ describe("connector sign-in", () => {
     expect(csp).toContain("form-action 'self' https://claude.ai;");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(pageCsp()).toContain("form-action 'self';");
+  });
+
+  it("serves the write tools only to a connection allowed to edit", async () => {
+    const e = env();
+    const reader = await signIn(e, "read");
+    const editor = await signIn(e, "edit");
+    expect(editor.token.scope.split(" ")).toEqual(expect.arrayContaining(["lantern:read", "lantern:write"]));
+    const list = async (token: string) => {
+      const res = await rpc(e, token, { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+      return ((await res.json()) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+    };
+    expect(await list(reader.token.access_token)).not.toContain("edit_chapter");
+    expect(await list(editor.token.access_token)).toContain("edit_chapter");
   });
 
   it("rejects a forged or reused consent form", async () => {
