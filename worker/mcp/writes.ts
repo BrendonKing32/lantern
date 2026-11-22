@@ -19,7 +19,7 @@ import { createEntry, updateEntry } from "../handlers/bible";
 import { logClaudeChange } from "../handlers/claudeChanges";
 import { createChapter, updateChapter } from "../handlers/chapters";
 import { snapshotBeforeSave } from "../handlers/history";
-import { createScene, updateScene } from "../handlers/scenes";
+import { createProjectScene, updateScene } from "../handlers/scenes";
 import { HttpError, now, type Handler, type Params } from "../http";
 
 const EDITS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } as const;
@@ -380,21 +380,31 @@ export function registerWriteTools(server: McpServer, env: Env) {
     "create_scene",
     {
       title: "Add a scene card",
-      description: "Add a scene planning card to the end of a chapter's scenes. Scene cards are notes; they don't change the chapter's text.",
-      inputSchema: { chapter_id: z.string(), ...sceneFields },
+      description:
+        "Add a scene planning card. Scenes stand on their own: give chapter_id to put it at the end of " +
+        "that chapter's scenes, or leave it out to add an unassigned scene the author can place later. " +
+        "Scene cards are notes; they don't change any chapter's text.",
+      inputSchema: {
+        novel_id: z.string().optional().describe("From list_novels. Needed when chapter_id is left out"),
+        chapter_id: z.string().optional().describe("From get_outline. Leave out for an unassigned scene"),
+        ...sceneFields,
+      },
       annotations: ADDS,
     },
-    async ({ chapter_id, ...fields }) =>
+    async ({ novel_id, chapter_id, ...fields }) =>
       guarded(async () => {
-        const scene = await viaApp<SceneMeta>(createScene, { id: chapter_id }, "POST", {}, env);
+        const projectId = chapter_id ? (await getChapterRow(env, chapter_id)).project_id : novel_id;
+        if (!projectId) throw new HttpError(400, "Give novel_id, or chapter_id to add the scene to a chapter");
+        if (novel_id && novel_id !== projectId) throw new HttpError(400, "That chapter isn't in that novel");
+        const scene = await viaApp<SceneMeta>(createProjectScene, { id: projectId }, "POST", { chapterId: chapter_id ?? null }, env);
         const filled = Object.values(fields).some((v) => v !== undefined)
           ? await viaApp<SceneMeta>(updateScene, { id: scene.id }, "PATCH", fields, env)
           : scene;
-        const chapter = await getChapterRow(env, filled.chapter_id);
+        const chapter = filled.chapter_id ? await getChapterRow(env, filled.chapter_id) : null;
         await logClaudeChange(env, {
           project_id: filled.project_id, action: "create_scene", target_kind: "scene", target_id: filled.id,
           chapter_id: filled.chapter_id, summary: `Added the scene “${filled.title}”`,
-          detail: `In “${chapter.title}”`,
+          detail: chapter ? `In “${chapter.title}”` : "Not in a chapter yet",
         });
         const { project_id: _p, created_at: _c, updated_at: _u, ...rest } = filled;
         return data(rest);
@@ -405,18 +415,33 @@ export function registerWriteTools(server: McpServer, env: Env) {
     "update_scene",
     {
       title: "Change a scene card",
-      description: "Change a scene card's title, summary, point of view, location or status. Fields you leave out stay as they are.",
-      inputSchema: { scene_id: z.string().describe("From get_outline"), ...sceneFields },
+      description:
+        "Change a scene card's title, summary, point of view, location or status, or which chapter it's in " +
+        "(chapter_id null takes it out of its chapter). Fields you leave out stay as they are.",
+      inputSchema: {
+        scene_id: z.string().describe("From get_outline"),
+        chapter_id: z.string().nullable().optional()
+          .describe("Move the scene to the end of this chapter's scenes, or null to unassign it"),
+        ...sceneFields,
+      },
       annotations: EDITS,
     },
     async ({ scene_id, ...fields }) =>
       guarded(async () => {
         const s = await viaApp<SceneMeta>(updateScene, { id: scene_id }, "PATCH", fields, env);
-        const names: Record<string, string> = { title: "title", summary: "summary", pov: "point of view", location: "location", status: "status" };
+        const names: Record<string, string> = {
+          title: "title", summary: "summary", pov: "point of view", location: "location", status: "status",
+        };
+        const moved = fields.chapter_id === undefined
+          ? []
+          : [s.chapter_id ? `moved to “${(await getChapterRow(env, s.chapter_id)).title}”` : "taken out of its chapter"];
         await logClaudeChange(env, {
           project_id: s.project_id, action: "update_scene", target_kind: "scene", target_id: s.id,
           chapter_id: s.chapter_id, summary: `Changed the scene “${s.title}”`,
-          detail: listed(Object.entries(fields).filter(([, v]) => v !== undefined).map(([k]) => names[k] ?? k)),
+          detail: listed([
+            ...Object.entries(fields).filter(([k, v]) => v !== undefined && k !== "chapter_id").map(([k]) => names[k] ?? k),
+            ...moved,
+          ]),
         });
         const { project_id: _p, created_at: _c, updated_at: _u, ...rest } = s;
         return data(rest);

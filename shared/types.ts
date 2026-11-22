@@ -65,7 +65,8 @@ export type SceneStatus = "planned" | "drafted";
 export interface SceneMeta {
   id: string;
   project_id: string;
-  chapter_id: string;
+  /** The chapter this scene is placed in, or null while it's unassigned. */
+  chapter_id: string | null;
   title: string;
   summary: string;
   pov: string;

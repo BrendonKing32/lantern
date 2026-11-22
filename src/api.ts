@@ -134,13 +134,14 @@ export const api = {
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
     request(schema.chapterMeta, "PATCH", `/api/chapters/${id}`, patch),
   scenes: (projectId: string) => request(array(schema.sceneMeta), "GET", `/api/projects/${projectId}/scenes`),
-  createScene: (chapterId: string) => request(schema.sceneMeta, "POST", `/api/chapters/${chapterId}/scenes`),
+  createScene: (projectId: string, chapterId: string | null) =>
+    request(schema.sceneMeta, "POST", `/api/projects/${projectId}/scenes`, { chapterId }),
   updateScene: (
     id: string,
-    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status">>,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">>,
   ) => request(schema.sceneMeta, "PATCH", `/api/scenes/${id}`, patch),
   deleteScene: (id: string) => request(schema.ok, "DELETE", `/api/scenes/${id}`),
-  reorderScenes: (projectId: string, chapterId: string, sceneIds: string[]) =>
+  reorderScenes: (projectId: string, chapterId: string | null, sceneIds: string[]) =>
     request(schema.ok, "PUT", `/api/projects/${projectId}/scenes/order`, { chapterId, sceneIds }),
   deleteChapter: (id: string) => request(schema.ok, "DELETE", `/api/chapters/${id}`),
   listHistory: (chapterId: string) => request(array(schema.snapshot), "GET", `/api/chapters/${chapterId}/history`),

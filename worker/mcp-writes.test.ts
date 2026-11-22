@@ -208,6 +208,69 @@ describe("scene cards", () => {
     const updated = JSON.parse(textOf(await call("update_scene", { scene_id: scene.id, summary: "She lands.", status: "planned" })));
     expect(updated).toMatchObject({ title: "Landing", summary: "She lands.", status: "planned" });
   });
+
+  it("adds an unassigned scene and places it in a chapter later", async () => {
+    const scene = JSON.parse(textOf(await call("create_scene", { novel_id: NOVEL, title: "Storm" })));
+    expect(scene).toMatchObject({ chapter_id: null, title: "Storm", position: 0 });
+    const placed = JSON.parse(textOf(await call("update_scene", { scene_id: scene.id, chapter_id: CH })));
+    expect(placed).toMatchObject({ chapter_id: CH, position: 0 });
+    const unplaced = JSON.parse(textOf(await call("update_scene", { scene_id: scene.id, chapter_id: null })));
+    expect(unplaced).toMatchObject({ chapter_id: null });
+    const res = await worker.fetch(new Request(`https://lantern.test/api/projects/${NOVEL}/claude-changes`), env);
+    const list = (await res.json()) as { summary: string; detail: string }[];
+    expect(list.map((c) => c.detail)).toEqual(["Taken out of its chapter", "Moved to “Arrival”", "Not in a chapter yet"]);
+  });
+
+  it("needs a novel or a chapter", async () => {
+    expect((await call("create_scene", { title: "Storm" })).isError).toBe(true);
+  });
+});
+
+describe("scenes in the app", () => {
+  const api = (method: string, path: string, payload?: unknown) =>
+    worker.fetch(new Request(`https://lantern.test${path}`, {
+      method,
+      headers: payload === undefined ? {} : { "content-type": "application/json" },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    }), env);
+  const create = async (chapterId?: string | null) => {
+    const res = await api("POST", `/api/projects/${NOVEL}/scenes`, chapterId === undefined ? undefined : { chapterId });
+    expect(res.status).toBe(201);
+    return (await res.json()) as { id: string; chapter_id: string | null; position: number };
+  };
+
+  it("creates scenes without a chapter, lists them, and moves them between groups", async () => {
+    const a = await create();
+    const b = await create(null);
+    const c = await create(CH);
+    expect([a.chapter_id, b.chapter_id, c.chapter_id]).toEqual([null, null, CH]);
+    expect([a.position, b.position, c.position]).toEqual([0, 1, 0]);
+
+    const moved = await (await api("PATCH", `/api/scenes/${a.id}`, { chapter_id: CH })).json();
+    expect(moved).toMatchObject({ chapter_id: CH, position: 1 });
+
+    const list = (await (await api("GET", `/api/projects/${NOVEL}/scenes`)).json()) as { id: string }[];
+    expect(list.map((s) => s.id)).toEqual([b.id, c.id, a.id]);
+
+    expect((await api("PUT", `/api/projects/${NOVEL}/scenes/order`, { chapterId: CH, sceneIds: [a.id, c.id] })).status).toBe(200);
+    expect((await api("PUT", `/api/projects/${NOVEL}/scenes/order`, { chapterId: null, sceneIds: [b.id] })).status).toBe(200);
+    expect((await api("PUT", `/api/projects/${NOVEL}/scenes/order`, { chapterId: null, sceneIds: [a.id] })).status).toBe(409);
+  });
+
+  it("refuses a chapter from another novel", async () => {
+    const ts = "2026-11-01T00:00:00.000Z";
+    db.raw.prepare("INSERT INTO projects (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)").run("novel-2", "Other", ts, ts);
+    db.raw.prepare("INSERT INTO chapters (id, project_id, title, position, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)")
+      .run("ch-other", "novel-2", "Elsewhere", ts, ts);
+    const scene = await create();
+    expect((await api("PATCH", `/api/scenes/${scene.id}`, { chapter_id: "ch-other" })).status).toBe(404);
+    expect((await api("POST", `/api/projects/${NOVEL}/scenes`, { chapterId: "ch-other" })).status).toBe(404);
+  });
+
+  it("lets a scene have no chapter", () => {
+    const cols = db.raw.prepare("PRAGMA table_info(scenes)").all() as { name: string; notnull: number }[];
+    expect(cols.find((c) => c.name === "chapter_id")?.notnull).toBe(0);
+  });
 });
 
 describe("Changes by Claude", () => {
