@@ -6,14 +6,17 @@ import { api, ApiError, describeError } from "../api";
 import { drafts } from "../local";
 import { isNetworkError, loadChapter, moveRetryDelay, openEditors, rememberSaved } from "../sync";
 import { HistoryPanel } from "./HistoryPanel";
+import { ClaudeDraftPanel } from "./ClaudeDraftPanel";
 import { basicSetup, proseExtensions } from "../editorSetup";
 import { entriesChanged, wikilinks } from "../wikilinkEditor";
 import { grammar, recheckGrammar } from "../grammar";
 import { countWords } from "../../shared/wordcount";
+import { replayDraft } from "../../shared/draftReplay";
 import { splitScenes } from "../../shared/scenes";
 import { sceneBreakKeymap, sceneLabels } from "../sceneLabels";
 import { minimalChange } from "../minimalChange";
 import type { BibleEntry, ChapterWithContent, Dialect, SaveResult, SceneMeta } from "../../shared/types";
+import type { ClaudeDraft } from "../../shared/types";
 
 export type SaveState =
   | "loading"
@@ -29,8 +32,11 @@ interface Props {
   chapterId: string;
   title: string;
   knownVersion: number;
-  /** Word count changes. `initial` marks the count as of opening the chapter. */
-  onWords: (chapterId: string, words: number, initial: boolean) => void;
+  /**
+   * Word count changes. `initial` marks the count as of opening the chapter;
+   * `notWritten` is how many of the words changed without the writer typing them.
+   */
+  onWords: (chapterId: string, words: number, initial: boolean, notWritten?: number) => void;
   onSaved: (chapterId: string, info: SaveResult, replaced?: boolean) => void;
   onStatus: (state: SaveState, detail?: string) => void;
   historyOpen: boolean;
@@ -75,7 +81,7 @@ function locate(doc: string, quote: string): [number, number] | null {
   return head ? [head.index, head.index + head[0].length] : null;
 }
 
-/** How often an open chapter checks for changes saved elsewhere (Claude, another device). */
+/** How often an open chapter checks for changes saved elsewhere (another device) and for Claude's draft. */
 const REFRESH_INTERVAL = 30_000;
 
 const SAVE_DELAY = 1200;
@@ -106,6 +112,11 @@ export function ChapterEditor({
   const [editorKey, setEditorKey] = useState(0);
   const [conflict, setConflict] = useState<ChapterWithContent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [claudeDraft, setClaudeDraft] = useState<ClaudeDraft | null>(null);
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [, refreshDraftReview] = useState(0);
 
   const text = useRef("");
   const version = useRef(0);
@@ -247,7 +258,10 @@ export function ChapterEditor({
     }, WORD_COUNT_DELAY);
   };
   const status = (s: SaveState, detail?: string) => {
-    if (alive.current) cb.current.onStatus(s, detail);
+    if (alive.current) {
+      cb.current.onStatus(s, detail);
+      refreshDraftReview((n) => n + 1);
+    }
   };
 
   const saveRef = useRef<() => Promise<void>>(async () => {});
@@ -375,6 +389,7 @@ export function ChapterEditor({
           version.current = draft.baseVersion;
           text.current = draft.content;
           dirty.current = true;
+          refreshDraftReview((n) => n + 1);
           setInitialDoc(draft.content);
           cb.current.onWords(chapterId, countWords(draft.content), true);
           status("offline");
@@ -451,15 +466,31 @@ export function ChapterEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapterId, schedule]);
 
-  // Pick up changes saved elsewhere, such as an edit Claude made through the
-  // connector, while nothing on this screen is unsaved. With unsaved writing
-  // the next save meets the newer version and asks which to keep, as before.
+  // Claude's draft of this chapter, if the connector has made one. It sits
+  // beside the chapter and never changes the text on screen by itself.
+  const refreshDraft = async () => {
+    try {
+      const d = await api.claudeDraft(chapterId);
+      if (!alive.current) return;
+      setClaudeDraft((old) => (old?.version === d?.version && old?.updated_at === d?.updated_at ? old : d));
+      if (!d) setDraftOpen(false);
+    } catch {
+      // Offline or signed out: the next check tries again.
+    }
+  };
+
+  // Pick up changes saved elsewhere, such as on another device, while nothing
+  // on this screen is unsaved. With unsaved writing the next save meets the
+  // newer version and asks which to keep, as before.
   const loaded = initialDoc !== null;
   useEffect(() => {
     if (!loaded) return;
+    void refreshDraft();
     const quiet = () => !dirty.current && !inFlight.current && !blocked.current;
     const check = async () => {
-      if (document.visibilityState !== "visible" || refreshing.current || !quiet()) return;
+      if (document.visibilityState !== "visible") return;
+      void refreshDraft();
+      if (refreshing.current || !quiet()) return;
       refreshing.current = true;
       try {
         const server = await api.getChapter(chapterId);
@@ -564,6 +595,99 @@ export function ChapterEditor({
     void saveRef.current();
   };
 
+  useEffect(() => {
+    if (historyOpen) setDraftOpen(false);
+  }, [historyOpen]);
+
+  const openDraft = () => {
+    onCloseHistory();
+    setDraftError(null);
+    setDraftOpen(true);
+    if (dirty.current) void saveRef.current();
+  };
+
+  const draftFailed = (e: unknown, action: string) => {
+    if (isNetworkError(e)) setDraftError(`${action} Claude's draft needs a connection. Your chapter hasn't changed.`);
+    else setDraftError(describeError(e));
+    if (e instanceof ApiError && (e.status === 404 || e.data?.code === "draft_changed")) void refreshDraft();
+  };
+
+  // Put Claude's draft in the chapter. Unsaved writing is saved first, so the
+  // server can keep it in History before the draft replaces it.
+  const acceptDraft = async (mode: "as-drafted" | "replayed", expectedText: string) => {
+    const d = claudeDraft;
+    if (!d || blocked.current || draftBusy) return;
+    setDraftBusy(true);
+    setDraftError(null);
+    try {
+      window.clearTimeout(timer.current);
+      if (dirty.current) await saveRef.current();
+      if (dirty.current || inFlight.current || blocked.current) {
+        setDraftError("Your latest writing isn't saved yet. Accept the draft once it says Saved.");
+        return;
+      }
+      const before = text.current;
+      const currentMode = d.base_version === version.current ? "as-drafted" : "replayed";
+      if (mode !== currentMode || (mode === "replayed" && replayDraft(before, d.ops).text !== expectedText)) {
+        setDraftError("The chapter changed while you were reviewing. Look it over again.");
+        return;
+      }
+      blocked.current = true; // no saves while the chapter is being replaced
+      let res: ChapterWithContent;
+      try {
+        res = await api.acceptClaudeDraft(chapterId, version.current, d.version, mode, expectedText);
+      } catch (e) {
+        blocked.current = false;
+        if (dirty.current) schedule(SAVE_DELAY);
+        draftFailed(e, "Accepting");
+        return;
+      }
+      const info = { version: res.version, word_count: res.word_count, updated_at: res.updated_at };
+      version.current = res.version;
+      cb.current.onSaved(chapterId, info);
+      void rememberSaved(chapterId, res.content, info);
+      setClaudeDraft(null);
+      setDraftOpen(false);
+      if (!alive.current) return;
+      if (text.current !== before) {
+        // Typed while the draft went in: ask which to keep, as for another device.
+        status("conflict");
+        setConflict(res);
+        return;
+      }
+      blocked.current = false;
+      text.current = res.content;
+      dirty.current = false;
+      void drafts.clear(chapterId);
+      setInitialDoc(res.content);
+      setEditorKey((k) => k + 1);
+      // Claude's words aren't this session's writing.
+      window.clearTimeout(wordCountTimer.current);
+      wordCountTimer.current = undefined;
+      const words = countWords(res.content);
+      cb.current.onWords(chapterId, words, false, words - countWords(before));
+      status("saved");
+    } finally {
+      if (alive.current) setDraftBusy(false);
+    }
+  };
+
+  const discardDraft = async () => {
+    if (draftBusy) return;
+    setDraftBusy(true);
+    setDraftError(null);
+    try {
+      await api.discardClaudeDraft(chapterId);
+      if (!alive.current) return;
+      setClaudeDraft(null);
+      setDraftOpen(false);
+    } catch (e) {
+      draftFailed(e, "Discarding");
+    } finally {
+      if (alive.current) setDraftBusy(false);
+    }
+  };
+
   if (loadError) {
     return (
       <div className="editor-message" role="alert">
@@ -588,6 +712,21 @@ export function ChapterEditor({
         onClose={onCloseHistory}
       />
     )}
+    {draftOpen && claudeDraft && initialDoc !== null && (
+      <ClaudeDraftPanel
+        title={title}
+        draft={claudeDraft}
+        chapterText={text.current}
+        chapterChanged={claudeDraft.base_version !== version.current || dirty.current}
+        blockedBy={conflict ? "Choose a version in the notice first." : dirty.current || inFlight.current
+          ? "Your latest writing must be saved before accepting." : null}
+        busy={draftBusy}
+        error={draftError}
+        onAccept={(mode, expectedText) => void acceptDraft(mode, expectedText)}
+        onDiscard={() => void discardDraft()}
+        onClose={() => setDraftOpen(false)}
+      />
+    )}
     <article className={`page${readOnly ? " page-reading" : ""}`}>
       {conflict && (
         <div className="conflict" role="alert">
@@ -604,6 +743,17 @@ export function ChapterEditor({
               Switch to the other version
             </button>
           </div>
+        </div>
+      )}
+      {claudeDraft && !draftOpen && (
+        <div className="claude-draft-notice" role="status">
+          <p>
+            <strong>Claude's draft</strong> of this chapter is waiting
+            ({claudeDraft.word_count.toLocaleString()} words). It isn't part of your chapter until you accept it.
+          </p>
+          <button className="btn" onClick={openDraft}>
+            Review draft
+          </button>
         </div>
       )}
       <h1 className="page-title">{title}</h1>

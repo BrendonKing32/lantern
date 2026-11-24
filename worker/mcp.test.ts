@@ -63,6 +63,7 @@ function fakeDb() {
       return snapshots.filter((s) => s.id === args[0] && s.chapter_id === args[1]);
     }
     if (q.includes("FROM chapter_snapshots")) return snapshots.filter((s) => s.chapter_id === args[0]);
+    if (q.includes("FROM claude_drafts")) return [];
     throw new Error(`unexpected query: ${q}`);
   };
   const statement = (sql: string, args: unknown[] = []) => ({
@@ -226,7 +227,8 @@ describe("connector tools", () => {
     const client = await connect(env());
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "get_outline", "get_story_entry", "get_story_guide", "list_history", "list_novels", "read_chapter", "read_version", "search_book",
+      "get_outline", "get_story_entry", "get_story_guide", "list_history", "list_novels", "read_chapter", "read_draft", "read_version",
+      "search_book",
     ]);
     expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
   });

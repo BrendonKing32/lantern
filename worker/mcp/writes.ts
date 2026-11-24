@@ -1,27 +1,28 @@
 // Tools that change the novel. Registered only for connections the author
 // allowed to edit (the lantern:write scope).
 //
-// Chapter text: every change needs the version Claude read, so nothing the
-// author wrote since is overwritten, and the text it replaces is always kept
-// in History first ("Before an edit by Claude"). Claude's words don't count
-// toward the author's daily words.
+// Chapter text: Claude never changes a chapter directly. Its edits go into
+// Claude's draft of the chapter, kept beside it until the author accepts or
+// discards it in the app. Every edit needs the version Claude read (the
+// chapter's, or the draft's once there is one), so nothing changes unseen.
+// Claude's words don't count toward the author's daily words.
 //
 // Story guide, scenes and chapter details go through the app's own handlers,
 // so they follow exactly the same rules as edits made in the app.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { countWords } from "../../shared/wordcount";
-import type { BibleEntry, ChapterMeta, SceneMeta } from "../../shared/types";
+import type { BibleEntry, ChapterMeta, DraftOp, SceneMeta } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
-import { assertChapterUnlocked, chapterKey, chapterMoveToken, chapterPut, getChapterRow, MAX_CHAPTER_BYTES, reconcileChapter } from "../db";
+import { replayDraft } from "../../shared/draftReplay";
+import { assertChapterUnlocked, chapterKey, claudeDraftKey, getChapterRow, MARKDOWN, MAX_CHAPTER_BYTES, reconcileChapter } from "../db";
 import type { Env } from "../env";
 import { createEntry, updateEntry } from "../handlers/bible";
 import { logClaudeChange } from "../handlers/claudeChanges";
 import { createChapter, updateChapter } from "../handlers/chapters";
-import { snapshotBeforeSave } from "../handlers/history";
+import { draftRow } from "../handlers/claudeDrafts";
 import { arrangeScenes, createProjectScene, moveScene, sceneListing, updateScene } from "../handlers/scenes";
 import { HttpError, now, type Handler, type Params } from "../http";
-import { afterChapterWrite } from "../sceneSync";
 
 const EDITS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } as const;
 const ADDS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
@@ -76,7 +77,11 @@ function occurrences(hay: string, needle: string): number[] {
  * Apply exact replacements in order. Each old_text must appear exactly once in
  * the text as it stands when that edit is applied. All or nothing.
  */
-export function applyEdits(content: string, edits: { old_text: string; new_text: string }[]): string {
+export function applyEdits(
+  content: string,
+  edits: { old_text: string; new_text: string }[],
+  what: "chapter" | "draft" = "chapter",
+): string {
   let out = content;
   edits.forEach((edit, i) => {
     const which = edits.length > 1 ? `Edit ${i + 1}: ` : "";
@@ -88,70 +93,88 @@ export function applyEdits(content: string, edits: { old_text: string; new_text:
     }
     if (found.length > 1) {
       throw new EditError(
-        `${which}old_text appears ${found.length} times in the chapter. Include more of the surrounding text so it matches exactly once.`,
+        `${which}old_text appears ${found.length} times in the ${what}. Include more of the surrounding text so it matches exactly once.`,
       );
     }
     const near = occurrences(loosen(out), loosen(edit.old_text));
     if (near.length === 1) {
       const actual = out.slice(near[0], near[0] + edit.old_text.length);
       throw new EditError(
-        `${which}old_text wasn't found exactly; the chapter has it with different quotes or dashes:\n${actual}\nCopy that text exactly and try again.`,
+        `${which}old_text wasn't found exactly; the ${what} has it with different quotes or dashes:\n${actual}\nCopy that text exactly and try again.`,
       );
     }
-    throw new EditError(`${which}old_text wasn't found in the chapter. Read the chapter again and copy the passage exactly.`);
+    const reread = what === "draft" ? "Read the draft again with read_draft" : "Read the chapter again";
+    throw new EditError(`${which}old_text wasn't found in the ${what}. ${reread} and copy the passage exactly.`);
   });
   return out;
 }
 
 /**
- * Save new text for a chapter as Claude, if it's still at baseVersion. Keeps
- * the text being replaced in History and refuses to save without that copy.
+ * Change Claude's draft of a chapter, starting one from the chapter's text if
+ * there isn't one. The chapter itself is left alone. With a draft, baseVersion
+ * is the draft's version; without one, the chapter's.
  */
-export async function saveAsClaude(env: Env, chapterId: string, baseVersion: number, content: string) {
-  if (new TextEncoder().encode(content).length > MAX_CHAPTER_BYTES) {
-    throw new EditError("That would make the chapter larger than 5 MB, so nothing was changed.");
-  }
+export async function draftAsClaude(
+  env: Env,
+  chapterId: string,
+  baseVersion: number,
+  change: (current: string, what: "chapter" | "draft") => string,
+  ops: DraftOp[],
+) {
   await assertEditable(env, chapterId);
-  const token = await chapterMoveToken(env, chapterId);
   const row = await reconcileChapter(env, await getChapterRow(env, chapterId));
   await assertEditable(env, chapterId);
-  if (row.version !== baseVersion) throw conflict(row.version);
+  const draft = await draftRow(env, row.id);
+  if (draft && draft.version !== baseVersion) throw draftConflict(draft.version);
+  if (!draft && row.version !== baseVersion) throw conflict(row.version);
+  const key = claudeDraftKey(row.project_id, row.id);
+  const obj = await env.BUCKET.get(draft ? key : chapterKey(row.project_id, row.id));
+  if (draft && !obj) throw new EditError("The text of this chapter's draft is missing, so nothing was changed. Ask the author to discard the draft in Lantern.");
+  const current = obj ? await obj.text() : "";
+  if (!draft) {
+    const latest = await reconcileChapter(env, await getChapterRow(env, chapterId));
+    await assertEditable(env, chapterId);
+    if (latest.version !== row.version) throw conflict(latest.version);
+  }
+  const content = change(current, draft ? "draft" : "chapter");
+  if (content === current) throw new EditError("Those edits don't change the text, so nothing was saved.");
+  if (new TextEncoder().encode(content).length > MAX_CHAPTER_BYTES) {
+    throw new EditError("That would make the draft larger than 5 MB, so nothing was changed.");
+  }
   const words = countWords(content);
   const ts = now();
-  const claim = await env.DB.prepare(
-    `UPDATE chapters SET version = version + 1, word_count = ?, updated_at = ?
-      WHERE id = ? AND version = ? AND moving_until IS ? AND deleted_at IS NULL
-        AND (moving_until IS NULL OR moving_until <= ?)`,
-  )
-    .bind(words, ts, row.id, baseVersion, token, ts)
-    .run();
-  if (!claim.meta.changes) {
-    await assertEditable(env, chapterId);
-    throw conflict((await getChapterRow(env, chapterId)).version);
-  }
 
-  const rollBack = () =>
-    env.DB.prepare("UPDATE chapters SET version = ?, word_count = ?, updated_at = ? WHERE id = ? AND version = ?")
-      .bind(baseVersion, row.word_count, row.updated_at, row.id, baseVersion + 1)
+  let rollBack: () => Promise<unknown>;
+  if (draft) {
+    const claim = await env.DB.prepare(
+      "UPDATE claude_drafts SET version = version + 1, word_count = ?, updated_at = ?, ops = ? WHERE chapter_id = ? AND version = ?",
+    )
+      .bind(words, ts, JSON.stringify([...draft.ops, ...ops]), row.id, baseVersion)
       .run();
-  try {
-    await snapshotBeforeSave(env, { ...row, version: baseVersion }, "claude");
-  } catch (e) {
-    console.error("snapshot before Claude's edit failed", e);
-    await rollBack();
-    throw new EditError("Lantern couldn't keep a copy of the current text in History, so nothing was changed.");
+    if (!claim.meta.changes) throw draftConflict(baseVersion + 1);
+    rollBack = () =>
+      env.DB.prepare("UPDATE claude_drafts SET version = ?, word_count = ?, updated_at = ?, ops = ? WHERE chapter_id = ? AND version = ?")
+        .bind(baseVersion, draft.word_count, draft.updated_at, JSON.stringify(draft.ops), row.id, baseVersion + 1)
+        .run();
+  } else {
+    const claim = await env.DB.prepare(
+      `INSERT INTO claude_drafts (chapter_id, project_id, version, base_version, word_count, ops, created_at, updated_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?) ON CONFLICT (chapter_id) DO NOTHING`,
+    )
+      .bind(row.id, row.project_id, row.version, words, JSON.stringify(ops), ts, ts)
+      .run();
+    if (!claim.meta.changes) throw draftConflict(1);
+    rollBack = () => env.DB.prepare("DELETE FROM claude_drafts WHERE chapter_id = ? AND version = 1").bind(row.id).run();
   }
   try {
-    await chapterPut(env, row, content, baseVersion + 1);
+    await env.BUCKET.put(key, content, MARKDOWN);
   } catch (e) {
     await rollBack();
     throw e;
   }
-  await afterChapterWrite(env, row, content, baseVersion + 1);
-  await env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id).run();
   return {
-    version: baseVersion + 1, word_count: words, previous_word_count: row.word_count,
-    title: row.title, project_id: row.project_id, chapter_id: row.id,
+    draft_version: draft ? baseVersion + 1 : 1, started: !draft, word_count: words,
+    previous_word_count: countWords(current), title: row.title, project_id: row.project_id, chapter_id: row.id,
   };
 }
 
@@ -161,14 +184,11 @@ const conflict = (current: number) =>
       "Read it again with read_chapter and redo the edit against the new text.",
   );
 
-async function readFor(env: Env, chapterId: string, baseVersion: number): Promise<{ row: ChapterMeta; content: string }> {
-  await assertEditable(env, chapterId);
-  const row = await reconcileChapter(env, await getChapterRow(env, chapterId));
-  await assertEditable(env, chapterId);
-  if (row.version !== baseVersion) throw conflict(row.version);
-  const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
-  return { row, content: obj ? await obj.text() : "" };
-}
+const draftConflict = (current: number) =>
+  new EditError(
+    `This chapter has a draft by Claude waiting for the author (draft version ${current}), and edits go into ` +
+      `that draft. Nothing was changed. Read it with read_draft and redo the edit against its text, with base_version ${current}.`,
+  );
 
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toLocaleString("en-US")}`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -177,12 +197,13 @@ const listed = (parts: string[]) => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
-function saved(r: Awaited<ReturnType<typeof saveAsClaude>>) {
+function saved(r: Awaited<ReturnType<typeof draftAsClaude>>) {
   const diff = r.word_count - r.previous_word_count;
   return text(
-    `Saved “${r.title}” as version ${r.version} (${r.word_count.toLocaleString("en-US")} words, ` +
-      `${diff >= 0 ? "+" : ""}${diff.toLocaleString("en-US")}). The previous text is in the chapter's History ` +
-      `as “Before an edit by Claude”. Use version ${r.version} for any further edit.`,
+    `${r.started ? "Started" : "Updated"} Claude's draft of “${r.title}”: draft version ${r.draft_version} ` +
+      `(${r.word_count.toLocaleString("en-US")} words, ${diff >= 0 ? "+" : ""}${diff.toLocaleString("en-US")}). ` +
+      "The chapter itself is unchanged until the author accepts the draft in Lantern; tell them it's waiting. " +
+      `Use base_version ${r.draft_version} for any further edit to this chapter.`,
   );
 }
 
@@ -198,7 +219,11 @@ async function guarded<T>(fn: () => Promise<T>) {
   }
 }
 
-const baseVersion = z.number().int().min(0).describe("The chapter's version, from read_chapter or your last edit");
+const baseVersion = z
+  .number()
+  .int()
+  .min(0)
+  .describe("The chapter's version from read_chapter or, once Claude's draft of it exists, the draft version from read_draft or your last edit");
 
 export function registerWriteTools(server: McpServer, env: Env) {
   server.registerTool(
@@ -206,10 +231,12 @@ export function registerWriteTools(server: McpServer, env: Env) {
     {
       title: "Edit a chapter",
       description:
-        "Replace exact passages in a chapter's text. Each old_text must be copied exactly from the chapter " +
-        "(same quotes, dashes and line breaks) and appear exactly once; new_text replaces it (empty deletes it). " +
-        "Edits apply in order and all or none. Keep each old_text short but unique, and change only what the " +
-        "author asked for. The previous text is kept in History.",
+        "Replace exact passages in a chapter's text. The change goes into Claude's draft of the chapter, which " +
+        "the author accepts or discards in Lantern; the chapter itself doesn't change. The first edit starts the " +
+        "draft from the chapter; later edits change the draft, so copy old_text from read_draft. Each old_text " +
+        "must be copied exactly (same quotes, dashes and line breaks) and appear exactly once; new_text replaces " +
+        "it (empty deletes it). Edits apply in order and all or none. Keep each old_text short but unique, and " +
+        "change only what the author asked for.",
       inputSchema: {
         chapter_id: z.string(),
         base_version: baseVersion,
@@ -222,13 +249,11 @@ export function registerWriteTools(server: McpServer, env: Env) {
     },
     async ({ chapter_id, base_version, edits }) =>
       guarded(async () => {
-        const { content } = await readFor(env, chapter_id, base_version);
-        const next = applyEdits(content, edits);
-        if (next === content) throw new EditError("Those edits don't change the text, so nothing was saved.");
-        const r = await saveAsClaude(env, chapter_id, base_version, next);
+        const r = await draftAsClaude(env, chapter_id, base_version, (content, what) => applyEdits(content, edits, what),
+          edits.map((edit) => ({ kind: "replace", ...edit })));
         await logClaudeChange(env, {
           project_id: r.project_id, action: "edit_chapter", target_kind: "chapter", target_id: r.chapter_id,
-          chapter_id: r.chapter_id, summary: `Edited “${r.title}”`,
+          chapter_id: r.chapter_id, summary: `Drafted edits to “${r.title}”`,
           detail: `${plural(edits.length, "passage")} · ${signed(r.word_count - r.previous_word_count)} words`,
         });
         return saved(r);
@@ -241,19 +266,17 @@ export function registerWriteTools(server: McpServer, env: Env) {
       title: "Add to the end of a chapter",
       description:
         "Add text to the end of a chapter, after a blank line. Start the text with *** on its own line to " +
-        "begin a new scene. The previous text is kept in History.",
+        "begin a new scene. Like edit_chapter, it goes into Claude's draft of the chapter for the author to accept.",
       inputSchema: { chapter_id: z.string(), base_version: baseVersion, text: z.string().min(1) },
       annotations: ADDS,
     },
     async ({ chapter_id, base_version, text: addition }) =>
       guarded(async () => {
-        const { content } = await readFor(env, chapter_id, base_version);
-        const body = content.replace(/\s+$/, "");
-        const next = body ? `${body}\n\n${addition.replace(/^\s+/, "")}` : addition;
-        const r = await saveAsClaude(env, chapter_id, base_version, next.endsWith("\n") ? next : `${next}\n`);
+        const ops: DraftOp[] = [{ kind: "append", text: addition }];
+        const r = await draftAsClaude(env, chapter_id, base_version, (content) => replayDraft(content, ops).text, ops);
         await logClaudeChange(env, {
           project_id: r.project_id, action: "append_to_chapter", target_kind: "chapter", target_id: r.chapter_id,
-          chapter_id: r.chapter_id, summary: `Added to the end of “${r.title}”`,
+          chapter_id: r.chapter_id, summary: `Drafted an addition to the end of “${r.title}”`,
           detail: `${signed(r.word_count - r.previous_word_count)} words`,
         });
         return saved(r);
@@ -264,7 +287,9 @@ export function registerWriteTools(server: McpServer, env: Env) {
     "create_chapter",
     {
       title: "Add a chapter",
-      description: "Add a chapter at the end of a novel, optionally with its synopsis and opening text.",
+      description:
+        "Add a chapter at the end of a novel, optionally with its synopsis and opening text. The opening text " +
+        "goes into Claude's draft of the new chapter, for the author to accept.",
       inputSchema: {
         novel_id: z.string(),
         title: z.string().min(1).max(200),
@@ -277,19 +302,26 @@ export function registerWriteTools(server: McpServer, env: Env) {
       guarded(async () => {
         const chapter = await viaApp<ChapterMeta>(createChapter, { id: novel_id }, "POST", { title }, env);
         if (synopsis) await viaApp(updateChapter, { id: chapter.id }, "PATCH", { synopsis }, env);
-        let version = chapter.version;
-        let words = 0;
-        if (opening?.trim()) {
-          const r = await saveAsClaude(env, chapter.id, chapter.version, opening.endsWith("\n") ? opening : `${opening}\n`);
-          version = r.version;
-          words = r.word_count;
-        }
+        const draft = opening?.trim()
+          ? await draftAsClaude(env, chapter.id, chapter.version, () => (opening.endsWith("\n") ? opening : `${opening}\n`),
+            [{ kind: "set", text: opening.endsWith("\n") ? opening : `${opening}\n` }])
+          : null;
         await logClaudeChange(env, {
           project_id: chapter.project_id, action: "create_chapter", target_kind: "chapter", target_id: chapter.id,
           chapter_id: chapter.id, summary: `Added the chapter “${chapter.title}”`,
-          detail: listed([`chapter ${chapter.position + 1}`, plural(words, "word"), ...(synopsis ? ["with a synopsis"] : [])]),
+          detail: listed([
+            `chapter ${chapter.position + 1}`,
+            ...(draft ? [`${plural(draft.word_count, "word")} drafted`] : []),
+            ...(synopsis ? ["with a synopsis"] : []),
+          ]),
         });
-        return data({ chapter_id: chapter.id, title: chapter.title, position: chapter.position + 1, version, word_count: words });
+        return data({
+          chapter_id: chapter.id, title: chapter.title, position: chapter.position + 1, version: chapter.version,
+          ...(draft ? {
+            draft_version: draft.draft_version, draft_word_count: draft.word_count,
+            note: "The opening text is in Claude's draft of the chapter, waiting for the author to accept it.",
+          } : {}),
+        });
       }),
   );
 
@@ -469,6 +501,9 @@ export function registerWriteTools(server: McpServer, env: Env) {
           }
           const from = snapshots.find((c) => c.chapter.id === from_chapter_id);
           if (!from) throw new HttpError(404, "Chapter not found");
+          if (await draftRow(env, from_chapter_id) || (to_chapter_id && await draftRow(env, to_chapter_id))) {
+            throw new EditError("This chapter has a draft by Claude waiting for the author. Ask them to accept or discard it first.");
+          }
           if (from.chapter.version !== base_versions.from || from.textVersion !== base_versions.from) {
             throw conflict(from.chapter.version);
           }

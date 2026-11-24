@@ -12,6 +12,7 @@ const TABLES = [
   "project_shares",
   "share_comments",
   "claude_changes",
+  "claude_drafts",
 ] as const;
 
 const BACKUP_PREFIX = "backups/";

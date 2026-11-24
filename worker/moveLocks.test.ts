@@ -3,7 +3,7 @@ import { chapterKey, chapterPut, getChapterRow, reconcileChapter } from "./db";
 import type { Env } from "./env";
 import { deleteChapter, getChapter, saveChapter, updateChapter, writeChapter } from "./handlers/chapters";
 import { HttpError } from "./http";
-import { EditError, saveAsClaude } from "./mcp/writes";
+import { draftAsClaude, EditError } from "./mcp/writes";
 import { memoryR2, sqliteD1 } from "./testing/d1";
 
 let db: ReturnType<typeof sqliteD1>;
@@ -68,7 +68,7 @@ describe("chapter move locks and recovery", () => {
       expect(error).toBeInstanceOf(HttpError);
       expect(error).toMatchObject({ status: 423, extra: { retryAfter: expect.any(Number) } });
     }
-    await expect(saveAsClaude(env, "c", 0, "Not saved")).rejects.toBeInstanceOf(EditError);
+    await expect(draftAsClaude(env, "c", 0, () => "Not saved", [{ kind: "set", text: "Not saved" }])).rejects.toBeInstanceOf(EditError);
     expect(current().version).toBe(0);
     expect(bucket.objects.get(key)).toBe("Already moved");
   });
@@ -76,9 +76,9 @@ describe("chapter move locks and recovery", () => {
   it("repairs after an expired lock and lets Claude save at the repaired version", async () => {
     lock(new Date(Date.now() - 1000).toISOString());
     await chapterPut(env, { id: "c", project_id: "p" }, "Recovered words", 1);
-    await expect(saveAsClaude(env, "c", 0, "Stale")).rejects.toThrow("version 1");
-    await saveAsClaude(env, "c", 1, "Claude writes new words");
-    expect(current()).toEqual({ version: 2, word_count: 4 });
+    await expect(draftAsClaude(env, "c", 0, () => "Stale", [{ kind: "set", text: "Stale" }])).rejects.toThrow("version 1");
+    await draftAsClaude(env, "c", 1, () => "Claude writes new words", [{ kind: "set", text: "Claude writes new words" }]);
+    expect(current()).toEqual({ version: 1, word_count: 2 });
   });
 
   it("keeps ordinary reads available but blocks chapter changes during a move", async () => {
@@ -141,7 +141,7 @@ describe("chapter move locks and recovery", () => {
       await expect(writeChapter(env, await getChapterRow(env, "c"), "Stale edit", 0, "auto"))
         .rejects.toMatchObject({ status: 409 });
     } else {
-      await expect(saveAsClaude(env, "c", 0, "Stale edit")).rejects.toBeInstanceOf(EditError);
+      await expect(draftAsClaude(env, "c", 0, () => "Stale edit", [{ kind: "set", text: "Stale edit" }])).rejects.toBeInstanceOf(EditError);
     }
     expect(bucket.objects.get(key)).toBe("Moved words");
   });

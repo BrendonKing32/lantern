@@ -97,7 +97,7 @@ export function ClaudeChangesDialog({
           Open chapter
         </button>
         {TEXT_EDITS.has(c.action) && (
-          <button className="btn btn-quiet" disabled={!there} title={gone ?? "The text from before this edit is kept here"} onClick={() => onOpenChapter(c.target_id, true)}>
+          <button className="btn btn-quiet" disabled={!there} title={gone ?? "The text from before an accepted draft is kept here"} onClick={() => onOpenChapter(c.target_id, true)}>
             History
           </button>
         )}
@@ -112,8 +112,9 @@ export function ClaudeChangesDialog({
           <div>
             <h2 id="claude-changes-title">Changes by Claude</h2>
             <p>
-              What Claude changed in this novel through the connector. Before every change to a chapter's text,
-              the previous text is kept in that chapter's History, where you can restore it.
+              What Claude changed in this novel through the connector. Changes to a chapter's text wait in
+              Claude's draft of that chapter until you accept them; open the chapter to review it. When you accept
+              a draft, the previous text is kept in the chapter's History, where you can restore it.
             </p>
           </div>
           <button className="icon-btn" aria-label="Close changes by Claude" onClick={onClose}>

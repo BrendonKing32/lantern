@@ -670,6 +670,21 @@ select {
 .conflict p {
   margin: 0 0 0.8rem;
 }
+.claude-draft-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 0 0 2rem;
+  padding: 0.8rem 1.1rem;
+  border: 1px solid var(--lamp);
+  border-radius: 10px;
+  background: rgb(var(--lamp-rgb) / 0.08);
+}
+.claude-draft-notice p {
+  flex: 1 1 18rem;
+  margin: 0;
+}
 .conflict-actions {
   display: flex;
   flex-wrap: wrap;

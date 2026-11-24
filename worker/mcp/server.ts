@@ -22,12 +22,14 @@ export const WRITE_INSTRUCTIONS = `${ABOUT}
 
 This connection can also make changes. The manuscript is the author's own work, so:
 - Change only what the author asked for, and keep their voice. Don't tidy, restyle or "improve" anything else.
-- Read a chapter before editing it, and pass the version read_chapter gives as base_version. If the author \
-has written since, the edit is refused: read the chapter again and redo it.
+- Your changes to chapter text never go straight into the chapter. They collect in Claude's draft of that \
+chapter, kept beside it until the author accepts or discards it in Lantern. Tell the author which chapters \
+have a draft waiting and what you changed.
+- Read a chapter before editing it, and pass the version read_chapter gives as base_version. Once a chapter \
+has a draft, edits apply to the draft: read it with read_draft and pass its draft version instead. If the \
+text has changed since you read it, the edit is refused: read it again and redo it.
 - Prefer edit_chapter with small, exact passages over rewriting large stretches.
 - move_scene moves an in-text card with its passage and keeps a History copy.
-- Every chapter edit keeps the previous text in the chapter's History ("Before an edit by Claude"), so the \
-author can undo it there. Tell the author what you changed, in which chapter.
 - Nothing can be deleted through this connection.`;
 
 export interface McpProps {

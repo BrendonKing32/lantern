@@ -504,8 +504,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
     document.documentElement.style.setProperty("--glow", glow.toFixed(3));
   }, [sessionWords, today]);
 
-  const onWords = useCallback((id: string, words: number, initial: boolean) => {
+  const onWords = useCallback((id: string, words: number, initial: boolean, notWritten = 0) => {
     if (initial && sessionStart.current[id] === undefined) sessionStart.current[id] = words;
+    if (notWritten && sessionStart.current[id] !== undefined) sessionStart.current[id] += notWritten;
     setLive((prev) => (prev[id] === words ? prev : { ...prev, [id]: words }));
   }, []);
 

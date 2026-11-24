@@ -12,6 +12,7 @@ import {
   type ChapterMeta,
   type ChapterWithContent,
   type ClaudeChange,
+  type ClaudeDraft,
   type CheckResult,
   type DeletedChapter,
   type DeletedProject,
@@ -273,6 +274,21 @@ export const claudeChange: Check<ClaudeChange> = object({
   chapter_id: nullable(string),
   summary: string,
   detail: string,
+});
+
+export const claudeDraft: Check<ClaudeDraft> = object({
+  chapter_id: string,
+  version: number,
+  base_version: number,
+  word_count: number,
+  ops: array(tagged("kind", {
+    replace: object({ kind: literal("replace"), old_text: string, new_text: string }),
+    append: object({ kind: literal("append"), text: string }),
+    set: object({ kind: literal("set"), text: string }),
+  })),
+  created_at: string,
+  updated_at: string,
+  content: string,
 });
 
 export const shareComment: Check<ShareComment> = object({

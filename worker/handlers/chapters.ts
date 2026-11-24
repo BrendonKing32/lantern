@@ -59,7 +59,7 @@ export const getChapter: Handler = async (_req, env, p) => {
 /** Claim, preserve and write a chapter. Failed mandatory snapshots and puts roll back the claim. */
 export async function writeChapter(
   env: Env, row: ChapterMeta, content: string, baseVersion: number, reason: SnapshotReason,
-  options: { snapshotContent?: string; sceneSnapshot?: string } = {},
+  options: { snapshotContent?: string; sceneSnapshot?: string; draftVersion?: number } = {},
 ): Promise<{ version: number; word_count: number; updated_at: string }> {
   await assertChapterUnlocked(env, row.id);
   const token = await chapterMoveToken(env, row.id);
@@ -74,15 +74,22 @@ export async function writeChapter(
   const guard = options.sceneSnapshot === undefined ? "" : ` AND
     (SELECT json_group_array(json_array(id, position, in_text, anchor_head, anchor_tail))
        FROM (SELECT id, position, in_text, anchor_head, anchor_tail FROM scenes WHERE chapter_id = ? ORDER BY id)) = ?`;
+  const draftGuard = options.draftVersion === undefined ? "" :
+    " AND EXISTS (SELECT 1 FROM claude_drafts WHERE chapter_id = ? AND version = ?)";
   const claim = await env.DB.prepare(
     `UPDATE chapters SET version = version + 1, word_count = ?, updated_at = ?
       WHERE id = ? AND version = ? AND moving_until IS ? AND deleted_at IS NULL
-        AND (moving_until IS NULL OR moving_until <= ?)${guard}`,
-  ).bind(words, ts, row.id, baseVersion, token, ts, ...(options.sceneSnapshot === undefined ? [] : [row.id, options.sceneSnapshot])).run();
+        AND (moving_until IS NULL OR moving_until <= ?)${guard}${draftGuard}`,
+  ).bind(words, ts, row.id, baseVersion, token, ts, ...(options.sceneSnapshot === undefined ? [] : [row.id, options.sceneSnapshot]),
+    ...(options.draftVersion === undefined ? [] : [row.id, options.draftVersion])).run();
   if (!claim.meta.changes) {
     await assertChapterUnlocked(env, row.id);
     const current = await getChapterRow(env, row.id);
     if (current.version !== baseVersion) throw new HttpError(409, "conflict", { version: current.version });
+    if (options.draftVersion !== undefined) {
+      const draft = await env.DB.prepare("SELECT version FROM claude_drafts WHERE chapter_id = ?").bind(row.id).first<{ version: number }>();
+      if (draft?.version !== options.draftVersion) throw new HttpError(409, "Claude changed this draft while you were reviewing it. Look it over again, then accept it.", { code: "draft_changed" });
+    }
     throw new HttpError(409, "Chapter or scene list is out of date; reload and try again");
   }
   const rollback = () => env.DB.prepare(
@@ -95,9 +102,11 @@ export async function writeChapter(
     }
   } catch (e) {
     console.error("snapshot failed", e);
-    if (reason === "replace" || reason === "move") {
+    if (reason === "replace" || reason === "move" || reason === "claude") {
       await rollback();
-      throw new HttpError(500, reason === "move"
+      throw new HttpError(500, reason === "claude"
+        ? "Lantern couldn't keep a copy of the chapter in History, so the draft wasn't accepted. Try again."
+        : reason === "move"
         ? "Could not keep a copy in History, so nothing was moved"
         : "Could not preserve the earlier versions; no replacement was saved");
     }

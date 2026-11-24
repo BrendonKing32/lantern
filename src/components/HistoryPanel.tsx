@@ -20,7 +20,7 @@ const REASON: Record<SnapshotReason, string> = {
   restore: "Before a restore",
   conflict: "From another device",
   replace: "Before a find and replace",
-  claude: "Before an edit by Claude",
+  claude: "Before Claude's changes",
   move: "Before moving a scene",
 };
 
@@ -142,7 +142,7 @@ export function HistoryPanel({ chapterId, title, currentText, canRestore, onRest
       ) : (
         <div className="history-body">
           <p className="history-note">
-            Lantern keeps a copy at most every 10 minutes while you write, and always before a restore, a whole-book replacement or an edit by Claude.
+            Lantern keeps a copy at most every 10 minutes while you write, and always before a restore, a whole-book replacement or accepting Claude's draft.
           </p>
           {error && (
             <p className="history-note history-error" role="alert">

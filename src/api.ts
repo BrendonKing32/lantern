@@ -163,6 +163,17 @@ export const api = {
   listHistory: (chapterId: string) => request(array(schema.snapshot), "GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>
     request(schema.snapshotWithContent, "GET", `/api/chapters/${chapterId}/history/${snapshotId}`),
+  claudeDraft: (chapterId: string) =>
+    request(nullable(schema.claudeDraft), "GET", `/api/chapters/${chapterId}/claude-draft`),
+  /** Put Claude's draft in the chapter; both versions must still be the ones on screen. */
+  acceptClaudeDraft: (chapterId: string, baseVersion: number, draftVersion: number, mode: "as-drafted" | "replayed", expectedText?: string) =>
+    request(schema.chapterWithContent, "POST", `/api/chapters/${chapterId}/claude-draft/accept`, {
+      baseVersion,
+      draftVersion,
+      mode,
+      expectedText,
+    }),
+  discardClaudeDraft: (chapterId: string) => request(schema.ok, "DELETE", `/api/chapters/${chapterId}/claude-draft`),
   claudeChanges: (projectId: string) =>
     request(array(schema.claudeChange), "GET", `/api/projects/${projectId}/claude-changes`),
   shareStatus: (projectId: string) => request(schema.shareStatus, "GET", `/api/projects/${projectId}/share`),
