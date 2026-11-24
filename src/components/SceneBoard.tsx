@@ -275,6 +275,8 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
                           <select value={draft.status ?? "planned"} onChange={(e) => setDraft({ ...draft, status: e.target.value as SceneMeta["status"] })}>
                             <option value="planned">Planned</option>
                             <option value="drafted">Drafted</option>
+                            <option value="revising">Revising</option>
+                            <option value="done">Done</option>
                           </select>
                         </label>
                         <label>Chapter
@@ -290,6 +292,7 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
                         <div className="scene-card-head">
                           {handle}
                           <span className={`scene-status ${scene.in_text ? "scene-drafted" : "scene-planned"}`}>{scene.in_text ? "In the text" : "Planned"}</span>
+                          <span className={`scene-status scene-${scene.status}`}>{scene.status}</span>
                           <h3>{scene.title}</h3>
                         </div>
                         {scene.in_text && <><p className="scene-meta">{scene.word_count.toLocaleString()} words</p><p className="scene-excerpt">{scene.excerpt}</p></>}

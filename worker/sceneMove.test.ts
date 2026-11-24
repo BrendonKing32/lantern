@@ -60,7 +60,8 @@ async function setup() {
 describe("cross-chapter scene moves", () => {
   it("moves before an uncarded passage and preserves History and daily words", async () => {
     const { moving, target } = await setup();
-    const daily = db.raw.prepare("SELECT SUM(words) AS words FROM daily_words").get();
+    db.raw.prepare("UPDATE daily_words SET revised = 7").run();
+    const daily = db.raw.prepare("SELECT SUM(words) AS words, SUM(revised) AS revised FROM daily_words").get();
     const response = await move(moving.id);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
@@ -75,7 +76,7 @@ describe("cross-chapter scene moves", () => {
     expect(card(moving.id)).toMatchObject({ chapter_id: "b", in_text: 1, position: 1 });
     expect(db.raw.prepare("SELECT chapter_id, version, reason FROM chapter_snapshots WHERE reason = 'move' ORDER BY chapter_id").all())
       .toEqual([{ chapter_id: "a", version: 1, reason: "move" }, { chapter_id: "b", version: 1, reason: "move" }]);
-    expect(db.raw.prepare("SELECT SUM(words) AS words FROM daily_words").get()).toEqual(daily);
+    expect(db.raw.prepare("SELECT SUM(words) AS words, SUM(revised) AS revised FROM daily_words").get()).toEqual(daily);
   });
 
   it.each([[0, 1], [1, 0]])("rejects stale versions %i/%i without changing either chapter", async (a, b) => {

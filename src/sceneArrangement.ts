@@ -1,5 +1,5 @@
 import { api, ApiError, describeError } from "./api";
-import { chapters, drafts, reopenStorage } from "./local";
+import { chapters, draftToSave, drafts, reopenStorage } from "./local";
 import { forgetChapter, openEditors, rememberSaved } from "./sync";
 import type { ChapterMeta, ChapterWithContent, SaveResult } from "../shared/types";
 import { failedDraft, waitForChapterActivity } from "./chapterActivity";
@@ -13,28 +13,40 @@ export async function flushForSceneMove(chapter: ChapterMeta): Promise<ChapterWi
     if (openEditors.has(chapter.id)) throw new Error("This chapter is open in another window. Close it there and try again.");
     await waitForChapterActivity(chapter.id);
     await reopenStorage();
-    const draft = await drafts.read(chapter.id);
+    let draft = await drafts.read(chapter.id);
     let current = await api.getChapter(chapter.id);
     const unsaved = failedDraft(chapter.id);
     if (unsaved !== undefined && unsaved !== current.content && unsaved !== draft?.content) {
       throw new Error("The latest draft wasn't saved on this device. Open the chapter and save it first.");
     }
-    if (draft) {
-      if (draft.content !== current.content) {
+    while (draft) {
+      if (draft.baseVersion !== current.version && ((draft.revised ?? 0) > 0 || draft.snapshot)) {
+        throw new Error("This chapter changed elsewhere. Open it and resolve the conflict.");
+      }
+      const sent = draftToSave(draft);
+      if (draft.content !== current.content || (((draft.revised ?? 0) > 0 || draft.snapshot) && draft.baseVersion === current.version)) {
         try {
-          const saved = await api.saveChapter(chapter.id, draft.content, draft.baseVersion, { writtenAt: draft.savedAt });
-          await rememberSaved(chapter.id, draft.content, saved);
+          const saved = await api.saveChapter(chapter.id, sent.content, sent.baseVersion, { writtenAt: sent.savedAt, revised: sent.revised ?? 0, ...(sent.snapshot ? { snapshot: sent.snapshot } : {}) });
+          await rememberSaved(chapter.id, sent.content, saved);
+          await drafts.acknowledge(sent, saved.version);
         } catch (e) {
           // An editor's final save or the sync queue may have saved this exact draft.
           if (!(e instanceof ApiError && e.status === 409)) throw e;
           current = await api.getChapter(chapter.id);
-          if (current.content !== draft.content) throw e;
+          if (current.content !== draft.content || (draft.revised ?? 0) > 0 || draft.snapshot) throw e;
+          await drafts.acknowledge(draft, current.version);
         }
       }
-      await drafts.clearIf(chapter.id, draft.content);
-      if (await drafts.read(chapter.id)) throw new Error("A newer draft is waiting to save. Try again.");
+      else {
+        await drafts.acknowledge(draft, current.version);
+      }
+      const next = await drafts.read(chapter.id);
+      if (next && (!sent.snapshot || next.generation !== sent.generation || next.baseVersion !== sent.baseVersion + 1)) {
+        throw new Error("A newer draft is waiting to save. Try again.");
+      }
       current = await api.getChapter(chapter.id);
-      if (current.content !== draft.content) throw new Error("This chapter changed elsewhere. Open it and resolve the conflict.");
+      if (current.content !== sent.content) throw new Error("This chapter changed elsewhere. Open it and resolve the conflict.");
+      draft = next;
     }
     return current;
   } catch (e) {

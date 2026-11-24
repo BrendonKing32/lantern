@@ -14,6 +14,20 @@ export interface Draft {
   /** The server version this draft was written on top of. */
   baseVersion: number;
   savedAt: number;
+  /** Missing in drafts saved by older versions. */
+  revised?: number;
+  snapshot?: "restore" | "conflict";
+  /** Text to save first without revision credit before subsequent author edits. */
+  replacementBase?: string;
+  generation?: string;
+  revisionToken?: string;
+}
+
+/** The portion of a draft sent by the next save. */
+export function draftToSave(draft: Draft): Draft {
+  return draft.snapshot
+    ? { ...draft, content: draft.replacementBase ?? draft.content, revised: 0 }
+    : draft;
 }
 
 const DB_NAME = "lantern";
@@ -90,6 +104,13 @@ export class DraftStorageError extends Error {
   }
 }
 
+export class DraftOwnershipError extends DraftStorageError {
+  constructor() {
+    super("This draft is open in another tab. Close that tab, then reload this chapter.");
+    this.name = "DraftOwnershipError";
+  }
+}
+
 // Readwrite transactions on the same store run in the order they're created,
 // so a clear() issued after a write() always lands after it.
 async function run<T>(
@@ -112,14 +133,24 @@ async function run<T>(
   });
 }
 
-async function writeDraft(chapterId: string, content: string, baseVersion: number): Promise<void> {
+async function writeDraft(chapterId: string, content: string, baseVersion: number, revised: number, snapshot?: Draft["snapshot"], generation?: string, replacementBase?: string, revisionToken?: string): Promise<void> {
   const db = await open();
   if (!db) throw new DraftStorageError();
   await new Promise<void>((resolve, reject) => {
     try {
       const tx = db.transaction("drafts", "readwrite");
-      tx.objectStore("drafts").put({ chapterId, content, baseVersion, savedAt: Date.now() });
-      tx.oncomplete = () => resolve();
+      const store = tx.objectStore("drafts");
+      const req = store.get(chapterId);
+      let ownershipConflict = false;
+      req.onsuccess = () => {
+        const current = req.result as Draft | undefined;
+        if (generation !== undefined && current && current.generation !== generation) {
+          ownershipConflict = true;
+        } else {
+          store.put({ chapterId, content, baseVersion, revised, snapshot, generation, replacementBase, revisionToken, savedAt: Date.now() });
+        }
+      };
+      tx.oncomplete = () => ownershipConflict ? reject(new DraftOwnershipError()) : resolve();
       tx.onerror = tx.onabort = () => reject(new DraftStorageError());
     } catch {
       reject(new DraftStorageError());
@@ -200,10 +231,56 @@ async function migrateLegacyDrafts(db: IDBDatabase) {
 export const drafts = {
   read: readDraft,
   all: allDrafts,
-  write: (id: string, content: string, baseVersion: number) => trackChapterActivity(id, writeDraft(id, content, baseVersion).then(
+  write: (id: string, content: string, baseVersion: number, revised = 0, snapshot?: Draft["snapshot"], generation?: string, replacementBase?: string, revisionToken?: string) => trackChapterActivity(id, writeDraft(id, content, baseVersion, revised, snapshot, generation, replacementBase, revisionToken).then(
     () => draftWriteSucceeded(id),
     (error) => { draftWriteFailed(id, content); throw error; },
   )),
+  /** Acknowledge only the saved portion, retaining edits made while the save ran. */
+  acknowledge: (sent: Draft, newVersion: number) =>
+    trackChapterActivity(sent.chapterId, run("drafts", "readwrite", (s) => {
+      const req = s.get(sent.chapterId);
+      req.onsuccess = () => {
+        const current = req.result as Draft | undefined;
+        if (!current || current.baseVersion !== sent.baseVersion || current.generation !== sent.generation || current.revisionToken !== sent.revisionToken) return;
+        const remaining = Math.max(0, (current.revised ?? 0) - (sent.revised ?? 0));
+        if (current.content === sent.content && remaining === 0) s.delete(sent.chapterId);
+        else s.put({ ...current, baseVersion: newVersion, revised: remaining, snapshot: undefined, replacementBase: undefined });
+      };
+    })),
+  /** Claim an unchanged recovered draft for this editor, without taking a newer tab's work. */
+  adopt: async (draft: Draft, generation: string): Promise<boolean> => {
+    const db = await open();
+    if (!db) throw new DraftStorageError();
+    return trackChapterActivity(draft.chapterId, new Promise<boolean>((resolve, reject) => {
+      try {
+        const tx = db.transaction("drafts", "readwrite");
+        const store = tx.objectStore("drafts");
+        const req = store.get(draft.chapterId);
+        let adopted = false;
+        req.onsuccess = () => {
+          const current = req.result as Draft | undefined;
+          if (current && current.content === draft.content && current.baseVersion === draft.baseVersion &&
+            current.savedAt === draft.savedAt && current.revised === draft.revised &&
+            current.snapshot === draft.snapshot && current.replacementBase === draft.replacementBase &&
+            current.generation === draft.generation && current.revisionToken === draft.revisionToken) {
+            store.put({ ...current, generation });
+            adopted = true;
+          }
+        };
+        tx.oncomplete = () => resolve(adopted);
+        tx.onerror = tx.onabort = () => reject(new DraftStorageError());
+      } catch {
+        reject(new DraftStorageError());
+      }
+    }));
+  },
+  clearOwned: (chapterId: string, generation: string) =>
+    trackChapterActivity(chapterId, run("drafts", "readwrite", (s) => {
+      const req = s.get(chapterId);
+      req.onsuccess = () => {
+        if (req.result?.generation === generation) s.delete(chapterId);
+      };
+    })),
   /** Remove the draft, but only if it still holds `content` (a newer keystroke wins). */
   clearIf: (chapterId: string, content: string) =>
     trackChapterActivity(chapterId, run("drafts", "readwrite", (s) => {
@@ -250,6 +327,15 @@ export const cache = {
   project: (id: string) =>
     run<ProjectDetail>("cache", "readonly", (s) => s.get(`project:${id}`)).then((v) => v ?? null),
   setProject: (d: ProjectDetail) => run("cache", "readwrite", (s) => s.put(d, `project:${d.project.id}`)),
+  setChapterStatus: (projectId: string, chapterId: string, revisionStatus: import("../shared/types").ChapterRevisionStatus) =>
+    run("cache", "readwrite", (s) => {
+      const key = `project:${projectId}`;
+      const req = s.get(key);
+      req.onsuccess = () => {
+        const project = req.result as ProjectDetail | undefined;
+        if (project) s.put({ ...project, chapters: project.chapters.map((c) => c.id === chapterId ? { ...c, revision_status: revisionStatus } : c) }, key);
+      };
+    }),
   lastChapter: (projectId: string) =>
     run<string>("cache", "readonly", (s) => s.get(`lastChapter:${projectId}`)).then((v) => typeof v === "string" ? v : null),
   setLastChapter: (projectId: string, chapterId: string) =>

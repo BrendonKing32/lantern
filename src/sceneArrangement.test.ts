@@ -4,7 +4,7 @@ import { draftWriteFailed, draftWriteSucceeded, trackChapterActivity } from "./c
 
 const mocks = vi.hoisted(() => ({
   getChapter: vi.fn(), saveChapter: vi.fn(), arrangeScenes: vi.fn(), moveScene: vi.fn(), scenes: vi.fn(),
-  readDraft: vi.fn(), clearIf: vi.fn(), reopen: vi.fn(), writeChapter: vi.fn(),
+  readDraft: vi.fn(), clearIf: vi.fn(), acknowledge: vi.fn(), reopen: vi.fn(), writeChapter: vi.fn(),
   forget: vi.fn(), remember: vi.fn(),
 }));
 vi.mock("./api", () => ({
@@ -15,7 +15,9 @@ vi.mock("./api", () => ({
   describeError: (e: unknown) => e instanceof Error ? e.message : "Can't reach Lantern.",
 }));
 vi.mock("./local", () => ({
-  drafts: { read: mocks.readDraft, clearIf: mocks.clearIf },
+  draftToSave: (draft: { snapshot?: string; replacementBase?: string; content: string; revised?: number }) =>
+    draft.snapshot ? { ...draft, content: draft.replacementBase ?? draft.content, revised: 0 } : draft,
+  drafts: { read: mocks.readDraft, clearIf: mocks.clearIf, acknowledge: mocks.acknowledge },
   chapters: { restore: mocks.writeChapter },
   reopenStorage: mocks.reopen,
 }));
@@ -26,7 +28,7 @@ import { ApiError } from "./api";
 import { arrangeChapterScenes, flushForSceneMove, moveSceneBetweenChapters } from "./sceneArrangement";
 import { openEditors } from "./sync";
 
-const chapter: ChapterMeta = { id: "c", project_id: "p", title: "First", synopsis: "", position: 0, word_count: 1, version: 1, updated_at: "", act_id: null };
+const chapter: ChapterMeta = { id: "c", project_id: "p", title: "First", synopsis: "", position: 0, word_count: 1, version: 1, updated_at: "", act_id: null, revision_status: "drafting" };
 const server = (version: number, content: string) => ({ ...chapter, version, content });
 const draft = { chapterId: "c", content: "new", baseVersion: 1, savedAt: 123 };
 const result = { version: 3, word_count: 1, updated_at: "now" };
@@ -89,8 +91,8 @@ describe("moving scenes", () => {
     mocks.getChapter.mockResolvedValueOnce(server(1, "old")).mockResolvedValue(server(2, "new"));
     mocks.saveChapter.mockResolvedValue({ ...result, version: 2 });
     await arrangeChapterScenes(chapter, ["b", "a"]);
-    expect(mocks.saveChapter).toHaveBeenCalledWith("c", "new", 1, { writtenAt: 123 });
-    expect(mocks.clearIf).toHaveBeenCalledWith("c", "new");
+    expect(mocks.saveChapter).toHaveBeenCalledWith("c", "new", 1, { writtenAt: 123, revised: 0 });
+    expect(mocks.acknowledge).toHaveBeenCalledWith(draft, 2);
     expect(mocks.arrangeScenes).toHaveBeenCalledWith("c", 2, ["b", "a"]);
   });
 
@@ -99,7 +101,47 @@ describe("moving scenes", () => {
     mocks.getChapter.mockResolvedValue(server(2, "new"));
     await flushForSceneMove(chapter);
     expect(mocks.saveChapter).not.toHaveBeenCalled();
-    expect(mocks.clearIf).toHaveBeenCalledWith("c", "new");
+    expect(mocks.acknowledge).toHaveBeenCalledWith(draft, 2);
+  });
+
+  it("saves revisions when a draft returns to the server text", async () => {
+    const same = { ...draft, revised: 7 };
+    mocks.readDraft.mockResolvedValueOnce(same).mockResolvedValue(null);
+    mocks.getChapter.mockResolvedValueOnce(server(1, "new")).mockResolvedValue(server(2, "new"));
+    mocks.saveChapter.mockResolvedValue({ ...result, version: 2 });
+    await flushForSceneMove(chapter);
+    expect(mocks.saveChapter).toHaveBeenCalledWith("c", "new", 1, { writtenAt: 123, revised: 7 });
+    expect(mocks.acknowledge).toHaveBeenCalledWith(same, 2);
+  });
+
+  it("stops a move when a newer same-text draft remains after acknowledgement", async () => {
+    const sent = { ...draft, revised: 2 };
+    mocks.readDraft.mockResolvedValueOnce(sent).mockResolvedValue({ ...sent, baseVersion: 2, revised: 3 });
+    mocks.getChapter.mockResolvedValueOnce(server(1, "new")).mockResolvedValue(server(2, "new"));
+    mocks.saveChapter.mockResolvedValue({ ...result, version: 2 });
+    await expect(flushForSceneMove(chapter)).rejects.toThrow("A newer draft is waiting");
+    expect(mocks.clearIf).not.toHaveBeenCalled();
+  });
+
+  it("keeps a same-text draft with uncertain revision credit for conflict resolution", async () => {
+    mocks.readDraft.mockResolvedValue({ ...draft, revised: 4 });
+    mocks.getChapter.mockResolvedValue(server(2, "new"));
+    await expect(flushForSceneMove(chapter)).rejects.toThrow("resolve the conflict");
+    expect(mocks.saveChapter).not.toHaveBeenCalled();
+    expect(mocks.acknowledge).not.toHaveBeenCalled();
+  });
+
+  it("flushes a restore and then its subsequent author edits before moving", async () => {
+    const restored = { ...draft, content: "restored and edited", revised: 3, snapshot: "restore", replacementBase: "restored", generation: "tab" };
+    const edited = { ...restored, baseVersion: 2, snapshot: undefined, replacementBase: undefined };
+    mocks.readDraft.mockResolvedValueOnce(restored).mockResolvedValueOnce(edited).mockResolvedValue(null);
+    mocks.getChapter.mockResolvedValueOnce(server(1, "old"))
+      .mockResolvedValueOnce(server(2, "restored"))
+      .mockResolvedValue(server(3, "restored and edited"));
+    mocks.saveChapter.mockResolvedValueOnce({ ...result, version: 2 }).mockResolvedValueOnce({ ...result, version: 3 });
+    await flushForSceneMove(chapter);
+    expect(mocks.saveChapter).toHaveBeenNthCalledWith(1, "c", "restored", 1, { writtenAt: 123, revised: 0, snapshot: "restore" });
+    expect(mocks.saveChapter).toHaveBeenNthCalledWith(2, "c", "restored and edited", 2, { writtenAt: 123, revised: 3 });
   });
 
   it("refuses conflicts, new drafts, unreadable storage and offline moves", async () => {
@@ -182,7 +224,7 @@ describe("moving scenes", () => {
     mocks.saveChapter.mockImplementation(async () => { saved = true; return { ...result, version: 4 }; });
     mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "c", in_text: true }], placeholders: [] });
     await expect(moveSceneBetweenChapters("s", chapter, to, 1)).rejects.toThrow("text in Second changed");
-    expect(mocks.saveChapter).toHaveBeenCalledWith("d", "new", 3, { writtenAt: 123 });
+    expect(mocks.saveChapter).toHaveBeenCalledWith("d", "new", 3, { writtenAt: 123, revised: 0 });
     expect(mocks.moveScene).not.toHaveBeenCalled();
   });
 
@@ -226,7 +268,7 @@ describe("moving scenes", () => {
     mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "d", in_text: true }], placeholders: [] });
     await expect(moveSceneBetweenChapters("s", from, chapter, 2, { projectId: "p", destinationVersion: 8 }))
       .rejects.toThrow("text in First changed");
-    expect(mocks.saveChapter).toHaveBeenCalledWith("c", "new", 8, { writtenAt: 123 });
+    expect(mocks.saveChapter).toHaveBeenCalledWith("c", "new", 8, { writtenAt: 123, revised: 0 });
     expect(mocks.moveScene).not.toHaveBeenCalled();
   });
 });

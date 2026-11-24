@@ -659,6 +659,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   }, [load]);
 
+  const setChapterStatus = async (id: string, revision_status: import("../../shared/types").ChapterRevisionStatus) => {
+    try {
+      const updated = await api.updateChapter(id, { revision_status });
+      setDetail((d) => d ? { ...d, chapters: d.chapters.map((c) => c.id === id ? { ...c, revision_status: updated.revision_status } : c) } : d);
+      await cache.setChapterStatus(projectId, id, updated.revision_status);
+    } catch (e) {
+      alert(describeError(e));
+    }
+  };
+
   const setSynopsis = async (id: string, synopsis: string) => {
     setDetail((d) =>
       d ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, synopsis } : c)) } : d,
@@ -972,6 +982,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
           onRename={rename}
           onDelete={remove}
           onStartAct={onStartAct}
+          onStatus={(id, value) => void setChapterStatus(id, value)}
+          offline={offline || disconnected}
           onRenameAct={(id, title) => void renameAct(id, title)}
           onMoveAct={moveAct}
           onDeleteAct={(act) => void removeAct(act)}
@@ -1185,6 +1197,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onOpen={openFromBoard}
             onReorder={reorderFromBoard}
             onSynopsis={setSynopsis}
+            onStatus={(id, value) => void setChapterStatus(id, value)}
+            offline={offline || disconnected}
             onAdd={addChapter}
           />
         ) : view === "scenes" ? (

@@ -9,7 +9,7 @@ export const MAX_CHAPTER_BYTES = 5 * 1024 * 1024;
 export const MOVE_LOCK_MS = 60_000;
 
 export const CHAPTER_COLS =
-  "id, project_id, title, synopsis, position, word_count, version, updated_at, act_id";
+  "id, project_id, title, synopsis, revision_status, position, word_count, version, updated_at, act_id";
 
 export const chapterKey = (projectId: string, chapterId: string) =>
   `projects/${projectId}/chapters/${chapterId}.md`;
@@ -118,7 +118,7 @@ export async function insertChapter(env: Env, projectId: string, title: string):
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, projectId),
   ]);
   return {
-    id, project_id: projectId, title, synopsis: "", position,
+    id, project_id: projectId, title, synopsis: "", revision_status: "drafting", position,
     word_count: 0, version: 0, updated_at: ts, act_id: actId,
   };
 }
