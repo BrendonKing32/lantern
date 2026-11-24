@@ -27,6 +27,7 @@ import { sceneLabelsEnabled, setSceneLabelsEnabled } from "../sceneLabels";
 import { DIALECTS } from "../../shared/types";
 import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { arrangeChapters } from "../../shared/acts";
+import { splitScenes } from "../../shared/scenes";
 import { arrangeChapterScenes, moveSceneBetweenChapters, SceneMoveError } from "../sceneArrangement";
 
 type View = "write" | "board" | "scenes" | "search" | "bible";
@@ -40,6 +41,86 @@ const VIEW_LABELS = [
 
 // With no daily goal, session words at which the lamp reaches full brightness.
 const FULL_GLOW_WORDS = 1000;
+
+type LabelSnapshot = { chapterId: string; baseline: string; scenes: SceneMeta[] };
+
+export function useLabelSnapshot(
+  projectId: string,
+  view: View,
+  chapterId: string | undefined,
+  title: string | undefined,
+  controls: { current: EditorControls | null },
+  setScenes: (scenes: SceneMeta[]) => void,
+) {
+  const [snapshot, setSnapshot] = useState<LabelSnapshot | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const lastRefresh = useRef(0);
+  const lastRequest = useRef<{ projectId: string; chapterId: string; refresh: number } | null>(null);
+  const visitedScenes = useRef(false);
+
+  useEffect(() => {
+    if (view === "scenes") visitedScenes.current = true;
+    if (view !== "write" || !chapterId) return;
+    const returningFromScenes = visitedScenes.current;
+    visitedScenes.current = false;
+    const previous = lastRequest.current;
+    if (!returningFromScenes && previous?.projectId === projectId && previous.chapterId === chapterId && previous.refresh === refresh) return;
+    const request = { projectId, chapterId, refresh };
+    lastRequest.current = request;
+    lastRefresh.current = Date.now();
+    let active = true;
+    let finished = false;
+    let retryTimer: number | undefined;
+    const loadLabels = async () => {
+      for (let attempt = 0; attempt < 3 && active; attempt++) {
+        const before = await api.getChapter(chapterId);
+        if (!active) return;
+        const listing = await api.scenes(projectId);
+        if (!active) return;
+        const after = await api.getChapter(chapterId);
+        if (!active) return;
+        if (before.version !== after.version || before.content !== after.content) continue;
+        setScenes(listing.scenes);
+        setSnapshot({ chapterId, baseline: after.content, scenes: listing.scenes });
+        return true;
+      }
+      return false;
+    };
+    void loadLabels().catch(() => false).then((success) => {
+      finished = true;
+      if (active && !success) retryTimer = window.setTimeout(() => setRefresh((n) => n + 1), 30_000);
+    });
+    return () => {
+      active = false;
+      window.clearTimeout(retryTimer);
+      if (!finished && lastRequest.current === request) lastRequest.current = null;
+    };
+  }, [projectId, view, chapterId, refresh, setScenes]);
+
+  useEffect(() => {
+    if (view !== "write" || !chapterId || snapshot?.chapterId !== chapterId) return;
+    const baselineCount = splitScenes(snapshot.baseline, title).length;
+    let lastText: string | undefined;
+    let passageCount = baselineCount;
+    const timer = window.setInterval(() => {
+      const text = controls.current?.text();
+      if (text === undefined || Date.now() - lastRefresh.current < 30_000) return;
+      if (text !== lastText) {
+        lastText = text;
+        passageCount = splitScenes(text, title).length;
+      }
+      if (passageCount !== baselineCount) {
+        setRefresh((n) => n + 1);
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [view, chapterId, title, snapshot, controls]);
+
+  const chapterSaved = useCallback((id: string, replaced?: boolean) => {
+    if (replaced && id === chapterId) setRefresh((n) => n + 1);
+  }, [chapterId]);
+  return { snapshot, chapterSaved };
+}
 
 const STATUS_TEXT: Record<SaveState, string> = {
   loading: "Opening",
@@ -248,7 +329,6 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [lastChapterId, setLastChapterId] = useState<string | null>(null);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
-  const [labelSnapshot, setLabelSnapshot] = useState<{ chapterId: string; baseline: string; scenes: SceneMeta[] } | null>(null);
   const [placeholders, setPlaceholders] = useState<ScenePlaceholder[]>([]);
   const [scenesError, setScenesError] = useState<string | null>(null);
   const [sceneMove, setSceneMove] = useState<
@@ -340,6 +420,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, offline]);
   const selected = selectChapter(chapters, chapterId, lastChapterId);
+  const { snapshot: labelSnapshot, chapterSaved } = useLabelSnapshot(
+    projectId, view, selected?.id, selected?.title, editorControls, setScenes,
+  );
   useEffect(() => {
     if (!selected) return;
     setLastChapterId(selected.id);
@@ -356,26 +439,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
       if (active) { setScenes(scenes); setPlaceholders(placeholders); }
     }).catch((e) => { if (active) setScenesError(describeError(e)); });
     return () => { active = false; };
-  }, [projectId, view, selected?.version]);
-  useEffect(() => {
-    if (view !== "write" || !selected) return;
-    let active = true;
-    setLabelSnapshot(null);
-    const loadLabels = async () => {
-      for (let attempt = 0; attempt < 3 && active; attempt++) {
-        const before = await api.getChapter(selected.id);
-        const listing = await api.scenes(projectId);
-        const after = await api.getChapter(selected.id);
-        if (!active) return;
-        if (before.version !== after.version || before.content !== after.content) continue;
-        setScenes(listing.scenes);
-        setLabelSnapshot({ chapterId: selected.id, baseline: after.content, scenes: listing.scenes });
-        return;
-      }
-    };
-    void loadLabels().catch(() => {});
-    return () => { active = false; };
-  }, [projectId, view, selected?.id, selected?.version]);
+  }, [projectId, view]);
   // Novels saved on this device before dialects existed have none: US English.
   const dialect: Dialect = detail?.project.dialect ?? "american";
 
@@ -437,7 +501,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
     setLive((prev) => (prev[id] === words ? prev : { ...prev, [id]: words }));
   }, []);
 
-  const onSaved = useCallback((id: string, info: SaveResult) => {
+  const onSaved = useCallback((id: string, info: SaveResult, replaced?: boolean) => {
+    chapterSaved(id, replaced);
     const { today_words, ...meta } = info;
     if (today_words !== undefined) setToday((t) => (t ? { ...t, words: today_words } : t));
     setDetail((d) =>
@@ -445,7 +510,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
         ? { ...d, chapters: d.chapters.map((c) => (c.id === id && c.version <= meta.version ? { ...c, ...meta } : c)) }
         : d,
     );
-  }, []);
+  }, [chapterSaved]);
 
   const onStatus = useCallback((state: SaveState, detail?: string) => setSave({ state, detail }), []);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
@@ -1145,7 +1210,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             chapters={chapters}
             currentChapter={searchText}
             onReplaced={(id, info, content) => {
-              onSaved(id, info);
+              onSaved(id, info, true);
               setLive((current) => ({ ...current, [id]: info.word_count }));
               setSearchText((current) => current?.id === id ? { ...current, content, version: info.version } : current);
             }}
@@ -1159,6 +1224,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             key={selected.id}
             chapterId={selected.id}
             title={selected.title}
+            knownVersion={selected.version}
             onWords={onWords}
             onSaved={onSaved}
             onStatus={onStatus}
