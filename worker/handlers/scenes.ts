@@ -1,4 +1,4 @@
-import { findAnchor } from "../../shared/anchors";
+import { createAnchorMatcher } from "../../shared/anchors";
 import { arrangeText, insertPassage, matchScenes, normalizeAnchor, normalizeText, splitScenes, takePassage } from "../../shared/scenes";
 import type { SceneListing, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { countWords } from "../../shared/wordcount";
@@ -573,8 +573,9 @@ export const moveScene: Handler = async (req, env, p) => {
     const notes = await env.DB.prepare(
       "SELECT id, quote, prefix, suffix FROM margin_notes WHERE chapter_id = ? AND resolved_at IS NULL",
     ).bind(from.id).all<{ id: string; quote: string; prefix: string; suffix: string }>();
+    const matchAnchor = createAnchorMatcher(fromText);
     const movingNotes = JSON.stringify(notes.results.flatMap((note) => {
-      const match = findAnchor(fromText, note);
+      const match = matchAnchor(note);
       if (!match || match.from < passageStart || match.to > passageEnd) return [];
       const start = normalizeText(fromText.slice(passageStart, match.from)).length - leading;
       const end = normalizeText(fromText.slice(passageStart, match.to)).length - leading;

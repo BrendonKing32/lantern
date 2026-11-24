@@ -15,37 +15,16 @@ export function makeAnchor(text: string, from: number, to: number): TextAnchor {
   };
 }
 
-function collapse(text: string): { text: string; starts: number[]; ends: number[] } {
-  let result = "";
-  const starts: number[] = [];
-  const ends: number[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (/\s/.test(text[i])) {
-      if (i > 0 && /\s/.test(text[i - 1])) {
-        ends[ends.length - 1] = i + 1;
-        continue;
-      }
-      result += " ";
-    } else {
-      result += text[i];
-    }
-    starts.push(i);
-    ends.push(i + 1);
-  }
-  return { text: result, starts, ends };
-}
+const collapse = (text: string) => text.replace(/\s+/g, " ");
 
 function match(text: string, anchor: TextAnchor): { from: number; to: number } | null | undefined {
-  const positions: number[] = [];
-  for (let at = text.indexOf(anchor.quote); at !== -1; at = text.indexOf(anchor.quote, at + 1)) {
-    positions.push(at);
-  }
-  if (!positions.length) return undefined;
-  if (positions.length === 1) return { from: positions[0], to: positions[0] + anchor.quote.length };
+  const first = text.indexOf(anchor.quote);
+  if (first === -1) return undefined;
+  if (text.indexOf(anchor.quote, first + 1) === -1) return { from: first, to: first + anchor.quote.length };
 
   let best = -1;
   let winner: number | null = null;
-  for (const at of positions) {
+  for (let at = first; at !== -1; at = text.indexOf(anchor.quote, at + 1)) {
     let before = 0;
     while (before < anchor.prefix.length && at - before - 1 >= 0 &&
       text[at - before - 1] === anchor.prefix[anchor.prefix.length - before - 1]) before++;
@@ -64,15 +43,38 @@ function match(text: string, anchor: TextAnchor): { from: number; to: number } |
   return winner === null ? null : { from: winner, to: winner + anchor.quote.length };
 }
 
+function originalOffsets(text: string, from: number, to: number): { from: number; to: number } {
+  let removed = 0;
+  let originalFrom = from;
+  let originalTo = to;
+  for (const run of text.matchAll(/\s{2,}/g)) {
+    const start = run.index - removed;
+    if (start >= to) break;
+    const extra = run[0].length - 1;
+    if (start < from) originalFrom += extra;
+    originalTo += extra;
+    removed += extra;
+  }
+  return { from: originalFrom, to: originalTo };
+}
+
+/** Reuse the lazily normalized document while locating several notes on the same text. */
+export function createAnchorMatcher(text: string): (anchor: TextAnchor) => { from: number; to: number } | null {
+  let normalized: string | undefined;
+  return (anchor) => {
+    if (!anchor.quote || anchor.quote.length > 2000) return null;
+    const exact = match(text, anchor);
+    if (exact !== undefined) return exact;
+    normalized ??= collapse(text);
+    const found = match(normalized, {
+      quote: collapse(anchor.quote),
+      prefix: collapse(anchor.prefix),
+      suffix: collapse(anchor.suffix),
+    });
+    return found ? originalOffsets(text, found.from, found.to) : null;
+  };
+}
+
 export function findAnchor(text: string, anchor: TextAnchor): { from: number; to: number } | null {
-  if (!anchor.quote || anchor.quote.length > 2000) return null;
-  const exact = match(text, anchor);
-  if (exact !== undefined) return exact;
-  const normalized = collapse(text);
-  const found = match(normalized.text, {
-    quote: collapse(anchor.quote).text,
-    prefix: collapse(anchor.prefix).text,
-    suffix: collapse(anchor.suffix).text,
-  });
-  return found ? { from: normalized.starts[found.from], to: normalized.ends[found.to - 1] } : null;
+  return createAnchorMatcher(text)(anchor);
 }

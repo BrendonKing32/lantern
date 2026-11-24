@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { findAnchor, type TextAnchor } from "../../shared/anchors";
+import { createAnchorMatcher, type TextAnchor } from "../../shared/anchors";
 import type { MarginNote } from "../../shared/types";
 import { api, describeError } from "../api";
 import { isNetworkError } from "../sync";
@@ -92,7 +92,10 @@ export function NotesPanel({ chapterId, title, open: isOpen, text, notes, onNote
       if (selected === note.id) onSelect(null);
     });
   };
-  const open = notes.filter((n) => !n.resolved_at).map((note) => ({ note, range: findAnchor(text, note) }));
+  if (!isOpen) return null;
+
+  const findAnchor = createAnchorMatcher(text);
+  const open = notes.filter((n) => !n.resolved_at).map((note) => ({ note, range: findAnchor(note) }));
   const found = open.filter((item) => item.range).sort((a, b) => a.range!.from - b.range!.from);
   const orphans = open.filter((item) => !item.range);
   const resolved = notes.filter((n) => n.resolved_at);
@@ -122,7 +125,7 @@ export function NotesPanel({ chapterId, title, open: isOpen, text, notes, onNote
     </li>
   );
   return (
-    <aside className="history margin-notes" aria-label={`Notes for ${title}`} style={isOpen ? undefined : { display: "none" }}>
+    <aside className="history margin-notes" aria-label={`Notes for ${title}`}>
       <header className="history-head">
         <h2 className="history-title">Notes</h2><span className="desk-spacer" />
         <button className="icon-btn" aria-label="Close notes" onClick={onClose}>×</button>
@@ -145,7 +148,7 @@ export function NotesPanel({ chapterId, title, open: isOpen, text, notes, onNote
         {!loading && !notes.length && !anchor && <p className="history-note">No notes in this chapter yet. Select a passage and choose Add note.</p>}
         {found.length > 0 && <><h3>Open</h3><ul className="margin-note-list">{found.map(({ note }) => renderNote(note, true))}</ul></>}
         {orphans.length > 0 && <><h3>Passage not found</h3><ul className="margin-note-list">{orphans.map(({ note }) => renderNote(note, false))}</ul></>}
-        {resolved.length > 0 && <><h3>Resolved</h3><ul className="margin-note-list">{resolved.map((note) => renderNote(note, !!findAnchor(text, note)))}</ul></>}
+        {resolved.length > 0 && <><h3>Resolved</h3><ul className="margin-note-list">{resolved.map((note) => renderNote(note, !!findAnchor(note)))}</ul></>}
       </div>
     </aside>
   );

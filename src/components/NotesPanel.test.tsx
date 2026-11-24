@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarginNote } from "../../shared/types";
 import type { TextAnchor } from "../../shared/anchors";
+import * as anchors from "../../shared/anchors";
 import { api } from "../api";
 import { NotesPanel } from "./NotesPanel";
 
@@ -124,6 +125,16 @@ describe("NotesPanel", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(notes).toEqual([{ ...note, resolved_at: "now" }, { ...note, id: "another" }]);
+  });
+
+  it("does not search for passages while the panel is closed", () => {
+    const find = vi.spyOn(anchors, "createAnchorMatcher");
+    open = false;
+    settle();
+    expect(find).not.toHaveBeenCalled();
+    open = true;
+    settle();
+    expect(find).toHaveBeenCalled();
   });
 
   it("keeps a second note draft when an earlier creation finishes", async () => {

@@ -1,7 +1,7 @@
 // The read tools Claude sees when Lantern is added as a connector.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { findAnchor } from "../../shared/anchors";
+import { createAnchorMatcher } from "../../shared/anchors";
 import { splitScenes } from "../../shared/scenes";
 import type { BibleEntry, ChapterMeta, Snapshot } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
@@ -118,10 +118,11 @@ export function registerTools(server: McpServer, env: Env) {
           listChapterNotes(env, chapter.id, false),
           include_resolved ? listChapterNotes(env, chapter.id, true) : Promise.resolve([]),
         ]);
+        const findAnchor = createAnchorMatcher(content);
         return [...open, ...resolved].map((note) => ({
           ...note,
           resolved: note.resolved_at !== null,
-          passage_found: findAnchor(content, note) !== null,
+          passage_found: findAnchor(note) !== null,
         }));
       }));
       return data(notes.flat());

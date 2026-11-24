@@ -1,6 +1,6 @@
 import { RangeSet, StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, GutterMarker, ViewPlugin, gutter, keymap, type DecorationSet } from "@codemirror/view";
-import { findAnchor } from "../shared/anchors";
+import { createAnchorMatcher } from "../shared/anchors";
 import type { MarginNote } from "../shared/types";
 
 export const notesChanged = StateEffect.define<readonly MarginNote[]>();
@@ -33,10 +33,10 @@ interface NoteRanges {
 export function noteRanges(doc: import("@codemirror/state").Text, notes: readonly MarginNote[], open: (id: string) => void): NoteRanges {
   const marks: ReturnType<Decoration["range"]>[] = [];
   const lines = new Map<number, MarginNote[]>();
-  const text = doc.toString();
+  const findAnchor = createAnchorMatcher(doc.toString());
   for (const note of notes) {
     if (note.resolved_at) continue;
-    const range = findAnchor(text, note);
+    const range = findAnchor(note);
     if (!range) continue;
     marks.push(Decoration.mark({ class: "cm-note-highlight", attributes: { "data-note-id": note.id } }).range(range.from, range.to));
     const line = doc.lineAt(range.from).from;

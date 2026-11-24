@@ -160,6 +160,23 @@ describe("margin note connector", () => {
     expect((await readOnly.callTool({ name: "list_margin_notes", arguments: { chapter_id: CH } })).isError).toBe(true);
   });
 
+  it("finds multiple whitespace-drifted passages in their own chapters", async () => {
+    const ts = "2026-11-01T00:00:00.000Z";
+    db.raw.prepare("INSERT INTO chapters (id, project_id, title, position, created_at, updated_at) VALUES ('ch-2', ?, 'Next', 1, ?, ?)").run(NOVEL, ts, ts);
+    bucket.objects.set(KEY, "Mara   lit the lamp.\nThe tower\nwaited.");
+    bucket.objects.set(`projects/${NOVEL}/chapters/ch-2.md`, "The tower\nwaited elsewhere.");
+    const first = await createChapterNote(env, CH, { quote: "Mara lit", prefix: "", suffix: "", body: "First" }, "writer");
+    const second = await createChapterNote(env, CH, { quote: "tower waited", prefix: "", suffix: "", body: "Second" }, "writer");
+    const third = await createChapterNote(env, "ch-2", { quote: "tower waited", prefix: "", suffix: "", body: "Third" }, "claude");
+    const listed = JSON.parse(textOf(await (await connect(false)).callTool({ name: "list_margin_notes", arguments: { novel_id: NOVEL } })));
+    expect(listed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.id, passage_found: true }),
+      expect.objectContaining({ id: second.id, passage_found: true }),
+      expect.objectContaining({ id: third.id, passage_found: true }),
+    ]));
+    expect(listed).toHaveLength(3);
+  });
+
   it("refuses a move-locked chapter and an intervening move token", async () => {
     db.raw.prepare("UPDATE chapters SET moving_until = ? WHERE id = ?").run("2999-01-01T00:00:00.000Z", CH);
     expect((await call("add_margin_note", { chapter_id: CH, quote: "Mara", body: "note" })).isError).toBe(true);
