@@ -69,6 +69,9 @@ export function memoryR2() {
       const value = objects.get(key);
       return value === undefined ? null : { text: async () => value, key, customMetadata: metadata.get(key) };
     },
+    async list({ prefix = "" }: { prefix?: string } = {}) {
+      return { objects: [...objects.keys()].filter((key) => key.startsWith(prefix)).map((key) => ({ key })), truncated: false };
+    },
     async put(key: string, value: string, options?: { customMetadata?: Record<string, string> }) {
       if (this.failPuts?.test(key)) throw new Error(`R2 put failed for ${key}`);
       objects.set(key, value);

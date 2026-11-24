@@ -47,6 +47,8 @@ function fakeDatabase() {
     chapters: [{ id: "c1", project_id: "p1", version: 2 }],
     chapter_snapshots: [],
     claude_drafts: [{ chapter_id: "c1", project_id: "p1", version: 1, ops: "[]" }],
+    milestones: [{ id: "m1", project_id: "p1", name: "First draft", complete: 1 }],
+    milestone_chapters: [{ milestone_id: "m1", chapter_id: "c1", version: 2 }],
     daily_words: [],
     settings: [],
     bible_entries: [],
@@ -98,7 +100,8 @@ describe("scheduled backups", () => {
   it("writes a restorable D1 export, copies manuscript objects, then marks the run complete", async () => {
     const manuscriptKey = "projects/p1/chapters/c1.md";
     const draftKey = "projects/p1/chapters/c1/claude-draft.md";
-    const manuscripts = fakeBucket([manuscriptKey, draftKey]);
+    const milestoneKey = "projects/p1/milestones/m1/c1.md";
+    const manuscripts = fakeBucket([manuscriptKey, draftKey, milestoneKey]);
     const expiredKey = "backups/2026-09-01T03-17-00-000Z/manifest.json";
     const backups = fakeBucket([expiredKey]);
     const env = {
@@ -114,9 +117,12 @@ describe("scheduled backups", () => {
     const backupRoot = manifestKey!.replace("manifest.json", "");
     expect(backups.contents.has(`${backupRoot}r2/${manuscriptKey}`)).toBe(true);
     expect(backups.contents.has(`${backupRoot}r2/${draftKey}`)).toBe(true);
+    expect(backups.contents.has(`${backupRoot}r2/${milestoneKey}`)).toBe(true);
     const sql = backups.contents.get(`${backupRoot}database.sql`)?.value as string;
     expect(sql).toContain("'Writer''s book'");
     expect(sql).toContain(`INSERT INTO "claude_drafts" ("chapter_id", "project_id", "version", "ops") VALUES ('c1', 'p1', 1, '[]');`);
+    expect(sql).toContain(`INSERT INTO "milestones" ("id", "project_id", "name", "complete") VALUES ('m1', 'p1', 'First draft', 1);`);
+    expect(sql).toContain(`INSERT INTO "milestone_chapters" ("milestone_id", "chapter_id", "version") VALUES ('m1', 'c1', 2);`);
     expect(sql).toContain(`INSERT INTO "scenes" ("id", "project_id", "chapter_id", "title", "summary", "pov", "location", "status", "position", "created_at", "updated_at") VALUES ('s1', 'p1', 'c1', 'The meeting', 'Mara learns the truth.', 'Mara', 'The station', 'planned', 0, '2026-01-01', '2026-01-01');`);
     expect(sql).toContain(`INSERT INTO "project_shares" ("id", "project_id", "owner_email", "token_hash", "created_at", "revoked_at") VALUES ('share1', 'p1', 'author@example.test', 'hashed-token', '2026-01-01', NULL);`);
     expect(sql).toContain(`INSERT INTO "share_comments" ("id", "share_id", "chapter_id", "display_name", "body", "created_at") VALUES ('comment1', 'share1', 'c1', 'Reader', 'A private note', '2026-01-01');`);

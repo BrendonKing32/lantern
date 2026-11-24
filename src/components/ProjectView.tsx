@@ -8,6 +8,8 @@ import { ago } from "../when";
 import { RestoreIcon } from "./ProjectList";
 import { TargetMeter } from "./TargetMeter";
 import { ExportDialog } from "./ExportDialog";
+import { MilestonesDialog } from "./MilestonesDialog";
+import { createMilestone } from "../milestones";
 import { ShareDialog } from "./ShareDialog";
 import { ClaudeChangesDialog } from "./ClaudeChangesDialog";
 import { Corkboard } from "./Corkboard";
@@ -25,7 +27,7 @@ import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
 import { sceneLabelsEnabled, setSceneLabelsEnabled } from "../sceneLabels";
 import { DIALECTS } from "../../shared/types";
-import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
+import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Milestone, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { arrangeChapters } from "../../shared/acts";
 import { splitScenes } from "../../shared/scenes";
 import { arrangeChapterScenes, moveSceneBetweenChapters, SceneMoveError } from "../sceneArrangement";
@@ -172,6 +174,19 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [milestonesOpen, setMilestonesOpen] = useState(false);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [milestonesError, setMilestonesError] = useState<string | null>(null);
+  const refreshMilestones = useCallback(async () => {
+    try {
+      setMilestones(await api.milestones(projectId));
+      setMilestonesError(null);
+    } catch (e) {
+      setMilestonesError(describeError(e));
+      throw e;
+    }
+  }, [projectId]);
+  useEffect(() => { void refreshMilestones().catch(() => {}); }, [refreshMilestones]);
   const [shareOpen, setShareOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [unseenChanges, setUnseenChanges] = useState(0);
@@ -975,6 +990,10 @@ export function ProjectView({ projectId, chapterId }: Props) {
           words={bookWords}
           onChange={(t) => setDetail((d) => (d ? { ...d, project: { ...d.project, ...t } } : d))}
         />
+        {milestones[0] && <p className="book-count">
+          Since {milestones[0].name}: {bookWords - milestones[0].word_count >= 0 ? "+" : ""}
+          {(bookWords - milestones[0].word_count).toLocaleString()} words
+        </p>}
 
         <ChapterList
           chapters={chapters}
@@ -1077,6 +1096,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
                     <span className="desk-more-divider" />
                   </>
                 )}
+                <button
+                  className="btn btn-quiet"
+                  onClick={() => {
+                    closeMoreMenu();
+                    setMilestonesOpen(true);
+                    void refreshMilestones().catch(() => {});
+                  }}
+                >
+                  Milestones
+                </button>
                 <button
                   className="btn btn-quiet"
                   onClick={() => {
@@ -1364,6 +1393,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
         })()}
 
         {exportOpen && <ExportDialog detail={detail} onClose={() => setExportOpen(false)} />}
+        {milestonesOpen && <MilestonesDialog
+          milestones={milestones}
+          loadError={milestonesError}
+          onCreate={async (name, note) => {
+            const active = view === "write" && selected ? {
+              id: selected.id,
+              save: async () => {
+                if (!editorControls.current?.saveForMilestone || save.state === "loading") {
+                  throw new Error("Wait for this chapter to finish opening, then try again.");
+                }
+                await editorControls.current.saveForMilestone();
+              },
+            } : null;
+            await createMilestone(projectId, name, note, active);
+            await refreshMilestones();
+          }}
+          onChanged={refreshMilestones}
+          onClose={() => setMilestonesOpen(false)}
+        />}
         {changesOpen && (
           <ClaudeChangesDialog
             projectId={projectId}

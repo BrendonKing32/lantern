@@ -27,6 +27,7 @@ import {
   updateChapter,
 } from "./handlers/chapters";
 import { getSnapshot, listHistory } from "./handlers/history";
+import { cleanupIncompleteMilestones, createMilestone, deleteMilestone, listMilestones, updateMilestone } from "./handlers/milestones";
 import { createNote, deleteNote, listNotes, updateNote } from "./handlers/notes";
 import {
   createProject,
@@ -59,6 +60,10 @@ export type { Env } from "./env";
 
 const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/projects", listProjects],
+  ["GET", "/api/projects/:id/milestones", listMilestones],
+  ["POST", "/api/projects/:id/milestones", createMilestone],
+  ["PATCH", "/api/milestones/:id", updateMilestone],
+  ["DELETE", "/api/milestones/:id", deleteMilestone],
   ["GET", "/api/stats", getStats],
   ["GET", "/api/ai/status", getAiStatus],
   ["POST", "/api/ai/test", testAi],
@@ -175,7 +180,9 @@ export default {
   },
   scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
-      createBackup(env).catch((e) => {
+      cleanupIncompleteMilestones(env).catch((e) => {
+        console.error("scheduled milestone cleanup failed", e);
+      }).then(() => createBackup(env)).catch((e) => {
         console.error("scheduled backup failed", e);
         throw e;
       }),

@@ -73,6 +73,12 @@ export const api = {
   listProjects: () => request(array(schema.projectSummary), "GET", "/api/projects"),
   createProject: (title: string) => request(schema.projectRef, "POST", "/api/projects", { title }),
   getProject: (id: string) => request(schema.projectDetail, "GET", `/api/projects/${id}`),
+  milestones: (id: string) => request(array(schema.milestone), "GET", `/api/projects/${id}/milestones`),
+  createMilestone: (id: string, name: string, note: string) =>
+    request(schema.milestone, "POST", `/api/projects/${id}/milestones`, { name, note }),
+  updateMilestone: (id: string, patch: { name?: string; note?: string }) =>
+    request(schema.milestone, "PATCH", `/api/milestones/${id}`, patch),
+  deleteMilestone: (id: string) => request(schema.ok, "DELETE", `/api/milestones/${id}`),
   renameProject: (id: string, title: string) => request(schema.projectRef, "PATCH", `/api/projects/${id}`, { title }),
   setArchived: (id: string, archived: boolean) =>
     request(schema.projectArchived, "PATCH", `/api/projects/${id}`, { archived }),

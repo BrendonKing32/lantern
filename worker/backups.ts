@@ -14,6 +14,8 @@ const TABLES = [
   "share_comments",
   "claude_changes",
   "claude_drafts",
+  "milestones",
+  "milestone_chapters",
 ] as const;
 
 const BACKUP_PREFIX = "backups/";
@@ -79,6 +81,10 @@ async function exportDatabase(env: BackupEnv): Promise<DatabaseExport> {
 
   const sql = [
     "-- Lantern D1 backup. Restore only after downloading and reviewing this file.",
+    "DELETE FROM \"milestone_chapters\";",
+    "DELETE FROM \"milestones\";",
+    "DELETE FROM \"claude_drafts\";",
+    "DELETE FROM \"claude_changes\";",
     "DELETE FROM \"book_checks\";",
     "DELETE FROM \"scenes\";",
     "DELETE FROM \"share_comments\";",

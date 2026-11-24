@@ -139,6 +139,16 @@ export interface ProjectDetail {
   acts: Act[];
 }
 
+export interface Milestone {
+  id: string;
+  project_id: string;
+  name: string;
+  note: string;
+  word_count: number;
+  chapter_count: number;
+  created_at: string;
+}
+
 export interface ChapterWithContent extends ChapterMeta {
   content: string;
 }
