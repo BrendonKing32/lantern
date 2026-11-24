@@ -88,9 +88,7 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
   ];
 
   const needsCheck = chapters.filter((chapter) =>
-    scenes.some((scene) => scene.chapter_id === chapter.id && scene.unconfirmed) ||
-    (scenes.some((scene) => scene.chapter_id === chapter.id && !scene.in_text) &&
-      placeholders.some((placeholder) => placeholder.chapter_id === chapter.id)));
+    scenes.some((scene) => scene.chapter_id === chapter.id && scene.unconfirmed));
   const rows = actRows(chapters, acts);
   const groupOrder = [groups[0], ...rows.filter((row) => row.kind === "chapter").map((row) => groups.find((group) => group.id === row.chapter.id)!)];
   const addCard = async (placeholder: ScenePlaceholder) => {

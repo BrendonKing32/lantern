@@ -409,8 +409,8 @@ The first match of a chapter that has `scenes_version = -1` and existing in-chap
 - otherwise leave them all planned.
 
 Do this in `afterChapterWrite` when `scenes_version` was -1, before the normal match. The Scenes view
-then shows a banner while any card is unconfirmed or any chapter has both planned cards and
-placeholders from this migration: "Check how your scene cards line up with the text." It lists those
+then shows a banner while any card is unconfirmed:
+"Check how your scene cards line up with the text." It lists those
 chapters and can be dismissed (dismissal is remembered per novel in `localStorage`).
 
 ### 7.3 Editor labels (`src/components/ChapterEditor.tsx`, new `src/sceneLabels.ts`)
