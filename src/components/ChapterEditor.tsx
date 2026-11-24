@@ -71,7 +71,7 @@ export interface EditorControls {
   /** The text on screen, unsaved writing included. */
   text: () => string;
   saveForMilestone?: () => Promise<void>;
-  restore?: (content: string) => void;
+  restore?: (content: string) => Promise<void>;
   /** Select and scroll to a quoted passage. False if it isn't in the chapter. */
   reveal: (quote: string) => boolean;
   revealScene: (index: number) => boolean;
@@ -723,7 +723,7 @@ export function ChapterEditor({
 
   // Put an earlier version back. The text it replaces is kept in history, so a
   // restore can itself be undone.
-  const restore = (content: string) => {
+  const restore = async (content: string) => {
     if (blocked.current) return;
     text.current = content;
     dirty.current = true;
@@ -738,7 +738,7 @@ export function ChapterEditor({
     flushWordCount();
     onCloseHistory();
     window.clearTimeout(timer.current);
-    void saveRef.current();
+    await saveRef.current();
   };
 
   useEffect(() => {

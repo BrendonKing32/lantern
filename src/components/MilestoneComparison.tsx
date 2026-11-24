@@ -11,15 +11,15 @@ type Row = {
   now?: ChapterMeta;
   oldText: string;
   newText: string;
-  added: number;
-  removed: number;
+  added: number | null;
+  removed: number | null;
 };
 
 interface Props {
   milestone: Milestone;
   detail: ProjectDetail;
   activeText: { id: string; text: string } | null;
-  onRestore: (chapter: ChapterMeta | undefined, title: string, text: string, expected: string) => Promise<void>;
+  onRestore: (chapter: ChapterMeta | undefined, oldId: string, title: string, text: string, expected: string) => Promise<void>;
   onClose: () => void;
 }
 
@@ -63,8 +63,7 @@ export function MilestoneComparison({ milestone, detail, activeText, onRestore, 
           worker!.onerror = worker!.onmessageerror = () => reject(new Error("Couldn't compare these chapters. Try again."));
           worker!.postMessage({ snapshot: oldText, draft: newText, countWords: true });
         });
-        if (!counts) throw new Error("A chapter has too many changes to compare. Try comparing a smaller chapter.");
-        result.push({ ...item, oldText, newText, ...counts });
+        result.push({ ...item, oldText, newText, added: counts?.added ?? null, removed: counts?.removed ?? null });
       }
       if (!cancelled) { setRows(result); setProgress(""); }
     };
@@ -81,7 +80,7 @@ export function MilestoneComparison({ milestone, detail, activeText, onRestore, 
     setBusy(true);
     setError(null);
     try {
-      await onRestore(row.now, row.before.title, row.oldText, row.newText);
+      await onRestore(row.now, row.before.chapter_id, row.before.title, row.oldText, row.newText);
       onClose();
     } catch (e) {
       setError(e instanceof Error && !(e instanceof TypeError) ? e.message : describeError(e));
@@ -98,7 +97,7 @@ export function MilestoneComparison({ milestone, detail, activeText, onRestore, 
       {summary && rows && <>
         <p>Then: {milestone.word_count.toLocaleString()} words · Now: {rows.reduce((n, row) => n + countWords(row.newText), 0).toLocaleString()} words</p>
         <p>{summary.added} added · {summary.removed} removed · {summary.renamed} renamed · {summary.reordered ? "Chapters reordered" : "Order unchanged"}</p>
-        <p>Words changed: {rows.reduce((n, row) => n + row.added + row.removed, 0).toLocaleString()}</p>
+        <p>Words changed: {rows.some((row) => row.added === null) ? "Some chapters have too many changes to count." : rows.reduce((n, row) => n + row.added! + row.removed!, 0).toLocaleString()}</p>
       </>}
       {progress && <p role="status">{progress}</p>}
       {error && <p className="export-error" role="alert">{error}</p>}
@@ -109,7 +108,7 @@ export function MilestoneComparison({ milestone, detail, activeText, onRestore, 
           return <li key={id}>
             <strong>{row.now?.title ?? row.before?.title}</strong>
             {row.before && row.now && row.before.title !== row.now.title && <> (then: {row.before.title})</>}
-            <p>{status} · +{row.added.toLocaleString()} / −{row.removed.toLocaleString()} words</p>
+            <p>{status} · {row.added === null ? "Too many changes to count" : `+${row.added.toLocaleString()} / −${row.removed!.toLocaleString()} words`}</p>
             <button className="btn" onClick={() => setOpen(open === id ? null : id)}>{open === id ? "Close" : "Open"}</button>
             {open === id && <>
               <HistoryComparison snapshot={row.oldText} currentText={() => row.newText} />

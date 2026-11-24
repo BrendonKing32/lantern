@@ -178,6 +178,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [milestonesOpen, setMilestonesOpen] = useState(false);
   const [milestoneExport, setMilestoneExport] = useState<Milestone | null>(null);
   const [comparison, setComparison] = useState<{ milestone: Milestone; activeText: { id: string; text: string } | null } | null>(null);
+  const addedMilestoneChapters = useRef(new Map<string, ChapterMeta>());
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [milestonesError, setMilestonesError] = useState<string | null>(null);
   const refreshMilestones = useCallback(async () => {
@@ -1414,7 +1415,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
           }}
           onChanged={refreshMilestones}
           onCompare={(milestone) => {
-            const text = view === "write" && selected ? editorControls.current?.text() : undefined;
+            const text = view === "write" && selected && save.state !== "loading" && save.state !== "error"
+              ? editorControls.current?.text() : undefined;
             setComparison({ milestone, activeText: text !== undefined && selected ? { id: selected.id, text } : null });
             setMilestonesOpen(false);
           }}
@@ -1427,23 +1429,37 @@ export function ProjectView({ projectId, chapterId }: Props) {
           detail={detail}
           activeText={comparison.activeText}
           onClose={() => setComparison(null)}
-          onRestore={async (chapter, title, text, expected) => {
+          onRestore={async (chapter, oldId, title, text, expected) => {
             if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Restoring a chapter needs a connection. Reconnect and try again.");
             if (chapter && comparison.activeText?.id === chapter.id) {
               const controls = editorControls.current;
               if (!controls?.saveForMilestone || !controls.restore) throw new Error("Open this chapter and save it first.");
               await controls.saveForMilestone();
               if (controls.text() !== expected) throw new Error("This chapter changed while you were comparing. Close and compare again.");
-              controls.restore(text);
+              await controls.restore(text);
               await controls.saveForMilestone();
               return;
             }
-            const target = chapter ?? await api.createChapter(projectId, title);
+            const key = `${comparison.milestone.id}:${oldId}`;
+            let target = chapter ?? addedMilestoneChapters.current.get(key);
+            if (!target) {
+              target = await api.createChapter(projectId, title);
+              addedMilestoneChapters.current.set(key, target);
+            }
             try {
               const current = await flushForSceneMove(target);
               if (chapter && current.content !== expected) throw new Error("This chapter changed while you were comparing. Close and compare again.");
+              if (!chapter && current.content === text) {
+                addedMilestoneChapters.current.delete(key);
+                return;
+              }
+              if (!chapter && current.content !== "") throw new Error(`The new chapter “${title}” has changed. Open it before trying again.`);
               await forgetChapter(target.id);
               await api.saveChapter(target.id, text, current.version, { snapshot: "restore" });
+              addedMilestoneChapters.current.delete(key);
+            } catch (error) {
+              if (!chapter) throw new Error(`The new chapter “${title}” was created but couldn't be filled. Try again or open it in your novel. ${error instanceof Error ? error.message : ""}`);
+              throw error;
             } finally {
               await forgetChapter(target.id);
               load();

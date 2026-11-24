@@ -34,8 +34,7 @@ export function ExportDialog({ detail, milestone, onClose }: Props) {
 
   useEffect(() => {
     const d = ref.current;
-    d?.showModal();
-    return () => d?.close();
+    if (d && !d.open) d.showModal();
   }, []);
 
   const run = async () => {

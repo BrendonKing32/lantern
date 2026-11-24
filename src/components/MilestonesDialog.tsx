@@ -23,8 +23,7 @@ export function MilestonesDialog({ milestones, loadError, onCreate, onChanged, o
   const [editNote, setEditNote] = useState("");
   useEffect(() => {
     const dialog = ref.current;
-    dialog?.showModal();
-    return () => dialog?.close();
+    if (dialog && !dialog.open) dialog.showModal();
   }, []);
 
   const run = async (action: () => Promise<void>) => {

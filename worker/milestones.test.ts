@@ -70,6 +70,20 @@ describe("milestones", () => {
     expect(db.raw.prepare("SELECT words, revised FROM daily_words WHERE day = '2026-11-24'").get()).toEqual({ words: 0, revised: 0 });
   });
 
+  it("refuses a restore if the current chapter cannot be kept in History", async () => {
+    const milestone = await (await create()).json() as { id: string };
+    const copied = await (await request("GET", `/api/milestones/${milestone.id}/chapters/a`)).json() as { content: string };
+    bucket.failPuts = /\/history\//;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await request("PUT", "/api/chapters/a", {
+        content: copied.content, baseVersion: 2, snapshot: "restore", day: "2026-11-24",
+      })).status).toBe(500);
+      expect(await (await request("GET", "/api/chapters/a")).json()).toMatchObject({ version: 2, content: "First text" });
+      expect(db.raw.prepare("SELECT * FROM daily_words").all()).toEqual([]);
+    } finally { log.mockRestore(); }
+  });
+
   it("copies reconciled chapter texts and versions and keeps them after deletion", async () => {
     const response = await create();
     expect(response.status).toBe(201);
