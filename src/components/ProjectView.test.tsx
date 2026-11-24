@@ -128,6 +128,24 @@ describe("label snapshot refresh", () => {
     expect(result.snapshot?.chapterId).toBe("other");
   });
 
+  it("refreshes moved scene labels and text on returning to Write", async () => {
+    const scene = { id: "moving", chapter_id: "c", in_text: true } as SceneMeta;
+    vi.mocked(api.scenes).mockResolvedValue({ scenes: [scene], placeholders: [] });
+    render();
+    await settle();
+    view = "scenes";
+    render();
+    chapter.content = text = "First passage.\n\n***\n\nMoving passage.";
+    chapter.version++;
+    const moved = { ...scene, passage_index: 1 };
+    vi.mocked(api.scenes).mockResolvedValue({ scenes: [moved], placeholders: [] });
+    view = "write";
+    render();
+    await settle();
+    expect(api.scenes).toHaveBeenCalledTimes(2);
+    expect(result.snapshot).toMatchObject({ baseline: text, scenes: [moved] });
+  });
+
   it("keeps labels on failure and throttles passage-count refreshes", async () => {
     render();
     await settle();

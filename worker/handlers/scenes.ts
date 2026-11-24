@@ -73,8 +73,9 @@ export const listScenes: Handler = async (_req, env, p) => {
     return { chapter, text: normalizeText(text), textVersion, passages: splitScenes(text, chapter.title), stale: state.scenes_version < chapter.version, locked };
   }));
   if (chapters.some((chapter) => chapter.stale)) {
-    await Promise.all(chapters.filter(({ chapter, stale, textVersion, locked }) => !locked && !stale && chapter.version > 0 && textVersion !== null)
-      .map(({ chapter, text, textVersion }) => afterChapterWrite(env, chapter, text, textVersion!)));
+    for (const { chapter, text, textVersion, locked } of chapters) {
+      if (!locked && textVersion !== null) await afterChapterWrite(env, chapter, text, textVersion);
+    }
   }
   const { results } = await env.DB.prepare(
     `SELECT ${SCENE_COLS} FROM scenes

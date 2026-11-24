@@ -226,7 +226,10 @@ describe("cross-chapter scene moves", () => {
     expect(bucket.objects.get(toKey)).toBe("Only passage.");
   });
 
-  it.each([false, true])("recovers a crash after destination write, source written: %s", async (sourceWritten) => {
+  it.each([
+    ["after the destination write and before the source write", false],
+    ["after both writes and before the D1 batch", true],
+  ])("recovers a crash %s", async (_description, sourceWritten) => {
     const { moving } = await setup();
     const put = bucket.put.bind(bucket);
     const get = bucket.get.bind(bucket);
@@ -261,14 +264,52 @@ describe("cross-chapter scene moves", () => {
     bucket.get = get;
     bucket.put = put;
     db.raw.prepare("UPDATE chapters SET moving_until = '2026-01-01T00:01:00.000Z' WHERE id IN ('a', 'b')").run();
-    expect((await request("GET", "/api/chapters/b")).status).toBe(200);
-    expect((await request("GET", "/api/chapters/a")).status).toBe(200);
+    const destinationRead = await request("GET", "/api/chapters/b");
+    const sourceRead = await request("GET", "/api/chapters/a");
+    expect(await destinationRead.json()).toMatchObject({ version: 2, content: expect.stringContaining("Moving passage.") });
+    expect(await sourceRead.json()).toMatchObject({ version: sourceWritten ? 2 : 1 });
     expect(chapter("b").version).toBe(2);
     expect(chapter("a").version).toBe(sourceWritten ? 2 : 1);
     expect(bucket.objects.get(toKey)).toContain("Moving passage.");
     expect(bucket.objects.get(fromKey)?.includes("Moving passage.")).toBe(!sourceWritten);
     expect(card(moving.id)).toBeDefined();
     expect((await save("b", "Old draft", 1)).status).toBe(409);
+    if (sourceWritten) {
+      expect((await save("a", "Old draft", 1)).status).toBe(409);
+      const listing = await (await request("GET", "/api/projects/p/scenes")).json() as { scenes: { id: string; chapter_id: string; in_text: boolean }[] };
+      expect(listing.scenes.find((scene) => scene.id === moving.id)).toMatchObject({ chapter_id: "b", in_text: true });
+    }
+    log.mockRestore();
+  });
+
+  it("recovers the card after a crash moving the only passage", async () => {
+    expect((await save("a", "Moving passage.", 0)).status).toBe(200);
+    expect((await save("b", destination, 0)).status).toBe(200);
+    const moving = await create("a");
+    const target = await create("b");
+    expect((await link(moving.id, 0)).status).toBe(200);
+    expect((await link(target.id, 0)).status).toBe(200);
+    const put = bucket.put.bind(bucket);
+    const batch = db.batch.bind(db);
+    let written = false;
+    bucket.put = async (key, value, options) => {
+      const result = await put(key, value, options);
+      if (key === fromKey) written = true;
+      return result;
+    };
+    db.batch = async (statements) => {
+      if (written) throw new Error("worker stopped");
+      return batch(statements);
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await move(moving.id)).status).toBe(500);
+    db.batch = batch;
+    bucket.put = put;
+    db.raw.prepare("UPDATE chapters SET moving_until = '2026-01-01T00:01:00.000Z' WHERE id IN ('a', 'b')").run();
+    expect((await request("GET", "/api/chapters/a")).status).toBe(200);
+    expect((await request("GET", "/api/chapters/b")).status).toBe(200);
+    const listing = await (await request("GET", "/api/projects/p/scenes")).json() as { scenes: { id: string; chapter_id: string; in_text: boolean }[] };
+    expect(listing.scenes.find((scene) => scene.id === moving.id)).toMatchObject({ chapter_id: "b", in_text: true });
     log.mockRestore();
   });
 

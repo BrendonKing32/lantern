@@ -51,7 +51,7 @@ export async function afterChapterWrite(
       ? { pairs: arrangement.pairs, placeholders: passages.map((p) => p.index).filter((i) => ![...arrangement.pairs.values()].includes(i)), leftText: [] as string[] }
       : initial
       ? { pairs: new Map(rows.map((row, i) => [row.id, i])), placeholders: [] as number[], leftText: [] as string[] }
-      : matchScenes(passages, cards);
+      : matchScenes(text.trim() ? passages : [], cards);
     const followed: Array<SceneSyncRow & { moving_until: string | null }> = [];
     for (const index of match.placeholders) {
       const head = passages[index].head;
