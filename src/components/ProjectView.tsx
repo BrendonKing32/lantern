@@ -23,6 +23,7 @@ import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
 import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
+import { sceneLabelsEnabled, setSceneLabelsEnabled } from "../sceneLabels";
 import { DIALECTS } from "../../shared/types";
 import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { arrangeChapters } from "../../shared/acts";
@@ -172,6 +173,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     setHistoryOpen(false);
     setCheckOpen(false);
     setPeek(null);
+    setScenePeek(null);
     try {
       sessionStorage.setItem(viewKey, v);
     } catch {
@@ -184,6 +186,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [entries, setEntriesState] = useState<BibleEntry[]>([]);
   const [entryId, setEntryId] = useState<string | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
+  const [scenePeek, setScenePeek] = useState<string | null>(null);
   const setEntries = useCallback(
     (update: (list: BibleEntry[]) => BibleEntry[]) =>
       setEntriesState((list) => {
@@ -202,17 +205,26 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const openLink = useCallback((name: string) => {
     setHistoryOpen(false);
     setCheckOpen(false);
+    setScenePeek(null);
     setPeek(name);
   }, []);
   // The continuity check panel reads the editor's text and points into it.
   const [checkOpen, setCheckOpen] = useState(false);
   const [grammarOn, setGrammarOn] = useState(grammarEnabled);
   useEffect(() => setGrammarEnabled(grammarOn), [grammarOn]);
+  const [sceneLabelsOn, setSceneLabelsOn] = useState(sceneLabelsEnabled);
+  useEffect(() => setSceneLabelsEnabled(sceneLabelsOn), [sceneLabelsOn]);
 
   const [checkTab, setCheckTab] = useState<CheckTab>("chapter");
   const editorControls = useRef<EditorControls | null>(null);
   const closeCheck = useCallback(() => setCheckOpen(false), []);
   const closePeek = useCallback(() => setPeek(null), []);
+  useEffect(() => {
+    if (scenePeek === null) return;
+    const close = (e: KeyboardEvent) => { if (e.key === "Escape") setScenePeek(null); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [scenePeek]);
   const createFromLink = async (name: string, kind: BibleKind) => {
     try {
       const e = await api.createEntry(projectId, { name, kind });
@@ -319,16 +331,20 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const readOnly = phone && editingChapter !== selected?.id;
   useEffect(() => setEditingChapter(null), [selected?.id]);
   useEffect(() => {
-    if (view !== "scenes") return;
-    setScenes(null);
+    if (view !== "scenes" && view !== "write") return;
+    let active = true;
     setScenesError(null);
-    api.scenes(projectId).then(({ scenes, placeholders }) => { setScenes(scenes); setPlaceholders(placeholders); }).catch((e) => setScenesError(describeError(e)));
-  }, [projectId, view]);
+    api.scenes(projectId).then(({ scenes, placeholders }) => {
+      if (active) { setScenes(scenes); setPlaceholders(placeholders); }
+    }).catch((e) => { if (active && view === "scenes") setScenesError(describeError(e)); });
+    return () => { active = false; };
+  }, [projectId, view, selected?.id]);
   // Novels saved on this device before dialects existed have none: US English.
   const dialect: Dialect = detail?.project.dialect ?? "american";
 
   // History belongs to one chapter; the check panel follows you between chapters.
   useEffect(() => setHistoryOpen(false), [selected?.id]);
+  useEffect(() => setScenePeek(null), [selected?.id]);
 
   // Open a chapter and select a passage in it, waiting for the editor to load.
   const openQuote = (chapterId: string, quote: string): Promise<boolean> => {
@@ -898,6 +914,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       onClick={() => {
                         closeMoreMenu();
                         setPeek(null);
+                        setScenePeek(null);
                         setCheckOpen(false);
                         setHistoryOpen((h) => !h);
                       }}
@@ -911,6 +928,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       onClick={() => {
                         closeMoreMenu();
                         setPeek(null);
+                        setScenePeek(null);
                         setHistoryOpen(false);
                         setCheckOpen((c) => !c);
                       }}
@@ -918,6 +936,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       Check
                     </button>
                     <span className="desk-more-divider" />
+                    <button
+                      className={`btn btn-quiet${sceneLabelsOn ? " is-on" : ""}`}
+                      aria-pressed={sceneLabelsOn}
+                      onClick={() => {
+                        closeMoreMenu();
+                        setSceneLabelsOn((on) => !on);
+                      }}
+                    >
+                      Scene labels
+                    </button>
                     <select
                       className={`theme-picker grammar-picker desk-more-select${grammarOn ? " is-on" : ""}`}
                       aria-label="Grammar checking"
@@ -1015,6 +1043,14 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onCloseHistory={closeHistory}
             entries={entries}
             onOpenLink={openLink}
+            scenes={scenes}
+            sceneLabelsOn={sceneLabelsOn}
+            onOpenScene={(scene) => {
+              setHistoryOpen(false);
+              setCheckOpen(false);
+              setPeek(null);
+              setScenePeek(scene.id);
+            }}
             grammarOn={grammarOn}
             dialect={dialect}
             readOnly={readOnly}
@@ -1052,6 +1088,28 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onClose={closePeek}
           />
         )}
+
+        {view === "write" && scenePeek !== null && (() => {
+          const scene = scenes?.find((item) => item.id === scenePeek);
+          if (!scene) return null;
+          return (
+            <aside className="history peek" aria-label={`Scene: ${scene.title}`}>
+              <header className="history-head">
+                <h2 className="history-title">Scene</h2>
+                <span className="desk-spacer" />
+                <button className="icon-btn" aria-label="Close" title="Close" onClick={() => setScenePeek(null)}>
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+                </button>
+              </header>
+              <div className="history-body">
+                <h3 className="peek-name">{scene.title}</h3>
+                {(scene.pov || scene.location) && <p className="peek-aka">{[scene.pov, scene.location].filter(Boolean).join(" · ")}</p>}
+                <div className="peek-body">{scene.summary.trim() || <span className="peek-empty">No notes yet.</span>}</div>
+                <button className="btn btn-lamp" onClick={() => setView("scenes")}>Open Scenes</button>
+              </div>
+            </aside>
+          );
+        })()}
 
         {exportOpen && <ExportDialog detail={detail} onClose={() => setExportOpen(false)} />}
         {changesOpen && (

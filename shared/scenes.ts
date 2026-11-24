@@ -221,7 +221,7 @@ export function splitScenes(markdown: string, chapterTitle?: string): Passage[] 
   return passages;
 }
 
-function usualBreak(passages: Passage[]): string {
+export function usualBreak(passages: Passage[]): string {
   const counts = new Map<string, number>();
   for (const passage of passages) {
     if (passage.breakLine) {
