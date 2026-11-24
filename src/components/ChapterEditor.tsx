@@ -28,9 +28,10 @@ export type SaveState =
 interface Props {
   chapterId: string;
   title: string;
+  knownVersion: number;
   /** Word count changes. `initial` marks the count as of opening the chapter. */
   onWords: (chapterId: string, words: number, initial: boolean) => void;
-  onSaved: (chapterId: string, info: SaveResult) => void;
+  onSaved: (chapterId: string, info: SaveResult, replaced?: boolean) => void;
   onStatus: (state: SaveState, detail?: string) => void;
   historyOpen: boolean;
   /** Story guide entries, for [[links]]. */
@@ -84,6 +85,7 @@ const WORD_COUNT_DELAY = 150;
 export function ChapterEditor({
   chapterId,
   title,
+  knownVersion,
   onWords,
   onSaved,
   onStatus,
@@ -279,12 +281,13 @@ export function ChapterEditor({
     inFlight.current = true;
     status("saving");
     const content = text.current;
+    const replaced = !!keepCopy.current;
     try {
       const res = await api.saveChapter(chapterId, content, version.current, { snapshot: keepCopy.current });
       keepCopy.current = undefined;
       version.current = res.version;
       draftStorageFailed.current = false;
-      cb.current.onSaved(chapterId, res);
+      cb.current.onSaved(chapterId, res, replaced);
       void rememberSaved(chapterId, content, res);
       if (text.current === content) {
         dirty.current = false;
@@ -379,6 +382,11 @@ export function ChapterEditor({
       }
       if (cancelled) return;
 
+      if (!offline && ch.version > knownVersion) {
+        cb.current.onSaved(chapterId, {
+          version: ch.version, word_count: ch.word_count, updated_at: ch.updated_at,
+        }, true);
+      }
       version.current = ch.version;
       let content = ch.content;
       if (draft && draft.content !== ch.content) {
@@ -424,12 +432,13 @@ export function ChapterEditor({
       // Best-effort flush when switching chapters; the local draft covers failure.
       if (dirty.current && !blocked.current && !inFlight.current) {
         const content = text.current;
+        const replaced = !!keepCopy.current;
         api
           .saveChapter(chapterId, content, version.current, { keepalive: true, snapshot: keepCopy.current })
           .then((res) => {
             void drafts.clearIf(chapterId, content);
             void rememberSaved(chapterId, content, res);
-            cb.current.onSaved(chapterId, res);
+            cb.current.onSaved(chapterId, res, replaced);
           })
           .catch(() => {});
       }
@@ -470,7 +479,7 @@ export function ChapterEditor({
           flushWordCount();
         }
         const info = { version: server.version, word_count: server.word_count, updated_at: server.updated_at };
-        cb.current.onSaved(chapterId, info);
+        cb.current.onSaved(chapterId, info, true);
         void rememberSaved(chapterId, server.content, info);
       } catch {
         // Offline or signed out: the next check tries again.
@@ -529,7 +538,7 @@ export function ChapterEditor({
       version: conflict.version,
       word_count: conflict.word_count,
       updated_at: conflict.updated_at,
-    });
+    }, true);
     setConflict(null);
     status("saved");
   };
