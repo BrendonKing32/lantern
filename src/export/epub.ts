@@ -1,5 +1,5 @@
-// EPUB 3 e-book: a title page, one XHTML file per chapter, a table of
-// contents, and a light stylesheet that leaves fonts to the reader's device.
+// EPUB 3 e-book: a title page, one XHTML file per chapter (and a page for
+// each act's title before its first chapter), a table of contents, and a light stylesheet that leaves fonts to the reader's device.
 
 import { strToU8, zipSync, type Zippable } from "fflate";
 import type { Block, Book, Run } from "./model";
@@ -63,9 +63,11 @@ p.quote { margin: 0 2em; font-style: italic; }
 p.item { margin-left: 1.5em; }
 p.code { font-family: monospace; font-size: 0.9em; white-space: pre-wrap; margin-left: 1.5em; }
 .titlepage { text-align: center; margin-top: 30%; }
+.part h1 { margin-top: 30%; font-size: 1.8em; }
 .titlepage h1 { margin: 0 0 1em; font-size: 2em; }
 nav ol { list-style: none; padding: 0; }
 nav li { margin: 0.4em 0; }
+nav ol ol { padding-left: 1.5em; }
 `;
 
 export function buildEpub(book: Book): Uint8Array {
@@ -94,20 +96,34 @@ export function buildEpub(book: Book): Uint8Array {
     href: `chapter-${String(i + 1).padStart(3, "0")}.xhtml`,
     ch,
   }));
-  for (const { href, ch } of items) {
+  // Reading order, with each act's title page before its first chapter.
+  const spine: { id: string; href: string }[] = [];
+  let parts = 0;
+  const toc: string[] = [];
+  let inPart = false;
+  for (const { id, href, ch } of items) {
+    if (ch.part) {
+      parts += 1;
+      const partId = `part${String(parts).padStart(3, "0")}`;
+      const partHref = `part-${String(parts).padStart(3, "0")}.xhtml`;
+      files[`OEBPS/${partHref}`] = strToU8(
+        page(lang, ch.part, `<section class="part" epub:type="part">\n<h1>${esc(ch.part)}</h1>\n</section>`),
+      );
+      spine.push({ id: partId, href: partHref });
+      if (inPart) toc.push("</ol></li>");
+      toc.push(`<li><a href="${partHref}">${esc(ch.part)}</a><ol>`);
+      inPart = true;
+    }
     files[`OEBPS/${href}`] = strToU8(
       page(lang, ch.title, `<section epub:type="chapter">\n<h1>${esc(ch.title)}</h1>\n${blocksHtml(ch.blocks)}\n</section>`),
     );
+    spine.push({ id, href });
+    toc.push(`<li><a href="${href}">${esc(ch.title)}</a></li>`);
   }
+  if (inPart) toc.push("</ol></li>");
 
   files["OEBPS/nav.xhtml"] = strToU8(
-    page(
-      lang,
-      "Contents",
-      `<nav epub:type="toc" id="toc"><h1>Contents</h1><ol>\n${items
-        .map(({ href, ch }) => `<li><a href="${href}">${esc(ch.title)}</a></li>`)
-        .join("\n")}\n</ol></nav>`,
-    ),
+    page(lang, "Contents", `<nav epub:type="toc" id="toc"><h1>Contents</h1><ol>\n${toc.join("\n")}\n</ol></nav>`),
   );
 
   const modified = new Date().toISOString().replace(/\.\d+Z$/, "Z");
@@ -124,12 +140,12 @@ ${book.author ? `<dc:creator>${esc(book.author)}</dc:creator>` : ""}
 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
 <item id="css" href="style.css" media-type="text/css"/>
 <item id="title" href="title.xhtml" media-type="application/xhtml+xml"/>
-${items.map(({ id, href }) => `<item id="${id}" href="${href}" media-type="application/xhtml+xml"/>`).join("\n")}
+${spine.map(({ id, href }) => `<item id="${id}" href="${href}" media-type="application/xhtml+xml"/>`).join("\n")}
 </manifest>
 <spine>
 <itemref idref="title"/>
 <itemref idref="nav"/>
-${items.map(({ id }) => `<itemref idref="${id}"/>`).join("\n")}
+${spine.map(({ id }) => `<itemref idref="${id}"/>`).join("\n")}
 </spine>
 </package>`);
 

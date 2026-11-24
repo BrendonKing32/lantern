@@ -37,9 +37,11 @@ database_id = "084c5c28-3355-4ef9-89f9-f9eac612ea13"
 migrations_dir = "migrations"
 
 # OAuth grants and tokens for the Claude connector (hashed or encrypted at rest).
-# No id: the first `wrangler deploy` creates the namespace (lantern-oauth-kv).
+# The id is pinned so every deploy uses lantern-oauth-kv, even when the version
+# being replaced has no KV binding (otherwise wrangler tries to create it again).
 [[kv_namespaces]]
 binding = "OAUTH_KV"
+id = "7ceeeaab8d2d40c2a8d39932cc51e86d"
 
 [vars]
 # Cloudflare Access identifiers (not secrets). The Worker verifies private API

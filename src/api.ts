@@ -102,8 +102,17 @@ export const api = {
   restoreChapter: (id: string) => request(schema.chapterMeta, "POST", `/api/chapters/${id}/restore`),
   createChapter: (projectId: string, title: string) =>
     request(schema.chapterMeta, "POST", `/api/projects/${projectId}/chapters`, { title }),
-  reorder: (projectId: string, chapterIds: string[]) =>
-    request(schema.ok, "PUT", `/api/projects/${projectId}/order`, { chapterIds }),
+  /** The whole book in order; with `acts`, also every act in order and each chapter's act. */
+  reorder: (
+    projectId: string,
+    chapterIds: string[],
+    acts?: { actIds: string[]; chapterActs: Record<string, string | null> },
+  ) => request(schema.ok, "PUT", `/api/projects/${projectId}/order`, { chapterIds, ...acts }),
+  /** A new act; from `startChapterId` to the end of that chapter's act, or empty at the end. */
+  createAct: (projectId: string, title: string | undefined, startChapterId: string | null) =>
+    request(schema.outline, "POST", `/api/projects/${projectId}/acts`, { title, startChapterId }),
+  renameAct: (id: string, title: string) => request(schema.act, "PATCH", `/api/acts/${id}`, { title }),
+  deleteAct: (id: string) => request(schema.outline, "DELETE", `/api/acts/${id}`),
   getChapter: (id: string) => request(schema.chapterWithContent, "GET", `/api/chapters/${id}`),
   /** `snapshot` asks the server to keep the text being replaced in history. */
   saveChapter: (

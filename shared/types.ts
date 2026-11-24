@@ -58,6 +58,22 @@ export interface ChapterMeta {
   word_count: number;
   version: number;
   updated_at: string;
+  /** The act this chapter is in, or null for none. */
+  act_id: string | null;
+}
+
+/** A named group of chapters: an act, a part, a book within the book. */
+export interface Act {
+  id: string;
+  project_id: string;
+  title: string;
+  position: number;
+}
+
+/** The novel's acts and chapters, in book order. */
+export interface Outline {
+  acts: Act[];
+  chapters: ChapterMeta[];
 }
 
 export type SceneStatus = "planned" | "drafted";
@@ -97,6 +113,7 @@ export interface ProjectInfo {
 export interface ProjectDetail {
   project: ProjectInfo;
   chapters: ChapterMeta[];
+  acts: Act[];
 }
 
 export interface ChapterWithContent extends ChapterMeta {
