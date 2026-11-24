@@ -16,9 +16,11 @@ In chapter text, [[Name]] and [[Name|shown words]] link to story guide entries; 
 ***, --- or a lone # on its own line marks a scene break. Scene cards can be tied to passages between breaks. \
 Start with list_novels, then get_outline for chapter ids.`;
 
-export const READ_ONLY_INSTRUCTIONS = `${ABOUT} This connection can read but not change anything.`;
+const MILESTONE_INSTRUCTIONS = "Milestones are read-only through this connection.";
 
-export const WRITE_INSTRUCTIONS = `${ABOUT}
+export const READ_ONLY_INSTRUCTIONS = `${ABOUT} ${MILESTONE_INSTRUCTIONS} This connection can read but not change anything.`;
+
+export const WRITE_INSTRUCTIONS = `${ABOUT} ${MILESTONE_INSTRUCTIONS}
 
 This connection can also make changes. The manuscript is the author's own work, so:
 - Change only what the author asked for, and keep their voice. Don't tidy, restyle or "improve" anything else.
