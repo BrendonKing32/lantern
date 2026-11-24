@@ -41,6 +41,27 @@ const version = (id: string) => db.raw.prepare("SELECT version, scenes_version F
 };
 
 describe("matching scenes to text", () => {
+  it("keeps a new chapter's card planned when its first passage is saved", async () => {
+    const response = await request("POST", "/api/projects/p/chapters", { title: "New chapter" });
+    const chapter = await response.json() as { id: string };
+    const card = await create(chapter.id);
+    expect((await save(chapter.id, "A new scene unfolds.", 0)).status).toBe(200);
+    expect(row(card.id)).toMatchObject({ in_text: 0, unconfirmed: 0, status: "planned" });
+    expect((await list()).placeholders).toContainEqual(expect.objectContaining({ chapter_id: chapter.id, passage_index: 0 }));
+  });
+
+  it("retains distinct positions when the earlier in-text card leaves", async () => {
+    const first = await create("c");
+    const second = await create("c");
+    const lastPassage = "The second scene continues. ".repeat(12);
+    await save("c", `First scene.\n\n***\n\n${lastPassage}`, 0);
+    await save("c", lastPassage, 1);
+    expect(row(first.id)).toMatchObject({ in_text: 0, position: 0 });
+    expect(row(second.id)).toMatchObject({ in_text: 1, position: 1 });
+    const positions = db.raw.prepare("SELECT position FROM scenes WHERE chapter_id = 'c'").all() as { position: number }[];
+    expect(new Set(positions.map((entry) => entry.position)).size).toBe(positions.length);
+  });
+
   it("pairs existing cards once, records anchors and words, and follows later edits", async () => {
     const a = await create("c");
     const b = await create("c");
@@ -53,6 +74,16 @@ describe("matching scenes to text", () => {
     expect(listing.scenes[0]).toMatchObject({ in_text: true, unconfirmed: true, passage_index: 0, word_count: 5 });
     expect(listing.scenes[0]).not.toHaveProperty("anchor_head");
     expect(listing.placeholders.filter((p) => p.chapter_id === "c")).toEqual([]);
+  });
+
+  it("pairs pre-feature cards even when their chapter is at version zero", async () => {
+    const card = await create("c");
+    bucket.objects.set("projects/p/chapters/c.md", "An older passage.");
+    expect(version("c")).toEqual({ version: 0, scenes_version: -1 });
+    expect((await list()).scenes.find((scene) => scene.id === card.id)).toMatchObject({
+      in_text: true, unconfirmed: true, word_count: 3,
+    });
+    expect(version("c")).toEqual({ version: 0, scenes_version: 0 });
   });
 
   it("leaves mismatched existing cards planned and supports linking, confirmation and unlinking", async () => {
@@ -99,7 +130,7 @@ describe("matching scenes to text", () => {
     };
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     expect((await save("c", "New prose", 0)).status).toBe(200);
-    expect(version("c")).toEqual({ version: 1, scenes_version: 0 });
+    expect(version("c")).toEqual({ version: 1, scenes_version: -1 });
     db.prepare = prepare;
     expect((await list()).scenes.find((s) => s.id === card.id)).toMatchObject({ in_text: true, word_count: 2 });
     expect(version("c")).toEqual({ version: 1, scenes_version: 1 });
@@ -174,7 +205,7 @@ describe("matching scenes to text", () => {
     await bucket.put("projects/p/chapters/c.md", "Unknown version", { customMetadata: { version: "invalid" } });
     await list();
     expect(row(card.id).in_text).toBe(0);
-    expect(version("c")).toEqual({ version: 1, scenes_version: 0 });
+    expect(version("c")).toEqual({ version: 1, scenes_version: -1 });
   });
 
   it("leaves the lower card planned on merge and follows a cut to another chapter", async () => {

@@ -67,7 +67,7 @@ export async function insertChapter(env: Env, projectId: string, title: string):
   await chapterPut(env, { project_id: projectId, id }, "", 0);
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO chapters (id, project_id, title, position, act_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO chapters (id, project_id, title, position, act_id, created_at, updated_at, scenes_version) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
     ).bind(id, projectId, title, position, actId, ts, ts),
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, projectId),
   ]);

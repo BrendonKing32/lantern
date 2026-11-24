@@ -213,9 +213,11 @@ ALTER TABLE scenes ADD COLUMN unlinked_at TEXT;
 -- 1 while an in-text card was paired by order during the one-time migration and the writer hasn't confirmed it.
 ALTER TABLE scenes ADD COLUMN unconfirmed INTEGER NOT NULL DEFAULT 0;
 
--- The chapter version its scene cards were last matched against. 0 = never.
-ALTER TABLE chapters ADD COLUMN scenes_version INTEGER NOT NULL DEFAULT 0;
+-- The chapter version its scene cards were last matched against. -1 = from before this feature, never matched.
+ALTER TABLE chapters ADD COLUMN scenes_version INTEGER NOT NULL DEFAULT -1;
 ```
+
+New chapters explicitly start with `scenes_version = 0`.
 
 `shared/types.ts`, `SceneMeta` gains:
 
@@ -400,13 +402,13 @@ Follow the existing look in `src/styles.css`. Use existing tokens only (`--lamp`
 
 ### 7.2 One-time banner for existing cards
 
-The first match of a chapter that has `scenes_version = 0` and existing in-chapter cards:
+The first match of a chapter that has `scenes_version = -1` and existing in-chapter cards:
 
 - if the number of cards in the chapter equals the number of passages, pair them in order with
   `in_text = 1, unconfirmed = 1`;
 - otherwise leave them all planned.
 
-Do this in `afterChapterWrite` when `scenes_version` was 0, before the normal match. The Scenes view
+Do this in `afterChapterWrite` when `scenes_version` was -1, before the normal match. The Scenes view
 then shows a banner while any card is unconfirmed or any chapter has both planned cards and
 placeholders from this migration: "Check how your scene cards line up with the text." It lists those
 chapters and can be dismissed (dismissal is remembered per novel in `localStorage`).

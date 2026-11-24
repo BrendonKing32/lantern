@@ -29,7 +29,7 @@ export async function afterChapterWrite(env: Env, chapter: ChapterMeta, text: st
       "SELECT id, chapter_id, position, status, in_text, anchor_head, anchor_tail, word_count, unlinked_at, unconfirmed FROM scenes WHERE chapter_id = ? ORDER BY position",
     ).bind(chapter.id).all<SceneSyncRow>();
     const passages = splitScenes(text, chapter.title);
-    const initial = state.scenes_version === 0 && rows.length > 0 && rows.length === passages.length &&
+    const initial = state.scenes_version === -1 && rows.length > 0 && rows.length === passages.length &&
       rows.every((row) => !row.in_text);
     const cards = matchCards(rows);
     if (initial) cards.forEach((card, i) => {
@@ -55,7 +55,7 @@ export async function afterChapterWrite(env: Env, chapter: ChapterMeta, text: st
       }
     }
     const all = [...rows, ...followed];
-    const slots = rows.filter((row) => row.in_text || match.pairs.has(row.id)).map((row) => row.position).sort((a, b) => a - b);
+    const slots = rows.filter((row) => match.pairs.has(row.id)).map((row) => row.position).sort((a, b) => a - b);
     let nextSlot = Math.max(-1, ...rows.map((row) => row.position)) + 1;
     while (slots.length < match.pairs.size) slots.push(nextSlot++);
     const ordered = [...match.pairs.entries()].sort((a, b) => a[1] - b[1]);
