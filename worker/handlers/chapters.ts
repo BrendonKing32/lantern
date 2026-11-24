@@ -1,6 +1,6 @@
 import { countWords } from "../../shared/wordcount";
 import type { ChapterMeta, DeletedChapter, SnapshotReason } from "../../shared/types";
-import { chapterKey, chapterPut, chapterTextVersion, getChapterRow, insertChapter, lastActId, MAX_CHAPTER_BYTES, requireProject } from "../db";
+import { chapterKey, chapterPut, getChapterRow, insertChapter, lastActId, MAX_CHAPTER_BYTES, requireProject } from "../db";
 import type { Env } from "../env";
 import { body, cleanTitle, HttpError, isDay, json, now, type Handler } from "../http";
 import { snapshotBeforeSave } from "./history";
@@ -52,9 +52,6 @@ export const createChapter: Handler = async (req, env, p) => {
 export const getChapter: Handler = async (_req, env, p) => {
   const row = await getChapterRow(env, p.id);
   const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
-  if (chapterTextVersion(obj, row.version) !== row.version) {
-    throw new HttpError(409, "Chapter is changing; reload and try again");
-  }
   const content = obj ? await obj.text() : "";
   return json({ ...row, content });
 };
@@ -65,10 +62,6 @@ export async function writeChapter(
   options: { snapshotContent?: string; sceneSnapshot?: string } = {},
 ): Promise<{ version: number; word_count: number; updated_at: string }> {
   if (row.version !== baseVersion) throw new HttpError(409, "conflict", { version: row.version });
-  const object = await env.BUCKET.get(chapterKey(row.project_id, row.id));
-  if (chapterTextVersion(object, row.version) !== baseVersion) {
-    throw new HttpError(409, "Chapter is changing; reload and try again");
-  }
   const ts = now();
   const words = countWords(content);
   const guard = options.sceneSnapshot === undefined ? "" : ` AND

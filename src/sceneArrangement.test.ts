@@ -42,6 +42,14 @@ beforeEach(() => {
 });
 
 describe("moving scenes", () => {
+  it("explains how to close an open chapter before moving", async () => {
+    openEditors.add("c");
+    await expect(flushForSceneMove(chapter)).rejects.toThrow(
+      "Save First first: This chapter is open in another window. Close it there and try again.",
+    );
+    expect(mocks.arrangeScenes).not.toHaveBeenCalled();
+  });
+
   it("waits for editor teardown activity before reading drafts and uses the fresh version", async () => {
     let finish!: () => void;
     const cleanupSave = new Promise<void>((resolve) => { finish = resolve; });

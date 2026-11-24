@@ -651,7 +651,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
       await reloadScenes();
     } catch (e) {
       alert(e instanceof SceneMoveError ? e.message : describeError(e));
-      void reloadScenes().catch((error) => setScenesError(describeError(error)));
+      await reloadScenes().catch((error) => setScenesError(describeError(error)));
     } finally {
       sceneMoveBusy.current = false;
       setMovingScene(false);
@@ -672,7 +672,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
       await reloadScenes();
     } catch (e) {
       alert(e instanceof SceneMoveError ? e.message : describeError(e));
-      void reloadScenes().catch((error) => setScenesError(describeError(error)));
+      await reloadScenes().catch((error) => setScenesError(describeError(error)));
     } finally {
       sceneMoveBusy.current = false;
       setMovingScene(false);

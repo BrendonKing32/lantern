@@ -10,7 +10,7 @@ export class SceneMoveError extends Error {}
 export async function flushForSceneMove(chapter: ChapterMeta): Promise<ChapterWithContent> {
   try {
     if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Reconnect and try again.");
-    if (openEditors.has(chapter.id)) throw new Error("Close the chapter and try again.");
+    if (openEditors.has(chapter.id)) throw new Error("This chapter is open in another window. Close it there and try again.");
     await waitForChapterActivity(chapter.id);
     await reopenStorage();
     const draft = await drafts.read(chapter.id);

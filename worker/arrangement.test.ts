@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { splitScenes } from "../shared/scenes";
 import worker, { type Env } from "./index";
-import { saveAsClaude } from "./mcp/writes";
 import { memoryR2, sqliteD1 } from "./testing/d1";
 
 let db: ReturnType<typeof sqliteD1>;
@@ -187,27 +186,19 @@ describe("chapter scene arrangement", () => {
     log.mockRestore();
   });
 
-  it("does not expose or accept a claimed version before the move reaches R2", async () => {
+  it("recovers an interrupted chapter save before allowing a scene move", async () => {
     await save("One.\n\n***\n\nTwo.");
     const a = await create(), b = await create();
     await link(a, 0); await link(b, 1);
-    let started!: () => void, resume!: () => void;
-    const waiting = new Promise<void>((resolve) => { started = resolve; });
-    const proceed = new Promise<void>((resolve) => { resume = resolve; });
-    const put = bucket.put.bind(bucket);
-    bucket.put = async (putKey, value, options) => {
-      if (putKey === key) { started(); await proceed; }
-      return put(putKey, value, options);
-    };
-    const move = arrange([b, a]);
-    await waiting;
-    expect((await request("GET", "/api/chapters/c")).status).toBe(409);
-    expect((await save("Stale text", 2)).status).toBe(409);
-    await expect(saveAsClaude(env, "c", 2, "Stale Claude text")).rejects.toThrow("changed since you read it");
-    resume();
-    expect((await move).status).toBe(200);
+    db.raw.prepare("UPDATE chapters SET version = 2 WHERE id = 'c'").run();
+    const read = await request("GET", "/api/chapters/c");
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ version: 2, content: "One.\n\n***\n\nTwo." });
+    expect((await arrange([b, a], 2)).status).toBe(409);
+    expect((await save("One.\n\n***\n\nTwo.", 2)).status).toBe(200);
+    expect((await bucket.get(key))?.customMetadata).toEqual({ version: "3" });
+    expect((await arrange([b, a], 3)).status).toBe(200);
     expect(bucket.objects.get(key)).toBe("Two.\n\n***\n\nOne.");
-    expect((await request("GET", "/api/chapters/c")).status).toBe(200);
   });
 
   it("refuses an unmatched in-text card and R2 content from another version", async () => {
