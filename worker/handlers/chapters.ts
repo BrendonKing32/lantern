@@ -102,12 +102,14 @@ export async function writeChapter(
     }
   } catch (e) {
     console.error("snapshot failed", e);
-    if (reason === "replace" || reason === "move" || reason === "claude") {
+    if (reason === "replace" || reason === "move" || reason === "claude" || reason === "restore") {
       await rollback();
       throw new HttpError(500, reason === "claude"
         ? "Lantern couldn't keep a copy of the chapter in History, so the draft wasn't accepted. Try again."
         : reason === "move"
         ? "Could not keep a copy in History, so nothing was moved"
+        : reason === "restore"
+        ? "Could not keep a copy in History, so the chapter wasn't restored. Try again."
         : "Could not preserve the earlier versions; no replacement was saved");
     }
   }

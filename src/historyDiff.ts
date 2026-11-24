@@ -1,4 +1,5 @@
-import { diffLines } from "diff";
+import { diffLines, diffWords } from "diff";
+import { countWords } from "../shared/wordcount";
 
 export type HistoryDiffRow =
   | { kind: "unchanged"; count: number }
@@ -10,6 +11,16 @@ export type HistoryDiff =
 
 const MAX_ROWS = 300;
 const MAX_TEXT = 60_000;
+
+export function countChangedWords(before: string, after: string): { added: number; removed: number } | null {
+  const changes = diffWords(before, after, { timeout: 500, maxEditLength: 4_000 });
+  if (!changes) return null;
+  return changes.reduce((totals, change) => {
+    if (change.added) totals.added += countWords(change.value);
+    if (change.removed) totals.removed += countWords(change.value);
+    return totals;
+  }, { added: 0, removed: 0 });
+}
 
 export function compareHistory(snapshot: string, draft: string): HistoryDiff {
   if (snapshot === draft) return { kind: "identical" };

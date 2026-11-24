@@ -1454,6 +1454,22 @@ select {
 .milestone-list li { border-top: 1px solid var(--rule); padding: 1rem 0; overflow-wrap: anywhere; }
 .milestone-list .export-note { margin: 0.3rem 0; }
 .milestone-note { white-space: pre-wrap; }
+.milestone-comparison {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  overflow: auto;
+  background: var(--night);
+  color: var(--wick);
+  padding: 2rem;
+}
+.milestone-comparison-list { list-style: none; padding: 0; max-width: 70rem; }
+.milestone-comparison-list > li { border-top: 1px solid var(--rule); padding: 1rem 0; }
 
 .export {
   width: min(30rem, calc(100vw - 2rem));

@@ -149,6 +149,16 @@ export interface Milestone {
   created_at: string;
 }
 
+export interface MilestoneChapter {
+  milestone_id: string;
+  chapter_id: string;
+  position: number;
+  title: string;
+  act_title: string | null;
+  version: number;
+  word_count: number;
+}
+
 export interface ChapterWithContent extends ChapterMeta {
   content: string;
 }
