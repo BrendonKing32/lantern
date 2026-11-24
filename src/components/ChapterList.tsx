@@ -23,7 +23,6 @@ import {
   shouldCloseChapterActions,
 } from "../chapterActions";
 import { actRows, arrangeFromRows } from "../acts";
-import { ChapterStatus } from "./ChapterStatus";
 import type { ChapterRevisionStatus } from "../../shared/types";
 
 interface Props {
@@ -280,6 +279,13 @@ function ActRow({ id, act, chapters, words, first, last, renaming: startRenaming
   );
 }
 
+const STATUSES: [ChapterRevisionStatus, string][] = [
+  ["drafting", "Drafting"],
+  ["revising", "Revising"],
+  ["done", "Done"],
+];
+const STATUS_LABELS = Object.fromEntries(STATUSES) as Record<ChapterRevisionStatus, string>;
+
 interface RowProps {
   chapter: ChapterMeta;
   number: number;
@@ -300,6 +306,7 @@ const ChapterRow = memo(function ChapterRow({ chapter, number, words, selected, 
   });
   const [renaming, setRenaming] = useState(false);
   const chapterButtonRef = useRef<HTMLButtonElement>(null);
+  const status = chapter.revision_status ?? "drafting";
 
   const finishRename = (title: string | null) => {
     setRenaming(false);
@@ -337,55 +344,49 @@ const ChapterRow = memo(function ChapterRow({ chapter, number, words, selected, 
         >
           <span className="chapter-num">{number}</span>
           <span className="chapter-title">{chapter.title}</span>
-          <span className="chapter-words">{words.toLocaleString()}</span>
+          <span className="chapter-meta">
+            <span className="chapter-words">{words.toLocaleString()} words</span>
+            {status !== "drafting" && (
+              <span className={`chapter-state is-${status}`}>{STATUS_LABELS[status]}</span>
+            )}
+          </span>
         </button>
       )}
       {!renaming && (
-        <>
-          <ChapterStatus chapter={chapter} onChange={onStatus} offline={offline} />
-          <span className="chapter-tools">
-            <button
-              className="icon-btn"
-              aria-label={`Rename ${chapter.title}`}
-              onClick={() => setRenaming(true)}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3z" /></svg>
-            </button>
-            <button
-              className="icon-btn"
-              aria-label={`Start an act at ${chapter.title}`}
-              title="Start an act here"
-              onClick={() => onStartAct(chapter.id)}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8h11M5 4.5h6M5 11.5h6" /></svg>
-            </button>
-            <button
-              className="icon-btn"
-              aria-label={`Delete ${chapter.title}`}
-              onClick={() => onDelete(chapter)}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
-            </button>
-          </span>
-          <ActionsMenu label={`Actions for ${chapter.title}`}>
-            {(close) => (
-              <>
-                <button type="button" onClick={() => { close(); setRenaming(true); }}>
-                  Rename
-                </button>
-                <button type="button" onClick={() => { close(); onStartAct(chapter.id); }}>
-                  Start an act here
-                </button>
-                <button type="button" onClick={() => { close(); onDelete(chapter); }}>
-                  Delete
-                </button>
-              </>
-            )}
-          </ActionsMenu>
-        </>
+        <ActionsMenu label={`Actions for ${chapter.title}`}>
+          {(close) => (
+            <>
+              <button type="button" onClick={() => { close(); setRenaming(true); }}>
+                Rename
+              </button>
+              <button type="button" onClick={() => { close(); onStartAct(chapter.id); }}>
+                Start an act here
+              </button>
+              <button type="button" onClick={() => { close(); onDelete(chapter); }}>
+                Delete
+              </button>
+              <div
+                className="chapter-actions-group"
+                role="group"
+                aria-label={`Revision status for ${chapter.title}`}
+                title={offline ? "Changing chapter status needs a connection" : undefined}
+              >
+                <span className="chapter-actions-heading" aria-hidden="true">Status</span>
+                {STATUSES.map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={status === value}
+                    disabled={offline}
+                    onClick={() => { close(); if (status !== value) onStatus(chapter.id, value); }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </ActionsMenu>
       )}
     </li>
   );

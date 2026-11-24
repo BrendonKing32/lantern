@@ -386,9 +386,10 @@ select {
   flex: 1;
   min-width: 0;
   display: grid;
-  grid-template-columns: 1.6rem 1fr auto;
-  align-items: center;
-  gap: 0.3rem;
+  grid-template-columns: 1.4rem minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 0.2rem;
+  row-gap: 0.1rem;
   border: 0;
   background: none;
   text-align: left;
@@ -406,31 +407,34 @@ select {
   white-space: normal;
   line-height: 1.35;
 }
-.chapter-words {
+.chapter-meta {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.5rem;
   color: var(--text-faint);
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
-.chapter-tools {
-  position: absolute;
-  right: 0.3rem;
-  display: none;
-  gap: 0.1rem;
-  padding-left: 0.4rem;
-  background: var(--shade);
-  border-radius: 6px;
+.chapter-state.is-revising {
+  color: var(--lamp);
 }
-.chapter:hover .chapter-tools,
-.chapter:focus-within .chapter-tools {
-  display: flex;
+.chapter-state.is-done {
+  color: var(--sage);
 }
-.chapter.is-selected .chapter-tools {
-  background: var(--chip);
-}
+/* The ⋯ button keeps its own slot, so revealing it never covers the title or counts. */
 .chapter-actions {
   position: relative;
-  display: none;
   flex: none;
+}
+.chapter > .chapter-actions {
+  opacity: 0;
+}
+.chapter:hover > .chapter-actions,
+.chapter:focus-within > .chapter-actions,
+.chapter.is-selected > .chapter-actions,
+.chapter > .chapter-actions[open] {
+  opacity: 1;
 }
 .chapter-actions summary {
   list-style: none;
@@ -453,7 +457,7 @@ select {
 }
 .chapter-actions-menu button {
   width: 100%;
-  min-height: 2.75rem;
+  min-height: 2.25rem;
   border: 0;
   border-radius: 6px;
   background: none;
@@ -462,9 +466,31 @@ select {
   padding: 0.55rem 0.75rem;
   cursor: pointer;
 }
-.chapter-actions-menu button:hover,
+.chapter-actions-menu button:hover:not(:disabled),
 .chapter-actions-menu button:focus-visible {
   background: rgb(var(--tint-rgb) / 0.08);
+}
+.chapter-actions-menu button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.chapter-actions-group {
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--rule);
+}
+.chapter-actions-heading {
+  display: block;
+  padding: 0.35rem 0.75rem 0.15rem;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.chapter-actions-menu button[aria-pressed="true"]::after {
+  content: "✓";
+  float: right;
+  color: var(--lamp);
 }
 .chapter-rename {
   flex: 1;
@@ -518,12 +544,12 @@ select {
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
-.act .chapter-actions {
-  display: block;
-  opacity: 0.55;
+.act > .chapter-actions {
+  opacity: 0;
 }
-.act:hover .chapter-actions,
-.act:focus-within .chapter-actions {
+.act:hover > .chapter-actions,
+.act:focus-within > .chapter-actions,
+.act > .chapter-actions[open] {
   opacity: 1;
 }
 .add-row {
@@ -958,15 +984,15 @@ select {
   .book-item .book-name {
     padding-right: 6rem;
   }
-  .chapter-tools {
-    display: none;
+  .chapter > .chapter-actions,
+  .act > .chapter-actions {
+    opacity: 1;
   }
-  .chapter:hover .chapter-tools,
-  .chapter:focus-within .chapter-tools {
-    display: none;
+  .chapter-drag.icon-btn {
+    width: 1.75rem;
   }
-  .chapter-actions {
-    display: block;
+  .chapter-actions-menu button {
+    min-height: 2.75rem;
   }
   .chapter-open {
     min-height: 2.75rem;
