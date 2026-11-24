@@ -7,10 +7,12 @@ interface Props {
   loadError: string | null;
   onCreate: (name: string, note: string) => Promise<void>;
   onChanged: () => Promise<void>;
+  onCompare: (milestone: Milestone) => void;
+  onExport: (milestone: Milestone) => void;
   onClose: () => void;
 }
 
-export function MilestonesDialog({ milestones, loadError, onCreate, onChanged, onClose }: Props) {
+export function MilestonesDialog({ milestones, loadError, onCreate, onChanged, onCompare, onExport, onClose }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
@@ -66,6 +68,8 @@ export function MilestonesDialog({ milestones, loadError, onCreate, onChanged, o
             <strong>{milestone.name}</strong>
             <p className="export-note">{new Date(milestone.created_at).toLocaleDateString()} · {milestone.word_count.toLocaleString()} words</p>
             {milestone.note && <p className="milestone-note">{milestone.note}</p>}
+            <button type="button" className="btn" disabled={busy} onClick={() => onCompare(milestone)}>Compare with now</button>{" "}
+            <button type="button" className="btn" disabled={busy} onClick={() => onExport(milestone)}>Export</button>{" "}
             <button type="button" className="btn" disabled={busy} onClick={() => {
               setEditing(milestone.id); setEditName(milestone.name); setEditNote(milestone.note);
             }}>Rename</button>{" "}

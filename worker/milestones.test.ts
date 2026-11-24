@@ -40,6 +40,36 @@ describe("milestones", () => {
     expect((await request("GET", `${path}/a`)).status).toBe(404);
   });
 
+  it("restores milestone text through History without adding daily words", async () => {
+    const milestone = await (await create()).json() as { id: string };
+    expect((await request("PUT", "/api/chapters/a", {
+      content: "Newer writing here", baseVersion: 2, day: "2026-11-24",
+    })).status).toBe(200);
+    const before = db.raw.prepare("SELECT words, revised FROM daily_words WHERE day = '2026-11-24'").get();
+    const copied = await (await request("GET", `/api/milestones/${milestone.id}/chapters/a`)).json() as { content: string };
+    expect((await request("PUT", "/api/chapters/a", {
+      content: copied.content, baseVersion: 3, snapshot: "restore", day: "2026-11-24",
+    })).status).toBe(200);
+    expect(db.raw.prepare("SELECT words, revised FROM daily_words WHERE day = '2026-11-24'").get()).toEqual(before);
+    const snapshot = db.raw.prepare("SELECT id, reason FROM chapter_snapshots WHERE chapter_id = 'a' AND reason = 'restore'").get() as { id: string; reason: string };
+    expect(snapshot).toBeDefined();
+    expect(await (await request("GET", `/api/chapters/a/history/${snapshot.id}`)).json()).toMatchObject({ content: "Newer writing here" });
+    expect(await (await request("GET", "/api/chapters/a")).json()).toMatchObject({ content: "First text" });
+  });
+
+  it("adds a deleted milestone chapter back as a new chapter", async () => {
+    const milestone = await (await create()).json() as { id: string };
+    await request("DELETE", "/api/chapters/a");
+    const copied = await (await request("GET", `/api/milestones/${milestone.id}/chapters/a`)).json() as { title: string; content: string };
+    const chapter = await (await request("POST", "/api/projects/p/chapters", { title: copied.title })).json() as { id: string; version: number };
+    expect(chapter.id).not.toBe("a");
+    expect((await request("PUT", `/api/chapters/${chapter.id}`, {
+      content: copied.content, baseVersion: chapter.version, snapshot: "restore", day: "2026-11-24",
+    })).status).toBe(200);
+    expect(await (await request("GET", `/api/chapters/${chapter.id}`)).json()).toMatchObject({ title: "First", content: "First text" });
+    expect(db.raw.prepare("SELECT words, revised FROM daily_words WHERE day = '2026-11-24'").get()).toEqual({ words: 0, revised: 0 });
+  });
+
   it("copies reconciled chapter texts and versions and keeps them after deletion", async () => {
     const response = await create();
     expect(response.status).toBe(201);

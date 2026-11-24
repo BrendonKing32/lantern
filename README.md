@@ -285,7 +285,9 @@ app and private API protected.
 - **Milestones:** use **More → Milestones** to save a named copy of every chapter, with an
   optional note. Lantern saves your unsaved writing first; this needs a connection. Rename or
   delete milestones there without changing your chapters. The novel sidebar shows how many words
-  you've gained or removed since the latest milestone.
+  you've gained or removed since the latest milestone. **Compare with now** shows chapter changes,
+  including unsaved writing on this device. Open a chapter to compare its text, restore it, or add a
+  deleted chapter back. **Export** saves the milestone in any of the usual formats.
 - **Claude's draft:** **Review draft** compares pending connector edits with your chapter.
   If you wrote more since the draft began, the comparison shows the edits that still fit
   your current text and lists the ones that don't. Save your writing, then accept the

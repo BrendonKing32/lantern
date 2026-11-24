@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ProjectDetail } from "../../shared/types";
+import type { Milestone, ProjectDetail } from "../../shared/types";
 import type { ExportFormat } from "../export";
 
 const AUTHOR_KEY = "lantern:author";
@@ -21,10 +21,11 @@ function savedAuthor(): string {
 
 interface Props {
   detail: ProjectDetail;
+  milestone?: Milestone;
   onClose: () => void;
 }
 
-export function ExportDialog({ detail, onClose }: Props) {
+export function ExportDialog({ detail, milestone, onClose }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const [format, setFormat] = useState<ExportFormat>("docx");
   const [author, setAuthor] = useState(savedAuthor);
@@ -46,8 +47,9 @@ export function ExportDialog({ detail, onClose }: Props) {
       /* remembering the name is only a convenience */
     }
     try {
-      const { exportBook } = await import("../export");
-      await exportBook(detail, format, author);
+      const { exportBook, chapterTexts, milestoneTexts } = await import("../export");
+      const texts = milestone ? await milestoneTexts(milestone) : await chapterTexts(detail);
+      await exportBook(detail, format, author, texts, milestone?.name);
       onClose();
     } catch (e) {
       setError(e instanceof Error && e.message ? e.message : "The export didn't work. Try again.");
@@ -65,7 +67,7 @@ export function ExportDialog({ detail, onClose }: Props) {
           void run();
         }}
       >
-        <h2 id="export-title">Export “{detail.project.title}”</h2>
+        <h2 id="export-title">Export “{detail.project.title}”{milestone && ` – ${milestone.name}`}</h2>
 
         <fieldset className="export-formats">
           <legend>Format</legend>
@@ -94,8 +96,9 @@ export function ExportDialog({ detail, onClose }: Props) {
         )}
 
         <p className="export-note">
-          Includes all {detail.chapters.length} {detail.chapters.length === 1 ? "chapter" : "chapters"} in order, with
-          any writing not yet saved.
+          {milestone
+            ? `Includes all ${milestone.chapter_count} chapters as they were in this milestone.`
+            : `Includes all ${detail.chapters.length} chapters in order, with any writing not yet saved.`}
         </p>
         {error && (
           <p className="export-error" role="alert">
