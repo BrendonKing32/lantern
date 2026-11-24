@@ -143,6 +143,20 @@ export interface ChapterWithContent extends ChapterMeta {
   content: string;
 }
 
+export interface MarginNote {
+  id: string;
+  project_id: string;
+  chapter_id: string;
+  quote: string;
+  prefix: string;
+  suffix: string;
+  body: string;
+  author: "writer" | "claude";
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SaveResult {
   version: number;
   word_count: number;

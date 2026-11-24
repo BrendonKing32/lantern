@@ -17,6 +17,7 @@ import {
   type DeletedChapter,
   type DeletedProject,
   type Dialect,
+  type MarginNote,
   type Outline,
   type ProjectDetail,
   type ProjectSummary,
@@ -32,6 +33,20 @@ import {
 import { array, boolean, type Check, literal, nullable, number, object, optional, ShapeError, string, tagged } from "./validate";
 
 export const ok = object({ ok: literal(true) });
+
+export const marginNote: Check<MarginNote> = object({
+  id: string,
+  project_id: string,
+  chapter_id: string,
+  quote: string,
+  prefix: string,
+  suffix: string,
+  body: string,
+  author: literal("writer", "claude"),
+  resolved_at: nullable(string),
+  created_at: string,
+  updated_at: string,
+});
 
 export const projectSummary: Check<ProjectSummary> = object({
   id: string,

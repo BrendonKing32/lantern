@@ -1,4 +1,5 @@
 import type { BibleEntry, BibleKind, BookCheckEvent, Dialect, SceneMeta } from "../shared/types";
+import type { TextAnchor } from "../shared/anchors";
 import * as schema from "./schemas";
 import { array, type Check, nullable, ShapeError } from "./validate";
 import { localDay } from "./when";
@@ -163,6 +164,13 @@ export const api = {
   moveScene: (id: string, toChapterId: string, beforePassageIndex: number | null, baseVersions: { from: number; to: number }, expectedFromChapterId?: string) =>
     request(schema.sceneMoveResult, "POST", `/api/scenes/${id}/move`, { toChapterId, beforePassageIndex, baseVersions, expectedFromChapterId }),
   deleteChapter: (id: string) => request(schema.ok, "DELETE", `/api/chapters/${id}`),
+  notes: (chapterId: string, resolved: boolean) =>
+    request(array(schema.marginNote), "GET", `/api/chapters/${chapterId}/notes?resolved=${resolved ? 1 : 0}`),
+  createNote: (chapterId: string, note: TextAnchor & { body: string }) =>
+    request(schema.marginNote, "POST", `/api/chapters/${chapterId}/notes`, note),
+  updateNote: (id: string, patch: { body?: string; resolved?: boolean }) =>
+    request(schema.marginNote, "PATCH", `/api/notes/${id}`, patch),
+  deleteNote: (id: string) => request(schema.ok, "DELETE", `/api/notes/${id}`),
   listHistory: (chapterId: string) => request(array(schema.snapshot), "GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>
     request(schema.snapshotWithContent, "GET", `/api/chapters/${chapterId}/history/${snapshotId}`),

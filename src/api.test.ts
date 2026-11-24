@@ -33,6 +33,23 @@ async function failure(p: Promise<unknown>): Promise<ApiError> {
 }
 
 describe("request validation", () => {
+  it("requests and validates notes and their mutations", async () => {
+    const note = { id: "n", project_id: "p", chapter_id: "c", quote: "words", prefix: "", suffix: "",
+      body: "Private", author: "claude", resolved_at: null, created_at: "now", updated_at: "now" };
+    fetchMock.mockResolvedValueOnce(json([note])).mockResolvedValueOnce(json(note))
+      .mockResolvedValueOnce(json({ ...note, resolved_at: "now" })).mockResolvedValueOnce(json({ ok: true }));
+    await expect(api.notes("c", false)).resolves.toEqual([note]);
+    await api.createNote("c", { quote: "words", prefix: "", suffix: "", body: "Private" });
+    await api.updateNote("n", { resolved: true });
+    await api.deleteNote("n");
+    expect(fetchMock.mock.calls.map(([url, options]) => [url, options?.method])).toEqual([
+      ["/api/chapters/c/notes?resolved=0", "GET"], ["/api/chapters/c/notes", "POST"],
+      ["/api/notes/n", "PATCH"], ["/api/notes/n", "DELETE"],
+    ]);
+    fetchMock.mockResolvedValueOnce(json([{ ...note, author: "someone" }]));
+    expect((await failure(api.notes("c", true))).data?.code).toBe(INVALID_RESPONSE);
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe("/api/chapters/c/notes?resolved=1");
+  });
   it("sends a versioned chapter scene arrangement", async () => {
     fetchMock.mockResolvedValue(json({ version: 4, word_count: 3, updated_at: "now" }));
     await expect(api.arrangeScenes("c1", 3, ["b", "a"])).resolves.toMatchObject({ version: 4 });

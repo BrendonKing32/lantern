@@ -15,9 +15,13 @@ import { replayDraft } from "../../shared/draftReplay";
 import { splitScenes } from "../../shared/scenes";
 import { sceneBreakKeymap, sceneLabels } from "../sceneLabels";
 import { minimalChange } from "../minimalChange";
+import { findAnchor, makeAnchor, type TextAnchor } from "../../shared/anchors";
+import { noteDecorations, notesChanged } from "../noteDecorations";
+import { NoteLoadGate } from "../noteLoad";
+import { NotesPanel } from "./NotesPanel";
 import { revisedWords } from "../revisedWords";
 import { waitForChapterActivity } from "../chapterActivity";
-import type { BibleEntry, ChapterWithContent, Dialect, SaveResult, SceneMeta } from "../../shared/types";
+import type { BibleEntry, ChapterWithContent, Dialect, MarginNote, SaveResult, SceneMeta } from "../../shared/types";
 import type { ClaudeDraft } from "../../shared/types";
 
 export type SaveState =
@@ -42,6 +46,10 @@ interface Props {
   onSaved: (chapterId: string, info: SaveResult, replaced?: boolean) => void;
   onStatus: (state: SaveState, detail?: string) => void;
   historyOpen: boolean;
+  notesOpen: boolean;
+  onOpenNotes: () => void;
+  onCloseNotes: () => void;
+  offline: boolean;
   /** Story guide entries, for [[links]]. */
   entries: BibleEntry[];
   onOpenLink: (name: string) => void;
@@ -65,6 +73,7 @@ export interface EditorControls {
   /** Select and scroll to a quoted passage. False if it isn't in the chapter. */
   reveal: (quote: string) => boolean;
   revealScene: (index: number) => boolean;
+  addNote?: () => void;
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -98,6 +107,10 @@ export function ChapterEditor({
   onSaved,
   onStatus,
   historyOpen,
+  notesOpen,
+  onOpenNotes,
+  onCloseNotes,
+  offline,
   onCloseHistory,
   entries,
   onOpenLink,
@@ -119,6 +132,14 @@ export function ChapterEditor({
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [, refreshDraftReview] = useState(0);
+  const [notes, setNotes] = useState<MarginNote[]>([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [noteSelectionError, setNoteSelectionError] = useState<string | null>(null);
+  const [noteAnchor, setNoteAnchor] = useState<TextAnchor | null>(null);
+  const [selectedNote, setSelectedNote] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const noteLoad = useRef(new NoteLoadGate());
 
   const text = useRef("");
   const version = useRef(0);
@@ -144,6 +165,41 @@ export function ChapterEditor({
   const linkHost = useRef({ entries, onOpenLink });
   linkHost.current = { entries, onOpenLink };
   const view = useRef<EditorView | null>(null);
+  const noteHost = useRef({
+    notes,
+    add: () => {},
+    open: (_id: string) => {},
+    changed: (_text: string) => {},
+  });
+  noteHost.current = {
+    notes,
+    add: () => {
+      onOpenNotes();
+      setDraftOpen(false);
+      setSelectedNote(null);
+      setNoteAnchor(null);
+      setNoteSelectionError(null);
+      const editor = view.current;
+      const selection = editor?.state.selection.main;
+      if (!editor || !selection || selection.empty) {
+        setNoteSelectionError("Select a passage in the chapter, then choose Add note.");
+      } else if (selection.to - selection.from > 2000) {
+        setNoteSelectionError("Select a passage of 2,000 characters or fewer.");
+      } else if (offline) {
+        setNoteSelectionError("Notes need a connection. Reconnect and try again.");
+      } else {
+        setNoteAnchor(makeAnchor(editor.state.doc.toString(), selection.from, selection.to));
+      }
+    },
+    open: (id) => {
+      onOpenNotes();
+      setDraftOpen(false);
+      setNoteSelectionError(null);
+      setNoteAnchor(null);
+      setSelectedNote(id);
+    },
+    changed: setNoteText,
+  };
   const sceneHost = useRef({ scenes, sceneBaseline, title, onOpenScene });
   sceneHost.current = { scenes, sceneBaseline, title, onOpenScene };
   const sceneSlot = useRef(new Compartment());
@@ -182,10 +238,31 @@ export function ChapterEditor({
     ...proseExtensions,
     wikilinks({ entries: () => linkHost.current.entries, open: (n) => linkHost.current.onOpenLink(n) }),
     sceneBreakKeymap,
+    noteDecorations({
+      notes: () => noteHost.current.notes,
+      add: () => noteHost.current.add(),
+      open: (id) => noteHost.current.open(id),
+      changed: (content) => noteHost.current.changed(content),
+    }),
     sceneSlot.current.of([]),
     grammarSlot.current.of(proofing(grammarOnRef.current)),
     readingSlot.current.of(readingMode(readOnlyRef.current)),
   ]);
+  useEffect(() => {
+    view.current?.dispatch({ effects: notesChanged.of(notes) });
+  }, [notes]);
+  useEffect(() => {
+    if (offline) { setNotesLoading(false); return; }
+    let active = true;
+    const current = noteLoad.current.start();
+    setNotesLoading(true);
+    setNotesError(null);
+    void Promise.all([api.notes(chapterId, false), api.notes(chapterId, true)]).then(
+      ([open, resolved]) => { if (active && current()) setNotes([...open, ...resolved]); },
+      (error) => { if (active && current()) setNotesError(isNetworkError(error) ? "Notes need a connection. Reconnect and try again." : describeError(error)); },
+    ).finally(() => { if (active && current()) setNotesLoading(false); });
+    return () => { active = false; };
+  }, [chapterId, offline, notesOpen]);
   useEffect(() => {
     const editor = view.current;
     if (!editor) return;
@@ -242,6 +319,7 @@ export function ChapterEditor({
         if (!readOnlyRef.current) v.focus();
         return true;
       },
+      addNote: () => noteHost.current.add(),
     };
     return () => {
       controls.current = null;
@@ -658,6 +736,7 @@ export function ChapterEditor({
 
   const openDraft = () => {
     onCloseHistory();
+    onCloseNotes();
     setDraftError(null);
     setDraftOpen(true);
     if (dirty.current) void saveRef.current();
@@ -770,6 +849,22 @@ export function ChapterEditor({
         onClose={onCloseHistory}
       />
     )}
+    {initialDoc !== null && (
+      <NotesPanel chapterId={chapterId} title={title} open={notesOpen} text={noteText} notes={notes} onNotes={(update) => {
+        noteLoad.current.invalidate();
+        setNotesLoading(false);
+        setNotes(update);
+      }}
+        offline={offline} loading={notesLoading} loadError={noteSelectionError ?? notesError} anchor={noteAnchor} selected={selectedNote}
+        onCancelAdd={() => setNoteAnchor(null)} onSelect={setSelectedNote}
+        onJump={(note) => {
+          const editor = view.current;
+          const range = editor && findAnchor(editor.state.doc.toString(), note);
+          if (!editor || !range) return;
+          editor.dispatch({ selection: EditorSelection.range(range.from, range.to), effects: EditorView.scrollIntoView(range.from, { y: "center" }) });
+          if (!readOnlyRef.current) editor.focus();
+        }} onClose={onCloseNotes} />
+    )}
     {draftOpen && claudeDraft && initialDoc !== null && (
       <ClaudeDraftPanel
         title={title}
@@ -825,7 +920,9 @@ export function ChapterEditor({
           extensions={extensions}
           onCreateEditor={(v) => {
             view.current = v;
+            setNoteText(v.state.doc.toString());
             v.dispatch({ effects: [
+              notesChanged.of(noteHost.current.notes),
               grammarSlot.current.reconfigure(proofing(grammarOnRef.current)),
               readingSlot.current.reconfigure(readingMode(readOnlyRef.current)),
               sceneSlot.current.reconfigure(labelExtensions()),
