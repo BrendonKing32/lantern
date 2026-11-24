@@ -22,6 +22,8 @@ export type Block =
 
 export interface Chapter {
   title: string;
+  /** Set on the first chapter of an act: the act's title, shown on a page of its own before it. */
+  part?: string;
   blocks: Block[];
 }
 
@@ -157,6 +159,19 @@ export function slug(title: string): string {
     .trim()
     .replace(/\s+/g, " ");
   return s || "Untitled";
+}
+
+/**
+ * The act title to show before each chapter: set on the first chapter of
+ * each act, undefined elsewhere. Chapters must be in book order.
+ */
+export function partTitles(chapters: { act_id?: string | null }[], acts: { id: string; title: string }[]): (string | undefined)[] {
+  const title = new Map(acts.map((a) => [a.id, a.title]));
+  return chapters.map((c, i) => {
+    const act = c.act_id && title.has(c.act_id) ? c.act_id : null;
+    const prev = i > 0 ? chapters[i - 1].act_id : null;
+    return act && act !== prev ? title.get(act) : undefined;
+  });
 }
 
 /** "about 82,000 words", rounded the way manuscripts state length. */
