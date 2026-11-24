@@ -18,6 +18,7 @@ import {
   type DeletedProject,
   type Dialect,
   type Outline,
+  type Milestone,
   type ProjectDetail,
   type ProjectSummary,
   type SaveResult,
@@ -44,6 +45,11 @@ export const projectSummary: Check<ProjectSummary> = object({
 });
 
 export const projectRef = object({ id: string, title: string });
+
+export const milestone: Check<Milestone> = object({
+  id: string, project_id: string, name: string, note: string,
+  word_count: number, chapter_count: number, created_at: string,
+});
 
 export const projectArchived = object({ id: string, archived_at: nullable(string) });
 

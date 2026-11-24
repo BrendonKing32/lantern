@@ -59,9 +59,9 @@ export const createMilestone: Handler = async (req, env, p) => {
   const note = input.note === undefined ? "" : noteValue(input.note);
   const id = newId();
   const createdAt = now();
-  await env.DB.prepare("INSERT INTO milestones (id, project_id, name, note, created_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(id, p.id, name, note, createdAt).run();
   try {
+    await env.DB.prepare("INSERT INTO milestones (id, project_id, name, note, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(id, p.id, name, note, createdAt).run();
     const { results } = await env.DB.prepare(
       `SELECT ${CHAPTER_COLS} FROM chapters WHERE project_id = ? AND deleted_at IS NULL ORDER BY position`,
     ).bind(p.id).all<ChapterMeta>();

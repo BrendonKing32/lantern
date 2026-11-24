@@ -1409,6 +1409,26 @@ select {
 
 /* ---------- export ---------- */
 
+.milestone-form, .milestone-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.milestone-form { gap: 0.7rem; margin-bottom: 1rem; }
+.milestone-form label { color: var(--text-soft); font-size: 0.8125rem; }
+.milestone-form input, .milestone-form textarea {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--night);
+  color: var(--wick);
+  font: inherit;
+}
+.milestone-list { list-style: none; margin: 0; padding: 0; }
+.milestone-list li { border-top: 1px solid var(--rule); padding: 1rem 0; overflow-wrap: anywhere; }
+.milestone-list .export-note { margin: 0.3rem 0; }
+.milestone-note { white-space: pre-wrap; }
+
 .export {
   width: min(30rem, calc(100vw - 2rem));
   max-height: calc(100dvh - 2rem);

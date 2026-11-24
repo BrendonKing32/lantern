@@ -15,6 +15,7 @@ import { replayDraft } from "../../shared/draftReplay";
 import { splitScenes } from "../../shared/scenes";
 import { sceneBreakKeymap, sceneLabels } from "../sceneLabels";
 import { minimalChange } from "../minimalChange";
+import { waitForChapterActivity } from "../chapterActivity";
 import type { BibleEntry, ChapterWithContent, Dialect, SaveResult, SceneMeta } from "../../shared/types";
 import type { ClaudeDraft } from "../../shared/types";
 
@@ -60,6 +61,7 @@ interface Props {
 export interface EditorControls {
   /** The text on screen, unsaved writing included. */
   text: () => string;
+  saveForMilestone?: () => Promise<void>;
   /** Select and scroll to a quoted passage. False if it isn't in the chapter. */
   reveal: (quote: string) => boolean;
   revealScene: (index: number) => boolean;
@@ -211,6 +213,14 @@ export function ChapterEditor({
     if (!controls) return;
     controls.current = {
       text: () => text.current,
+      saveForMilestone: async () => {
+        await waitForChapterActivity(chapterId);
+        await saveRef.current();
+        await waitForChapterActivity(chapterId);
+        if (dirty.current || blocked.current || inFlight.current) {
+          throw new Error("Open this chapter and resolve its save before trying again.");
+        }
+      },
       reveal: (quote) => {
         const v = view.current;
         const at = v && locate(v.state.doc.toString(), quote);

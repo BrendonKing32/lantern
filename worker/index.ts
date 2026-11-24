@@ -173,12 +173,10 @@ export default {
     }
   },
   scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(cleanupIncompleteMilestones(env).catch((e) => {
-      console.error("scheduled milestone cleanup failed", e);
-      throw e;
-    }));
     ctx.waitUntil(
-      createBackup(env).catch((e) => {
+      cleanupIncompleteMilestones(env).catch((e) => {
+        console.error("scheduled milestone cleanup failed", e);
+      }).then(() => createBackup(env)).catch((e) => {
         console.error("scheduled backup failed", e);
         throw e;
       }),
