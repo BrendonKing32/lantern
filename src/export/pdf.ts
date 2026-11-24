@@ -47,10 +47,19 @@ function definition(book: Book): TDocumentDefinitions {
   ];
 
   book.chapters.forEach((chapter, i) => {
+    // An act's title gets a page of its own before its first chapter.
+    if (chapter.part) {
+      content.push({
+        text: chapter.part,
+        style: "part",
+        ...(i ? { pageBreak: "before" as const } : {}),
+        outline: true,
+      });
+    }
     content.push({
       text: chapter.title,
       style: "chapter",
-      ...(i ? { pageBreak: "before" as const } : {}),
+      ...(i || chapter.part ? { pageBreak: "before" as const } : {}),
       outline: true,
     });
     content.push(...chapter.blocks.map(paragraph));
@@ -64,6 +73,7 @@ function definition(book: Book): TDocumentDefinitions {
     styles: {
       title: { fontSize: 26, bold: true, lineHeight: 1.2 },
       byline: { fontSize: 13, margin: [0, 18, 0, 0] },
+      part: { fontSize: 22, alignment: "center", margin: [0, 200, 0, 0] },
       chapter: { fontSize: 18, alignment: "center", margin: [0, 132, 0, 28] },
       subheading: { fontSize: 14, bold: true, alignment: "center", margin: [0, 24, 0, 14] },
       subheading2: { fontSize: 12, italics: true, alignment: "center", margin: [0, 20, 0, 12] },

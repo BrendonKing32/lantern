@@ -276,7 +276,9 @@ app and private API protected.
   chapter's ⋯ menu, or its hover tools) begins a new act at that chapter. Drag a chapter under
   another act's heading to move it there. An act's ⋯ menu renames it, moves it (its chapters go
   with it) or removes it; removing an act keeps its chapters where they are, in the act before.
-  Chapter numbers run through the whole book.
+  Chapter numbers run through the whole book. Exports show each act's title on a page of its
+  own before its first chapter (in EPUB's contents too); the Markdown export files chapters in
+  a folder per act.
 - **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
   index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
   to reorder the book (a card dropped on another joins that card's act), click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
