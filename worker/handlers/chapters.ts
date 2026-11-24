@@ -3,6 +3,7 @@ import type { DeletedChapter, SnapshotReason } from "../../shared/types";
 import { chapterKey, getChapterRow, insertChapter, lastActId, MARKDOWN, MAX_CHAPTER_BYTES, requireProject } from "../db";
 import { body, cleanTitle, HttpError, isDay, json, now, type Handler } from "../http";
 import { snapshotBeforeSave } from "./history";
+import { afterChapterWrite } from "../sceneSync";
 
 export const listDeletedChapters: Handler = async (_req, env, p) => {
   await requireProject(env, p.id);
@@ -128,6 +129,7 @@ export const saveChapter: Handler = async (req, env, p) => {
       .run();
     throw e;
   }
+  await afterChapterWrite(env, row, b.content, b.baseVersion + 1);
   // Count the words this save added (or removed) toward the writer's day.
   // Putting back an old version from History isn't writing, so it doesn't count.
   const day = isDay(b.day) ? b.day : ts.slice(0, 10);

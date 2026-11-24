@@ -1,25 +1,33 @@
 import { useState } from "react";
-import type { ChapterMeta, SceneMeta } from "../../shared/types";
+import type { Act, ChapterMeta, SceneMeta, ScenePlaceholder } from "../../shared/types";
+import { actRows } from "../acts";
 
-type ScenePatch = Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">>;
+type ScenePatch = Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">> & {
+  link?: { passage_index: number }; unlink?: true; confirm?: true;
+};
 
 interface Props {
   chapters: ChapterMeta[];
+  acts: Act[];
   scenes: SceneMeta[];
+  placeholders: ScenePlaceholder[];
+  projectId: string;
   offline: boolean;
   /** Add a scene to a chapter, or with null, a scene that isn't in any chapter yet. */
   onAdd: (chapterId: string | null) => Promise<SceneMeta | null>;
   onUpdate: (scene: SceneMeta, patch: ScenePatch) => Promise<void>;
   onDelete: (scene: SceneMeta) => void;
   onMove: (chapterId: string | null, sceneIds: string[]) => void;
+  onOpen: (scene: SceneMeta) => void;
 }
 
 // Scenes stand on their own. Each one is either unassigned or placed in a
 // chapter, and can be moved between them at any time.
-export function SceneBoard({ chapters, scenes, offline, onAdd, onUpdate, onDelete, onMove }: Props) {
+export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, offline, onAdd, onUpdate, onDelete, onMove, onOpen }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ScenePatch>({});
   const [busy, setBusy] = useState(false);
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(`lantern.scene-check.${projectId}`) === "1");
   const begin = (scene: SceneMeta) => {
     setDraft({
       title: scene.title,
@@ -79,17 +87,53 @@ export function SceneBoard({ chapters, scenes, offline, onAdd, onUpdate, onDelet
     })),
   ];
 
+  const needsCheck = chapters.filter((chapter) =>
+    scenes.some((scene) => scene.chapter_id === chapter.id && scene.unconfirmed) ||
+    (scenes.some((scene) => scene.chapter_id === chapter.id && !scene.in_text) &&
+      placeholders.some((placeholder) => placeholder.chapter_id === chapter.id)));
+  const rows = actRows(chapters, acts);
+  const groupOrder = [groups[0], ...rows.filter((row) => row.kind === "chapter").map((row) => groups.find((group) => group.id === row.chapter.id)!)];
+  const addCard = async (placeholder: ScenePlaceholder) => {
+    const scene = await onAdd(placeholder.chapter_id);
+    if (!scene) return;
+    const title = placeholder.excerpt.split(/\s+/).filter(Boolean).slice(0, 6).join(" ") || "New scene";
+    try { await onUpdate(scene, { title, link: { passage_index: placeholder.passage_index } }); } catch { /* parent reports the error */ }
+  };
+
   return (
     <section className="scene-board" aria-label="Scene planning board">
       <p className="board-hint">
-        Scenes stand on their own: create one, then place it in a chapter whenever you're ready.
-        Scene cards are planning notes; they don't change manuscript text.
+        Cards can be planned or linked to passages in the text. Cards don't change manuscript text.
         {offline && " Reconnect to edit scene plans."}
       </p>
-      {groups.map((g) => {
+      {!dismissed && needsCheck.length > 0 && (
+        <aside className="scene-check">
+          <p>Check how your scene cards line up with the text.</p>
+          <p>{needsCheck.map((chapter) => chapter.title).join(", ")}</p>
+          <button className="btn btn-quiet" onClick={() => { localStorage.setItem(`lantern.scene-check.${projectId}`, "1"); setDismissed(true); }}>Dismiss</button>
+        </aside>
+      )}
+      {groupOrder.map((g) => {
         const group = scenes.filter((scene) => scene.chapter_id === g.id).sort((a, b) => a.position - b.position);
+        const inText = group.filter((scene) => scene.in_text && scene.passage_index !== null)
+          .sort((a, b) => a.passage_index! - b.passage_index!);
+        let nextInText = 0;
+        const display = group.map((scene) => scene.in_text && scene.passage_index !== null ? inText[nextInText++] : scene);
+        const remaining = placeholders.filter((placeholder) => placeholder.chapter_id === g.id).sort((a, b) => a.passage_index - b.passage_index);
+        const items: ({ scene: SceneMeta; index: number } | { placeholder: ScenePlaceholder })[] = [];
+        display.forEach((scene) => {
+          while (scene.passage_index !== null && remaining.length && remaining[0].passage_index < scene.passage_index) {
+            items.push({ placeholder: remaining.shift()! });
+          }
+          items.push({ scene, index: group.findIndex((card) => card.id === scene.id) });
+        });
+        remaining.forEach((placeholder) => items.push({ placeholder }));
+        const chapter = chapters.find((item) => item.id === g.id);
+        const act = chapter && acts.find((item) => item.id === chapter.act_id);
+        const firstInAct = act && rows.find((row) => row.kind === "chapter" && row.chapter.act_id === act.id);
         return (
           <section className={g.id === null ? "scene-group scene-group-unassigned" : "scene-group"} key={g.id ?? "unassigned"} aria-label={g.label}>
+            {act && firstInAct?.kind === "chapter" && firstInAct.chapter.id === g.id && <h2 className="act-name">{act.title}</h2>}
             <header className="scene-group-head">
               <h2>{g.heading}</h2>
               <button className="btn btn-quiet" disabled={offline} onClick={async () => {
@@ -97,9 +141,25 @@ export function SceneBoard({ chapters, scenes, offline, onAdd, onUpdate, onDelet
                 if (scene) begin(scene);
               }}>{g.addLabel}</button>
             </header>
-            {group.length === 0 ? <p className="scene-empty">{g.empty}</p> : (
+            {items.length === 0 ? <p className="scene-empty">{g.empty}</p> : (
               <ol className="scene-cards">
-                {group.map((scene, i) => (
+                {items.map((item) => "placeholder" in item ? (
+                  <li className="scene-card scene-placeholder" key={`passage-${item.placeholder.passage_index}`}>
+                    <span className="scene-status">No card</span>
+                    <p className="scene-excerpt">{item.placeholder.excerpt || "Empty passage"}</p>
+                    <p className="scene-meta">{item.placeholder.words.toLocaleString()} words</p>
+                    <div className="scene-actions">
+                      <button className="btn btn-quiet" disabled={offline} onClick={() => void addCard(item.placeholder)}>Add card</button>
+                      <label>This is… <select disabled={offline} value="" onChange={(e) => {
+                        const scene = group.find((card) => card.id === e.target.value);
+                        if (scene) void onUpdate(scene, { link: { passage_index: item.placeholder.passage_index } }).catch(() => {});
+                      }}>
+                        <option value="">Choose a planned card</option>
+                        {group.filter((card) => !card.in_text).map((card) => <option value={card.id} key={card.id}>{card.title}</option>)}
+                      </select></label>
+                    </div>
+                  </li>
+                ) : (({ scene, index: i }) => (
                   <li className="scene-card" key={scene.id}>
                     {editing === scene.id ? (
                       <div className="scene-edit">
@@ -124,7 +184,7 @@ export function SceneBoard({ chapters, scenes, offline, onAdd, onUpdate, onDelet
                           </select>
                         </label>
                         <label>Chapter
-                          {chapterPicker(draft.chapter_id ?? null, (chapterId) => setDraft({ ...draft, chapter_id: chapterId }), false)}
+                          {chapterPicker(draft.chapter_id ?? null, (chapterId) => setDraft({ ...draft, chapter_id: chapterId }), scene.in_text)}
                         </label>
                         <div className="scene-actions">
                           <button className="btn btn-lamp" disabled={busy || offline || !draft.title?.trim()} onClick={() => void save(scene)}>Save</button>
@@ -134,9 +194,11 @@ export function SceneBoard({ chapters, scenes, offline, onAdd, onUpdate, onDelet
                     ) : (
                       <>
                         <div className="scene-card-head">
-                          <span className={`scene-status scene-${scene.status}`}>{scene.status}</span>
+                          <span className={`scene-status ${scene.in_text ? "scene-drafted" : "scene-planned"}`}>{scene.in_text ? "In the text" : "Planned"}</span>
                           <h3>{scene.title}</h3>
                         </div>
+                        {scene.in_text && <><p className="scene-meta">{scene.word_count.toLocaleString()} words</p><p className="scene-excerpt">{scene.excerpt}</p></>}
+                        {scene.merged_into && <p className="scene-meta">Merged into {scene.merged_into}</p>}
                         <p className={scene.summary ? "scene-summary" : "scene-summary scene-empty"}>
                           {scene.summary || "Add a summary"}
                         </p>
@@ -145,9 +207,11 @@ export function SceneBoard({ chapters, scenes, offline, onAdd, onUpdate, onDelet
                         )}
                         <label className="scene-place">
                           <span>Chapter</span>
-                          {chapterPicker(scene.chapter_id, (chapterId) => void place(scene, chapterId), offline)}
+                          {chapterPicker(scene.chapter_id, (chapterId) => void place(scene, chapterId), offline || scene.in_text)}
                         </label>
                         <footer className="scene-actions">
+                          {scene.in_text && <button className="btn btn-quiet" onClick={() => onOpen(scene)}>Open</button>}
+                          {scene.unconfirmed && <><button className="btn btn-quiet" disabled={offline} onClick={() => void onUpdate(scene, { confirm: true }).catch(() => {})}>Looks right</button><button className="btn btn-quiet" disabled={offline} onClick={() => void onUpdate(scene, { unlink: true }).catch(() => {})}>Not this one</button></>}
                           <button className="btn btn-quiet" disabled={offline} onClick={() => begin(scene)}>Edit</button>
                           <button className="btn btn-quiet" disabled={offline || i === 0} aria-label={`Move ${scene.title} up`} onClick={() => onMove(g.id, group.map((s, n) => n === i ? group[i - 1].id : n === i - 1 ? scene.id : s.id))}>Up</button>
                           <button className="btn btn-quiet" disabled={offline || i === group.length - 1} aria-label={`Move ${scene.title} down`} onClick={() => onMove(g.id, group.map((s, n) => n === i ? group[i + 1].id : n === i + 1 ? scene.id : s.id))}>Down</button>
@@ -156,7 +220,7 @@ export function SceneBoard({ chapters, scenes, offline, onAdd, onUpdate, onDelet
                       </>
                     )}
                   </li>
-                ))}
+                ))(item))}
               </ol>
             )}
           </section>

@@ -89,8 +89,28 @@ export interface SceneMeta {
   location: string;
   status: SceneStatus;
   position: number;
+  in_text: boolean;
+  word_count: number;
+  excerpt: string;
+  passage_index: number | null;
+  unconfirmed: boolean;
+  unlinked_at: string | null;
+  /** Title of the card holding this recently merged passage, when known. */
+  merged_into: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ScenePlaceholder {
+  chapter_id: string;
+  passage_index: number;
+  words: number;
+  excerpt: string;
+}
+
+export interface SceneListing {
+  scenes: SceneMeta[];
+  placeholders: ScenePlaceholder[];
 }
 
 /** The English a novel is written in, for grammar and spelling checks. */

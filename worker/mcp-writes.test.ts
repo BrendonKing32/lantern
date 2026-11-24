@@ -249,7 +249,7 @@ describe("scenes in the app", () => {
     const moved = await (await api("PATCH", `/api/scenes/${a.id}`, { chapter_id: CH })).json();
     expect(moved).toMatchObject({ chapter_id: CH, position: 1 });
 
-    const list = (await (await api("GET", `/api/projects/${NOVEL}/scenes`)).json()) as { id: string }[];
+    const { scenes: list } = (await (await api("GET", `/api/projects/${NOVEL}/scenes`)).json()) as { scenes: { id: string }[] };
     expect(list.map((s) => s.id)).toEqual([b.id, c.id, a.id]);
 
     expect((await api("PUT", `/api/projects/${NOVEL}/scenes/order`, { chapterId: CH, sceneIds: [a.id, c.id] })).status).toBe(200);

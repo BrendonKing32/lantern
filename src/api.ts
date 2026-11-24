@@ -142,12 +142,14 @@ export const api = {
     ),
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
     request(schema.chapterMeta, "PATCH", `/api/chapters/${id}`, patch),
-  scenes: (projectId: string) => request(array(schema.sceneMeta), "GET", `/api/projects/${projectId}/scenes`),
+  scenes: (projectId: string) => request(schema.sceneListing, "GET", `/api/projects/${projectId}/scenes`),
   createScene: (projectId: string, chapterId: string | null) =>
     request(schema.sceneMeta, "POST", `/api/projects/${projectId}/scenes`, { chapterId }),
   updateScene: (
     id: string,
-    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">>,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">> & {
+      link?: { passage_index: number }; unlink?: true; confirm?: true;
+    },
   ) => request(schema.sceneMeta, "PATCH", `/api/scenes/${id}`, patch),
   deleteScene: (id: string) => request(schema.ok, "DELETE", `/api/scenes/${id}`),
   reorderScenes: (projectId: string, chapterId: string | null, sceneIds: string[]) =>

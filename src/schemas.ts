@@ -21,6 +21,7 @@ import {
   type ProjectSummary,
   type SaveResult,
   type SceneMeta,
+  type SceneListing,
   type ShareComment,
   type SharedProject,
   type Snapshot,
@@ -218,8 +219,20 @@ export const sceneMeta: Check<SceneMeta> = object({
   location: string,
   status: literal("planned", "drafted"),
   position: number,
+  in_text: boolean,
+  word_count: number,
+  excerpt: string,
+  passage_index: nullable(number),
+  unconfirmed: boolean,
+  unlinked_at: nullable(string),
+  merged_into: nullable(string),
   created_at: string,
   updated_at: string,
+});
+
+export const sceneListing: Check<SceneListing> = object({
+  scenes: array(sceneMeta),
+  placeholders: array(object({ chapter_id: string, passage_index: number, words: number, excerpt: string })),
 });
 
 const snapshotFields = {

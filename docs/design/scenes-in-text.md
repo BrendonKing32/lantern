@@ -201,7 +201,7 @@ whole text, with no break line.
 
 ## 5. Data model
 
-Migration `migrations/0013_scenes_in_text.sql` only adds columns:
+Migration `migrations/0014_scenes_in_text.sql` only adds columns:
 
 ```sql
 -- Scene cards can be tied to a passage of their chapter's text.
@@ -473,7 +473,7 @@ avoids duplication.
 
 Tracking issue: https://github.com/BrendonKing32/lantern/issues/79
 
-**Scope:** migration 0013; `SceneMeta` and schema changes; `worker/sceneSync.ts`; calls from
+**Scope:** migration 0014; `SceneMeta` and schema changes; `worker/sceneSync.ts`; calls from
 `saveChapter` and `saveAsClaude`; the self-healing `listScenes` and the new listing shape; linking,
 unlinking and confirming (6.8); `in_text`-aware `PATCH` refusals; the one-time pairing and banner (7.2);
 the Scenes view card states, placeholders, **Add card**, **This is…** and **Open** (7.1, minus dragging
