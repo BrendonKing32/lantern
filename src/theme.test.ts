@@ -68,3 +68,44 @@ describe("GitHub Dark theme", () => {
     expect(browserColor.get("content")).toBeTruthy();
   });
 });
+
+describe("Clay theme", () => {
+  let attributes: Map<string, string>;
+  let browserColor: Map<string, string>;
+
+  beforeEach(() => {
+    const saved = new Map<string, string>();
+    attributes = new Map();
+    browserColor = new Map();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => saved.set(key, value),
+    });
+    vi.stubGlobal("document", {
+      documentElement: {
+        setAttribute: (name: string, value: string) => attributes.set(name, value),
+        removeAttribute: (name: string) => attributes.delete(name),
+      },
+      querySelector: (selector: string) => selector === 'meta[name="theme-color"]'
+        ? { setAttribute: (name: string, value: string) => browserColor.set(name, value) }
+        : null,
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("offers Clay and restores the selection after a reload", () => {
+    expect(renderToStaticMarkup(createElement(ThemePicker))).toContain(
+      '<option value="clay">Clay</option>',
+    );
+
+    setTheme("clay");
+    expect(attributes.get("data-theme")).toBe("clay");
+    expect(browserColor.get("content")).toBe("#262624");
+
+    attributes.clear();
+    initTheme();
+    expect(getTheme()).toBe("clay");
+    expect(attributes.get("data-theme")).toBe("clay");
+  });
+});

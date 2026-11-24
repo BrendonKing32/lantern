@@ -840,6 +840,29 @@ select {
   --shadow-rgb: 0 0 0;
 }
 
+/* Clay: warm charcoal greys with a terracotta accent, after the Claude desktop app. */
+:root[data-theme="clay"] {
+  --night: #262624;
+  --shade: #1f1e1d;
+  --rule: #3d3d3a;
+  --wick: #faf9f5;
+  --page-text: #f0eee6;
+  --text-soft: #c2c0b6;
+  --text-faint: #9c9a92;
+  --mark: #73726c;
+  --lamp: #d97757;
+  --lamp-ink: #1f1e1d;
+  --lamp-hover: #e08a6d;
+  --rose: #f07c74;
+  --sage: #93b58c;
+  --chip: #30302e;
+  --lamp-rgb: 217 119 87;
+  --glow-rgb: 225 130 95;
+  --rose-rgb: 240 124 116;
+  --shadow-rgb: 0 0 0;
+  --selection: rgb(var(--lamp-rgb) / 0.28);
+}
+
 :root[data-theme="parchment"] {
   --night: #f4ecdc;
   --shade: #ebe1cd;
