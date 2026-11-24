@@ -162,7 +162,8 @@ When you connect, you choose what Claude may do:
   History, and search the text.
 - **Read and edit:** also edit chapter text (exact passages, or adding to the end), add
   chapters, rename chapters and change synopses, and add or change story guide entries
-  and scene cards. Nothing can be deleted through the connector.
+  and scene cards. Claude can also use `move_scene` to move in-text scenes with their passages,
+  keeping a copy in **History**. Nothing can be deleted through the connector.
 
 Connector calls are part of your claude.ai plan and don't use the API key or the limits above.
 
@@ -280,7 +281,8 @@ app and private API protected.
   own before its first chapter (in EPUB's contents too); the Markdown export files chapters in
   a folder per act.
 - **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
-  index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
+  index card with its title, synopsis, word count and up to six in-text scenes with their word counts.
+  Drag cards (or Space and the arrow keys)
   to reorder the book (a card dropped on another joins that card's act), click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
   **Open** a card to write that chapter.
 - **Scenes:** the **Scenes** view shows planned cards and cards matched to passages between

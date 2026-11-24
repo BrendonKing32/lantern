@@ -37,8 +37,8 @@ const entries = [
 ];
 
 const scenes = [
-  { id: "s-1", chapter_id: "ch-1", title: "Landing", summary: "She lands.", pov: "Mara", location: "Harbour", status: "drafted", position: 0 },
-  { id: "s-2", chapter_id: null, title: "Storm", summary: "", pov: "", location: "", status: "planned", position: 0 },
+  { id: "s-1", chapter_id: "ch-1", title: "Landing", summary: "She lands.", pov: "Mara", location: "Harbour", status: "drafted", position: 0, in_text: 0, word_count: 0 },
+  { id: "s-2", chapter_id: null, title: "Storm", summary: "", pov: "", location: "", status: "planned", position: 0, in_text: 0, word_count: 0 },
 ];
 
 const snapshots = [{ id: "snap-1", chapter_id: "ch-1", version: 2, word_count: 3, reason: "auto", created_at: "2026-01-20T00:00:00.000Z" }];
@@ -241,11 +241,11 @@ describe("connector tools", () => {
     expect(outline.word_count).toBe(13);
     expect(outline.chapters.map((c: { number: number; title: string }) => [c.number, c.title])).toEqual([[1, "Arrival"], [2, "The Tower"]]);
     expect(outline.chapters[0].scenes).toEqual([
-      { id: "s-1", title: "Landing", summary: "She lands.", pov: "Mara", location: "Harbour", status: "drafted" },
+      { id: "s-1", title: "Landing", summary: "She lands.", pov: "Mara", location: "Harbour", status: "drafted", in_text: false, word_count: 0, passage_index: null },
     ]);
     expect(outline.chapters[1].scenes).toEqual([]);
     expect(outline.unassigned_scenes).toEqual([
-      { id: "s-2", title: "Storm", summary: "", pov: "", location: "", status: "planned" },
+      { id: "s-2", title: "Storm", summary: "", pov: "", location: "", status: "planned", in_text: false, word_count: 0, passage_index: null },
     ]);
   });
 

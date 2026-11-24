@@ -13,7 +13,7 @@ export const WRITE_SCOPE = "lantern:write";
 const ABOUT = `Lantern is the author's novel-writing app. Each novel has chapters of markdown text, \
 chapter synopses, scene cards, and a story guide of characters, places, things and notes. \
 In chapter text, [[Name]] and [[Name|shown words]] link to story guide entries; \
-***, --- or a lone # on its own line marks a scene break. \
+***, --- or a lone # on its own line marks a scene break. Scene cards can be tied to passages between breaks. \
 Start with list_novels, then get_outline for chapter ids.`;
 
 export const READ_ONLY_INSTRUCTIONS = `${ABOUT} This connection can read but not change anything.`;
@@ -25,6 +25,7 @@ This connection can also make changes. The manuscript is the author's own work, 
 - Read a chapter before editing it, and pass the version read_chapter gives as base_version. If the author \
 has written since, the edit is refused: read the chapter again and redo it.
 - Prefer edit_chapter with small, exact passages over rewriting large stretches.
+- move_scene moves an in-text card with its passage and keeps a History copy.
 - Every chapter edit keeps the previous text in the chapter's History ("Before an edit by Claude"), so the \
 author can undo it there. Tell the author what you changed, in which chapter.
 - Nothing can be deleted through this connection.`;
