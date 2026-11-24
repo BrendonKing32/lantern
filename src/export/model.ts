@@ -3,6 +3,7 @@
 // the same in either.
 
 import { Lexer, type Token, type Tokens } from "marked";
+import { isChapterTitle } from "../../shared/scenes";
 import { stripLinks } from "../../shared/wikilinks";
 
 export interface Run {
@@ -142,7 +143,7 @@ export function parseChapter(title: string, markdown: string): Chapter {
   // Many writers start a chapter with its own title as a heading; the export
   // adds the chapter title itself, so drop the duplicate.
   const first = out[0];
-  if (first?.kind === "heading" && plain(first.runs).toLowerCase() === title.trim().toLowerCase()) out.shift();
+  if (first?.kind === "heading" && isChapterTitle(plain(first.runs), title)) out.shift();
   // Scene breaks at the very start or end of a chapter add nothing.
   while (out[0]?.kind === "break") out.shift();
   while (out[out.length - 1]?.kind === "break") out.pop();
