@@ -72,13 +72,9 @@ export const createMilestone: Handler = async (req, env, p) => {
       const moveToken = await chapterMoveToken(env, chapter.id);
       await assertChapterUnlocked(env, chapter.id);
       const object = await env.BUCKET.get(chapterKey(p.id, row.id));
-      if (!object) throw new Error("Chapter text is missing");
-      if (object.customMetadata?.version === undefined && row.version !== 0) {
-        throw new Error("Chapter text has no version metadata");
-      }
       const version = chapterTextVersion(object, row.version);
       if (version === null) throw new Error("Chapter version is invalid");
-      const text = await object.text();
+      const text = object ? await object.text() : "";
       await assertChapterUnlocked(env, chapter.id);
       if (await chapterMoveToken(env, chapter.id) !== moveToken) {
         throw new HttpError(423, "A scene was moved in this chapter. Try again shortly.");

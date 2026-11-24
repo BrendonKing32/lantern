@@ -85,13 +85,26 @@ describe("milestones", () => {
     expect([...bucket.objects.keys()].filter((key) => key.includes("/milestones/"))).toEqual([]);
   });
 
-  it("refuses an older nonzero chapter without version metadata", async () => {
+  it("copies a missing chapter object as empty at its D1 version", async () => {
+    db.raw.prepare("UPDATE chapters SET version = 3 WHERE id = 'b'").run();
+    await bucket.delete("projects/p/chapters/b.md");
+    const response = await create();
+    expect(response.status).toBe(201);
+    const milestone = await response.json() as { id: string };
+    expect(bucket.objects.get(`projects/p/milestones/${milestone.id}/b.md`)).toBe("");
+    expect(db.raw.prepare("SELECT version, word_count FROM milestone_chapters WHERE chapter_id = 'b'").get())
+      .toEqual({ version: 3, word_count: 0 });
+  });
+
+  it("copies an older chapter without version metadata at its D1 version", async () => {
     db.raw.prepare("UPDATE chapters SET version = 1 WHERE id = 'b'").run();
     await bucket.put("projects/p/chapters/b.md", "Legacy text");
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect((await create()).status).toBe(500);
-    expect(db.raw.prepare("SELECT * FROM milestones").all()).toEqual([]);
-    log.mockRestore();
+    const response = await create();
+    expect(response.status).toBe(201);
+    const milestone = await response.json() as { id: string };
+    expect(bucket.objects.get(`projects/p/milestones/${milestone.id}/b.md`)).toBe("Legacy text");
+    expect(db.raw.prepare("SELECT version, word_count FROM milestone_chapters WHERE chapter_id = 'b'").get())
+      .toEqual({ version: 1, word_count: 2 });
   });
 
   it("hides incomplete milestones and cleans up old copies", async () => {
