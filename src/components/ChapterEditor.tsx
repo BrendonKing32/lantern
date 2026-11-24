@@ -525,6 +525,11 @@ export function ChapterEditor({
     setInitialDoc(conflict.content);
     setEditorKey((k) => k + 1);
     flushWordCount();
+    cb.current.onSaved(chapterId, {
+      version: conflict.version,
+      word_count: conflict.word_count,
+      updated_at: conflict.updated_at,
+    });
     setConflict(null);
     status("saved");
   };

@@ -341,7 +341,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
       if (active) { setScenes(scenes); setPlaceholders(placeholders); }
     }).catch((e) => { if (active) setScenesError(describeError(e)); });
     return () => { active = false; };
-  }, [projectId, view]);
+  }, [projectId, view, selected?.version]);
   useEffect(() => {
     if (view !== "write" || !selected) return;
     let active = true;
@@ -352,7 +352,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
         const listing = await api.scenes(projectId);
         const after = await api.getChapter(selected.id);
         if (!active) return;
-        if (before.version !== after.version) continue;
+        if (before.version !== after.version || before.content !== after.content) continue;
         setScenes(listing.scenes);
         setLabelSnapshot({ chapterId: selected.id, baseline: after.content, scenes: listing.scenes });
         return;
