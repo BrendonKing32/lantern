@@ -338,7 +338,9 @@ app and private API protected.
   then works offline. The US/UK choice belongs to the novel, so every device checks it
   the same way; each device keeps its own on/off setting, dictionary and ignored problems. With Grammar off, the browser's own spellcheck is used instead.
 - **Continue writing:** open a novel from the shelf to return to its last-used chapter on this device. If that chapter is no longer available, Lantern opens the first chapter instead.
-- **Themes:** pick Lantern, Hearth, Pine, Tide, or Parchment (a light theme) from the menu on the shelf or in the desk bar. Each device remembers its own choice.
+- **Themes:** pick **Lantern**, **Hearth**, **Pine**, **Tide**, **Shadow**, **GitHub Dark**, or
+  **Parchment** (a light theme) from the menu on the shelf or in the desk bar. Each device remembers
+  its own choice.
 - **The lamp:** the light behind the page brightens as you write. With a daily goal it reaches
   full glow when you meet the goal; without one, at 1,000 words in a session.
 - **Daily goal and streak:** the panel at the top of the shelf shows today's words, your

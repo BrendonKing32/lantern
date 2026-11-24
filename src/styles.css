@@ -778,6 +778,27 @@ select {
   --shadow-rgb: 8 4 14;
 }
 
+:root[data-theme="github-dark"] {
+  --night: #0d1117;
+  --shade: #161b22;
+  --rule: #30363d;
+  --wick: #e6edf3;
+  --page-text: #e6edf3;
+  --text-soft: #b1bac4;
+  --text-faint: #8b949e;
+  --mark: #6e7681;
+  --lamp: #58a6ff;
+  --lamp-ink: #0d1117;
+  --lamp-hover: #79c0ff;
+  --rose: #ff7b72;
+  --sage: #3fb950;
+  --chip: #21262d;
+  --lamp-rgb: 88 166 255;
+  --glow-rgb: 12 45 107;
+  --rose-rgb: 255 123 114;
+  --shadow-rgb: 0 0 0;
+}
+
 :root[data-theme="parchment"] {
   --night: #f4ecdc;
   --shade: #ebe1cd;
