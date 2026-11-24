@@ -158,12 +158,16 @@ Lantern can be added to claude.ai as a **custom connector**, so you can talk abo
 book in any Claude chat (web, desktop or phone) and Claude reads the real manuscript.
 When you connect, you choose what Claude may do:
 
-- **Read only:** list novels, read outlines, chapters, scene cards, the story guide and
-  History, and search the text.
+- **Read only:** list novels, read outlines, chapters, scene cards, the story guide,
+  **History**, **Milestones** and margin notes, and search the text. Claude can read a
+  milestone's saved chapters and compare them with your current chapters. Milestones
+  cannot be changed through the connector.
 - **Read and edit:** also draft changes to chapter text (exact passages, or adding to the
   end), add chapters, rename chapters and change synopses, and add or change story guide
-  and scene cards. Claude can also use `move_scene` to move in-text scenes with their passages,
-  keeping a copy in **History**. Nothing can be deleted through the connector.
+  and scene cards, and add margin notes to passages in the saved chapter. Claude can also
+  use `move_scene` to move in-text scenes with their passages, keeping a copy in
+  **History**. Claude can't resolve or delete margin notes, and nothing can be deleted
+  through the connector.
 
 Connector calls are part of your claude.ai plan and don't use the API key or the limits above.
 
@@ -285,7 +289,8 @@ app and private API protected.
 - **Milestones:** use **More → Milestones** to save a named copy of every chapter, with an
   optional note. Lantern saves your unsaved writing first; this needs a connection. Rename or
   delete milestones there without changing your chapters. The novel sidebar shows how many words
-  you've gained or removed since the latest milestone.
+  you've gained or removed since the latest milestone. A Claude chat connection can read
+  milestones but can't change them.
 - **Claude's draft:** **Review draft** compares pending connector edits with your chapter.
   If you wrote more since the draft began, the comparison shows the edits that still fit
   your current text and lists the ones that don't. Save your writing, then accept the
@@ -327,7 +332,8 @@ app and private API protected.
 - **Notes:** select a passage and choose **More → Add note**, or press ⌘/Ctrl+Alt+M.
   Open **More → Notes** to jump to, edit, resolve or delete notes; resolved notes and notes
   whose passage is no longer found are listed separately. Highlights and margin markers open
-  notes beside the page, and Claude's notes are labelled. Notes need a connection and stay
+  notes beside the page, and Claude's notes are labelled. A Claude chat connection can read notes;
+  a read-and-edit connection can also add them. Notes need a connection and stay
   private: they are not part of the chapter, its word count, search, exports or review links.
 - **Search:** the **Search** view finds literal words or phrases across the whole book, including
   drafts saved on this device. Choose whether to match case, then open a result to jump to it

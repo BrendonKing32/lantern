@@ -5,7 +5,7 @@ import { createAnchorMatcher } from "../../shared/anchors";
 import { splitScenes } from "../../shared/scenes";
 import type { BibleEntry, ChapterMeta, Snapshot } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
-import { CHAPTER_COLS, chapterKey, chapterTextVersion, getChapterRow, reconcileChapter, requireProject, snapshotKey } from "../db";
+import { CHAPTER_COLS, chapterKey, chapterTextVersion, getChapterRow, milestoneKey, reconcileChapter, requireProject, snapshotKey } from "../db";
 import type { Env } from "../env";
 import { listActs } from "../handlers/acts";
 import { BIBLE_COLS, toEntry, type BibleRow } from "../handlers/bible";
@@ -93,6 +93,58 @@ export function findMatches(
 }
 
 export function registerTools(server: McpServer, env: Env) {
+  server.registerTool(
+    "list_milestones",
+    {
+      title: "List milestones",
+      description: "List a novel's completed, read-only milestones, newest first.",
+      inputSchema: { novel_id: z.string().describe("From list_novels") },
+      annotations: READ_ONLY,
+    },
+    async ({ novel_id }) => {
+      await requireProject(env, novel_id);
+      const { results } = await env.DB.prepare(
+        `SELECT id, name, note, created_at, word_count, chapter_count FROM milestones
+         WHERE project_id = ? AND complete = 1 ORDER BY created_at DESC, rowid DESC`,
+      ).bind(novel_id).all();
+      return data(results);
+    },
+  );
+
+  server.registerTool(
+    "read_milestone",
+    {
+      title: "Read a milestone",
+      description: "List the chapters in a completed milestone, or read one chapter's copied text. Compare it with read_chapter to see what changed.",
+      inputSchema: {
+        milestone_id: z.string().describe("From list_milestones"),
+        chapter_id: z.string().optional().describe("From the milestone's chapter list"),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ milestone_id, chapter_id }) => {
+      const milestone = await env.DB.prepare(
+        `SELECT project_id FROM milestones WHERE id = ? AND complete = 1
+         AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)`,
+      ).bind(milestone_id).first<{ project_id: string }>();
+      if (!milestone) throw new HttpError(404, "Milestone not found");
+      if (chapter_id === undefined) {
+        const { results } = await env.DB.prepare(
+          `SELECT chapter_id, title, position, word_count, version FROM milestone_chapters
+           WHERE milestone_id = ? ORDER BY position`,
+        ).bind(milestone_id).all();
+        return data(results);
+      }
+      const chapter = await env.DB.prepare(
+        "SELECT chapter_id FROM milestone_chapters WHERE milestone_id = ? AND chapter_id = ?",
+      ).bind(milestone_id, chapter_id).first<{ chapter_id: string }>();
+      if (!chapter) throw new HttpError(404, "Chapter not found in this milestone");
+      const object = await env.BUCKET.get(milestoneKey(milestone.project_id, milestone_id, chapter_id));
+      if (!object) throw new HttpError(404, "The milestone chapter's text is missing");
+      return text(await object.text());
+    },
+  );
+
   server.registerTool(
     "list_margin_notes",
     {
