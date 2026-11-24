@@ -112,6 +112,62 @@ describe("which tools a connection gets", () => {
   });
 });
 
+describe("milestone connector", () => {
+  it("lists complete milestones and reads their copied chapters on both connections", async () => {
+    const insert = db.raw.prepare(
+      "INSERT INTO milestones (id, project_id, name, note, word_count, chapter_count, complete, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    insert.run("old", NOVEL, "Draft 1", "", 2, 1, 1, "2026-01-01");
+    insert.run("new", NOVEL, "Draft 2", "For readers", 5, 2, 1, "2026-02-01");
+    insert.run("partial", NOVEL, "In progress", "", 0, 0, 0, "2026-03-01");
+    const chapterRow = db.raw.prepare(
+      "INSERT INTO milestone_chapters (milestone_id, chapter_id, position, title, act_title, version, word_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    chapterRow.run("new", CH, 2, "Old arrival", "Part one", 3, 3);
+    chapterRow.run("new", "deleted", 1, "Gone", null, 2, 2);
+    chapterRow.run("partial", CH, 0, "Partial", null, 1, 1);
+    bucket.objects.set(`projects/${NOVEL}/milestones/new/${CH}.md`, "The earlier text.\r\n");
+    bucket.objects.set(`projects/${NOVEL}/milestones/new/deleted.md`, "A deleted chapter.");
+    bucket.objects.set(`projects/${NOVEL}/milestones/partial/${CH}.md`, "Incomplete");
+    db.raw.prepare("UPDATE chapters SET deleted_at = ? WHERE id = ?").run("2026-03-01", CH);
+
+    for (const canWrite of [false, true]) {
+      const client = await connect(canWrite);
+      const tools = (await client.listTools()).tools;
+      expect(tools.filter((t) => t.name.includes("milestone")).map((t) => t.name).sort())
+        .toEqual(["list_milestones", "read_milestone"]);
+      expect(tools.filter((t) => t.name.includes("milestone")).every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
+      expect((client.getInstructions() ?? "").toLowerCase()).toContain("milestones are read-only");
+      const list = await client.callTool({ name: "list_milestones", arguments: { novel_id: NOVEL } });
+      expect(JSON.parse(textOf(list))).toEqual([
+        { id: "new", name: "Draft 2", note: "For readers", created_at: "2026-02-01", word_count: 5, chapter_count: 2 },
+        { id: "old", name: "Draft 1", note: "", created_at: "2026-01-01", word_count: 2, chapter_count: 1 },
+      ]);
+      const listing = await client.callTool({ name: "read_milestone", arguments: { milestone_id: "new" } });
+      expect(JSON.parse(textOf(listing))).toEqual([
+        { chapter_id: "deleted", title: "Gone", position: 1, word_count: 2, version: 2 },
+        { chapter_id: CH, title: "Old arrival", position: 2, word_count: 3, version: 3 },
+      ]);
+      const copied = await client.callTool({ name: "read_milestone", arguments: { milestone_id: "new", chapter_id: CH } });
+      expect(textOf(copied)).toBe("The earlier text.\r\n");
+      expect(textOf(await client.callTool({ name: "read_milestone", arguments: { milestone_id: "new", chapter_id: "deleted" } })))
+        .toBe("A deleted chapter.");
+      for (const args of [
+        { milestone_id: "partial" }, { milestone_id: "partial", chapter_id: CH },
+        { milestone_id: "missing" }, { milestone_id: "old", chapter_id: CH },
+      ]) {
+        expect((await client.callTool({ name: "read_milestone", arguments: args })).isError).toBe(true);
+      }
+      expect((await client.callTool({ name: "list_milestones", arguments: { novel_id: "missing" } })).isError).toBe(true);
+    }
+
+    bucket.objects.delete(`projects/${NOVEL}/milestones/new/${CH}.md`);
+    expect((await (await connect(false)).callTool({ name: "read_milestone", arguments: { milestone_id: "new", chapter_id: CH } })).isError).toBe(true);
+    db.raw.prepare("UPDATE projects SET deleted_at = ? WHERE id = ?").run("2026-03-01", NOVEL);
+    expect((await (await connect(false)).callTool({ name: "read_milestone", arguments: { milestone_id: "new" } })).isError).toBe(true);
+  });
+});
+
 describe("margin note connector", () => {
   it("adds a uniquely anchored note as Claude and logs it without changing the manuscript", async () => {
     const result = await call("add_margin_note", { chapter_id: CH, quote: "lit the lamp", body: "Consider a quieter opening." });
