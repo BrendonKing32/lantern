@@ -15,6 +15,21 @@ export const snapshotKey = (projectId: string, chapterId: string, snapshotId: st
   `projects/${projectId}/chapters/${chapterId}/history/${snapshotId}.md`;
 export const MARKDOWN = { httpMetadata: { contentType: "text/markdown; charset=utf-8" } };
 
+export function chapterPut(env: Env, row: Pick<ChapterMeta, "project_id" | "id">, text: string, version: number) {
+  return env.BUCKET.put(chapterKey(row.project_id, row.id), text, {
+    ...MARKDOWN,
+    customMetadata: { version: String(version) },
+  });
+}
+
+export function chapterTextVersion(object: R2ObjectBody | null, fallback: number): number | null {
+  const value = object?.customMetadata?.version;
+  if (value === undefined) return fallback;
+  if (!/^(0|[1-9]\d*)$/.test(value)) return null;
+  const version = Number(value);
+  return Number.isSafeInteger(version) ? version : null;
+}
+
 export async function getChapterRow(env: Env, id: string): Promise<ChapterMeta> {
   const row = await env.DB.prepare(
     `SELECT ${CHAPTER_COLS} FROM chapters
@@ -49,10 +64,10 @@ export async function insertChapter(env: Env, projectId: string, title: string):
   const position = (max?.m ?? -1) + 1;
   // A new chapter goes at the end of the book, so into the last act.
   const actId = await lastActId(env, projectId);
-  await env.BUCKET.put(chapterKey(projectId, id), "", MARKDOWN);
+  await chapterPut(env, { project_id: projectId, id }, "", 0);
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO chapters (id, project_id, title, position, act_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO chapters (id, project_id, title, position, act_id, created_at, updated_at, scenes_version) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
     ).bind(id, projectId, title, position, actId, ts, ts),
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, projectId),
   ]);

@@ -24,7 +24,7 @@ import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEdi
 import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
 import { DIALECTS } from "../../shared/types";
-import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta } from "../../shared/types";
+import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { arrangeChapters } from "../../shared/acts";
 
 type View = "write" | "board" | "scenes" | "search" | "bible";
@@ -227,6 +227,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [lastChapterId, setLastChapterId] = useState<string | null>(null);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
+  const [placeholders, setPlaceholders] = useState<ScenePlaceholder[]>([]);
   const [scenesError, setScenesError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState<{ id: string; content: string; version: number } | null>(null);
   // Words written today across all novels, and the daily goal (null: none).
@@ -321,7 +322,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (view !== "scenes") return;
     setScenes(null);
     setScenesError(null);
-    api.scenes(projectId).then(setScenes).catch((e) => setScenesError(describeError(e)));
+    api.scenes(projectId).then(({ scenes, placeholders }) => { setScenes(scenes); setPlaceholders(placeholders); }).catch((e) => setScenesError(describeError(e)));
   }, [projectId, view]);
   // Novels saved on this device before dialects existed have none: US English.
   const dialect: Dialect = detail?.project.dialect ?? "american";
@@ -560,6 +561,26 @@ export function ProjectView({ projectId, chapterId }: Props) {
     select(id);
   };
 
+  const reloadScenes = async () => {
+    const listing = await api.scenes(projectId);
+    setScenes(listing.scenes);
+    setPlaceholders(listing.placeholders);
+  };
+
+  const openScene = (scene: SceneMeta) => {
+    if (!scene.chapter_id || scene.passage_index === null) return;
+    const chapter = scene.chapter_id;
+    const index = scene.passage_index;
+    setView("write");
+    select(chapter);
+    const start = Date.now();
+    const attempt = () => {
+      if (editorControls.current?.revealScene(index)) return;
+      if (Date.now() - start < 4000) window.setTimeout(attempt, 120);
+    };
+    window.setTimeout(attempt, 150);
+  };
+
   const addScene = async (chapterId: string | null): Promise<SceneMeta | null> => {
     try {
       const scene = await api.createScene(projectId, chapterId);
@@ -573,11 +594,13 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const updateScene = async (
     scene: SceneMeta,
-    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">>,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">> & {
+      link?: { passage_index: number }; unlink?: true; confirm?: true;
+    },
   ) => {
     try {
-      const updated = await api.updateScene(scene.id, patch);
-      setScenes((list) => list?.map((item) => item.id === scene.id ? updated : item) ?? []);
+      await api.updateScene(scene.id, patch);
+      await reloadScenes();
     } catch (e) {
       alert(describeError(e));
       throw e;
@@ -588,7 +611,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (!confirm(`Delete the scene plan “${scene.title}”?`)) return;
     try {
       await api.deleteScene(scene.id);
-      setScenes((list) => list?.filter((item) => item.id !== scene.id) ?? []);
+      await reloadScenes();
     } catch (e) {
       alert(describeError(e));
     }
@@ -603,7 +626,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
       await api.reorderScenes(projectId, chapterId, sceneIds);
     } catch (e) {
       alert(describeError(e));
-      api.scenes(projectId).then(setScenes).catch((error) => setScenesError(describeError(error)));
+      void reloadScenes().catch((error) => setScenesError(describeError(error)));
     }
   };
 
@@ -954,12 +977,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
           ) : scenes ? (
             <SceneBoard
               chapters={chapters}
+              acts={acts}
               scenes={scenes}
+              placeholders={placeholders}
+              projectId={projectId}
               offline={offline}
               onAdd={addScene}
               onUpdate={updateScene}
               onDelete={(scene) => void deleteScene(scene)}
               onMove={(chapterId, sceneIds) => void reorderScenes(chapterId, sceneIds)}
+              onOpen={openScene}
             />
           ) : <div className="screen-message">Loading scene plans…</div>
         ) : view === "search" ? (

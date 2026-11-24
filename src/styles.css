@@ -1918,6 +1918,17 @@ select {
 .scene-drafted {
   color: var(--sage);
 }
+.scene-planned {
+  color: var(--lamp);
+}
+.scene-placeholder {
+  border-style: dashed;
+}
+.scene-excerpt {
+  font: 400 1rem/1.5 var(--font-prose);
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+}
 .scene-summary {
   flex: 1;
   margin: 0.6rem 0;
