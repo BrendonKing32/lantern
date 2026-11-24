@@ -441,6 +441,8 @@ Each step is one pull request. Each step lists its scope, what must be tested, a
 
 ### Step 1: shared splitter, matcher and arranger
 
+Tracking issue: https://github.com/BrendonKing32/lantern/issues/78
+
 **Scope:** `shared/scenes.ts` (section 4) and `shared/scenes.test.ts`. No other file changes, except
 moving the title-heading comparison out of `src/export/model.ts` into a small shared helper if that
 avoids duplication.
@@ -465,6 +467,8 @@ avoids duplication.
 
 ### Step 2: match cards to text (read-only)
 
+Tracking issue: https://github.com/BrendonKing32/lantern/issues/79
+
 **Scope:** migration 0013; `SceneMeta` and schema changes; `worker/sceneSync.ts`; calls from
 `saveChapter` and `saveAsClaude`; the self-healing `listScenes` and the new listing shape; linking,
 unlinking and confirming (6.8); `in_text`-aware `PATCH` refusals; the one-time pairing and banner (7.2);
@@ -485,6 +489,8 @@ to planned cards and open a scene in the editor. The README "Scenes" bullet desc
 
 ### Step 3: editor labels and Insert scene break
 
+Tracking issue: https://github.com/BrendonKing32/lantern/issues/80
+
 **Scope:** 7.3 and the README.
 
 **Tests:** a unit test for the label extension's computed labels given a document and a card list; a
@@ -494,6 +500,8 @@ check that the widgets add no document text (doc length is unchanged).
 and the command inserts the chapter's usual break.
 
 ### Step 4: reorder passages within a chapter
+
+Tracking issue: https://github.com/BrendonKing32/lantern/issues/81
 
 **Scope:** the 6.5 endpoint, the shared save helper refactor, the `move` History reason (6.7), dragging
 in-text cards within a chapter, the flush-before-move rule, the Undo notice, and the README.
@@ -507,6 +515,8 @@ notice and from History, and the streak doesn't move.
 
 ### Step 5: move a passage to another chapter
 
+Tracking issue: https://github.com/BrendonKing32/lantern/issues/82
+
 **Scope:** the 6.6 endpoint, dragging in-text cards across chapters, refusing drops on Unassigned,
 and the README.
 
@@ -519,6 +529,8 @@ by wrapping the R2 test double's `put`.
 **Done when:** a scene can be dragged into another chapter with its text, and no failure path loses text.
 
 ### Step 6: connector and corkboard
+
+Tracking issue: https://github.com/BrendonKing32/lantern/issues/83
 
 **Scope:** section 8, 7.4, and the README "Connect Claude chat" section (mention `move_scene` under
 "Read and edit").
