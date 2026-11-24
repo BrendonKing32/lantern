@@ -212,6 +212,22 @@ describe("scene connector", () => {
     expect(textOf(result)).toContain("Uncarded passages stay with the scene before them");
     expect(bucket.objects.get(KEY)).toBe(source);
   });
+
+  it("refuses a move when cards have been relinked since the listing", async () => {
+    const { first, second } = await setup();
+    expect((await api("PATCH", `/api/scenes/${second}`, { unlink: true })).status).toBe(200);
+    expect((await api("PATCH", `/api/scenes/${second}`, { link: { passage_index: 2 } })).status).toBe(200);
+    const arrange = await api("PUT", `/api/chapters/${CH}/scenes/arrangement`, {
+      baseVersion: 5, sceneIds: [second, first], expectedPassages: [[first, 0], [second, 1]],
+    });
+    expect(arrange.status).toBe(409);
+    const across = await api("POST", `/api/scenes/${second}/move`, {
+      toChapterId: "ch-2", beforePassageIndex: null, baseVersions: { from: 5, to: 0 },
+      expectedFromChapterId: CH, expectedFromPassageIndex: 1,
+    });
+    expect(across.status).toBe(409);
+    expect(bucket.objects.get(KEY)).toBe(source);
+  });
 });
 
 describe("edit_chapter", () => {

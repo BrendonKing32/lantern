@@ -471,6 +471,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
             destination = to_chapter_id;
             result = await viaApp(moveScene, { id: scene_id }, "POST", {
               toChapterId: destination, expectedFromChapterId: from.chapter.id,
+              expectedFromPassageIndex: scene.passage_index,
               beforePassageIndex: before_passage_index ?? null, baseVersions: base_versions,
             }, env);
           } else {
@@ -486,7 +487,11 @@ export function registerWriteTools(server: McpServer, env: Env) {
               ids.splice(ids.indexOf(scene_id), 1);
               ids.splice(target ? ids.indexOf(target.id) : ids.length, 0, scene_id);
             }
-            result = await viaApp(arrangeScenes, { id: from.chapter.id }, "PUT", { baseVersion: base_versions.from, sceneIds: ids }, env);
+            const expectedPassages = cards.filter((s) => s.in_text && s.passage_index !== null)
+              .map((s) => [s.id, s.passage_index]);
+            result = await viaApp(arrangeScenes, { id: from.chapter.id }, "PUT", {
+              baseVersion: base_versions.from, sceneIds: ids, expectedPassages,
+            }, env);
           }
           await logClaudeChange(env, {
             project_id: found.project_id, action: "move_scene", target_kind: "scene", target_id: scene.id,

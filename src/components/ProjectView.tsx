@@ -441,7 +441,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     return () => { active = false; };
   }, [projectId, view]);
   useEffect(() => {
-    if (view !== "board" || scenes !== null) return;
+    if (view !== "board") return;
     let active = true;
     api.scenes(projectId).then(({ scenes, placeholders }) => {
       if (active) { setScenes(scenes); setPlaceholders(placeholders); }

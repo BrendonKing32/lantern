@@ -370,9 +370,10 @@ const sceneSnapshot = (rows: SceneSyncRow[]) => JSON.stringify([...rows]
 
 /** Move one identified passage without ever removing its only copy. */
 export const moveScene: Handler = async (req, env, p) => {
-  const b = await body<{ toChapterId?: unknown; expectedFromChapterId?: unknown; beforePassageIndex?: unknown; baseVersions?: { from?: unknown; to?: unknown } }>(req);
+  const b = await body<{ toChapterId?: unknown; expectedFromChapterId?: unknown; expectedFromPassageIndex?: unknown; beforePassageIndex?: unknown; baseVersions?: { from?: unknown; to?: unknown } }>(req);
   if (!b || typeof b.toChapterId !== "string" ||
       (b.expectedFromChapterId !== undefined && typeof b.expectedFromChapterId !== "string") ||
+      (b.expectedFromPassageIndex !== undefined && (!Number.isSafeInteger(b.expectedFromPassageIndex) || (b.expectedFromPassageIndex as number) < 0)) ||
       !(b.beforePassageIndex === null || (Number.isSafeInteger(b.beforePassageIndex) && (b.beforePassageIndex as number) >= 0)) ||
       !b.baseVersions || !Number.isSafeInteger(b.baseVersions.from) || (b.baseVersions.from as number) < 0 ||
       !Number.isSafeInteger(b.baseVersions.to) || (b.baseVersions.to as number) < 0) {
@@ -455,6 +456,7 @@ export const moveScene: Handler = async (req, env, p) => {
   const toMatch = matchScenes(toPassages, matchCards(toRows));
   const fromIndex = fromMatch.pairs.get(scene.id);
   if (fromIndex === undefined || fromMatch.leftText.length || toMatch.leftText.length) throw new HttpError(409, sceneListError);
+  if (b.expectedFromPassageIndex !== undefined && fromIndex !== b.expectedFromPassageIndex) throw new HttpError(409, sceneListError);
   const before = b.beforePassageIndex as number | null;
   if (before !== null && !toPassages[before]) throw new HttpError(400, "Passage not found");
   const emptyDestination = !toText.trim();
@@ -605,9 +607,12 @@ export const moveScene: Handler = async (req, env, p) => {
 
 /** Reorder cards and their passages, leaving uncarded passages with their preceding passage. */
 export const arrangeScenes: Handler = async (req, env, p) => {
-  const b = await body<{ baseVersion?: unknown; sceneIds?: unknown }>(req);
+  const b = await body<{ baseVersion?: unknown; sceneIds?: unknown; expectedPassages?: unknown }>(req);
   if (!Number.isSafeInteger(b.baseVersion) || (b.baseVersion as number) < 0 ||
-      !Array.isArray(b.sceneIds) || !b.sceneIds.every((id) => typeof id === "string")) {
+      !Array.isArray(b.sceneIds) || !b.sceneIds.every((id) => typeof id === "string") ||
+      (b.expectedPassages !== undefined && (!Array.isArray(b.expectedPassages) ||
+        !b.expectedPassages.every((entry) => Array.isArray(entry) && entry.length === 2 &&
+          typeof entry[0] === "string" && Number.isSafeInteger(entry[1]) && entry[1] >= 0)))) {
     throw new HttpError(400, "baseVersion and sceneIds are required");
   }
   const baseVersion = b.baseVersion as number;
@@ -630,6 +635,11 @@ export const arrangeScenes: Handler = async (req, env, p) => {
   const passages = splitScenes(text, chapter.title);
   const match = matchScenes(passages, matchCards(rows));
   if (match.leftText.length) throw new HttpError(409, sceneListError);
+  if (b.expectedPassages !== undefined) {
+    const expected = new Map(b.expectedPassages as [string, number][]);
+    if (expected.size !== b.expectedPassages.length || expected.size !== match.pairs.size ||
+        [...match.pairs].some(([id, index]) => expected.get(id) !== index)) throw new HttpError(409, sceneListError);
+  }
   const snapshot = sceneSnapshot(rows);
   const paired = new Set(match.pairs.values());
   const groups = new Map<number, number[]>();
