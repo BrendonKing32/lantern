@@ -35,6 +35,17 @@ async function chapterText(env: Env, row: Pick<ChapterMeta, "project_id" | "id">
   return obj ? await obj.text() : "";
 }
 
+/** Translate a position in LF-normalized text back to the stored text. */
+function originalOffset(text: string, normalizedOffset: number): number {
+  let normalized = 0;
+  for (let original = 0; original < text.length; original++) {
+    if (normalized === normalizedOffset) return original;
+    if (text[original] === "\r" && text[original + 1] === "\n") original++;
+    normalized++;
+  }
+  return text.length;
+}
+
 /** Literal, line-by-line matches across a book, in reading order. */
 export function findMatches(
   books: { chapter: ChapterMeta; number: number; content: string }[],
@@ -176,16 +187,20 @@ export function registerTools(server: McpServer, env: Env) {
         const snapshot = snapshots.find((c) => c.chapter.id === chapter_id);
         if (!snapshot) throw new HttpError(404, "Chapter not found");
         const current = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+        const originalText = current ? await current.text() : "";
         if (snapshot.textVersion !== snapshot.chapter.version ||
             chapterTextVersion(current, snapshot.chapter.version) !== snapshot.textVersion ||
-            (current ? await current.text() : "").replace(/\r\n?/g, "\n") !== snapshot.text) {
+            originalText.replace(/\r\n?/g, "\n") !== snapshot.text) {
           throw new HttpError(409, "The chapter changed while reading the scene. Read it again.");
         }
         row = snapshot.chapter;
         passageIndex = scene.passage_index;
         const passage = splitScenes(snapshot.text, row.title)[passageIndex];
         if (!passage) throw new HttpError(409, "The scene changed while reading. Read it again.");
-        content = snapshot.text.slice(passage.start, passage.end);
+        content = originalText.slice(
+          originalOffset(originalText, passage.start),
+          originalOffset(originalText, passage.end),
+        );
       } else {
         content = await chapterText(env, row);
       }

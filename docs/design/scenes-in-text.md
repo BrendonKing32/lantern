@@ -455,7 +455,8 @@ count), in passage order. Max 6, then "+N more". Corkboard drag still reorders c
 - `read_chapter`: optional `scene_id`. When given, return only that passage's text, plus the chapter
   `version` and `passage_index`. The card must be in the text.
 - New tool `move_scene` (read-and-edit connections only, registered next to the other write tools):
-  inputs `scene_id`, `from_chapter_id` (the chapter read), `to_chapter_id` (optional; omit to reorder
+  inputs `scene_id`, `from_chapter_id` and `from_passage_index` (from `read_chapter` with `scene_id`),
+  `to_chapter_id` (optional; omit to reorder
   within the same chapter), `before_passage_index` (optional; null or missing means the end), and
   `base_versions: { from, to? }` (both versions for a cross-chapter move). It calls the handlers through `viaApp` like the other
   write tools and logs a `claude_changes` row (`action: "move_scene"`, `target_kind: "scene"`).

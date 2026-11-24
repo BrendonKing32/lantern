@@ -439,18 +439,21 @@ export function registerWriteTools(server: McpServer, env: Env) {
     "move_scene",
     {
       title: "Move a scene",
-      description: "Move an in-text scene and its passage, keeping a History copy. Give the chapter versions from read_chapter. " +
+      description: "Move an in-text scene and its passage, keeping a History copy. Give the chapter version and " +
+        "passage_index from read_chapter with scene_id. " +
         "Within a chapter, uncarded passages stay attached to the preceding scene.",
       inputSchema: {
         scene_id: z.string(),
         from_chapter_id: z.string().describe("The chapter containing the scene when you read it"),
+        from_passage_index: z.number().int().min(0)
+          .describe("The scene's passage_index from read_chapter with scene_id"),
         to_chapter_id: z.string().optional(),
         before_passage_index: z.number().int().min(0).nullable().optional().describe("Destination passage index, or null for the end"),
         base_versions: z.object({ from: baseVersion, to: baseVersion.optional() }),
       },
       annotations: EDITS,
     },
-    async ({ scene_id, from_chapter_id, to_chapter_id, before_passage_index, base_versions }) =>
+    async ({ scene_id, from_chapter_id, from_passage_index, to_chapter_id, before_passage_index, base_versions }) =>
       guarded(async () => {
         try {
           const found = await env.DB.prepare("SELECT project_id FROM scenes WHERE id = ?").bind(scene_id).first<{ project_id: string }>();
@@ -460,6 +463,9 @@ export function registerWriteTools(server: McpServer, env: Env) {
           if (scene && scene.chapter_id !== from_chapter_id) throw new HttpError(409, "Scene moved");
           if (!scene?.in_text || !scene.chapter_id || scene.passage_index === null) {
             throw new HttpError(400, "Only scenes in the text can be moved this way");
+          }
+          if (scene.passage_index !== from_passage_index) {
+            throw new EditError("That scene's passage has changed since you read it. Read it again with read_chapter and redo the move.");
           }
           const from = snapshots.find((c) => c.chapter.id === from_chapter_id);
           if (!from) throw new HttpError(404, "Chapter not found");
@@ -473,7 +479,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
             destination = to_chapter_id;
             result = await viaApp(moveScene, { id: scene_id }, "POST", {
               toChapterId: destination, expectedFromChapterId: from_chapter_id,
-              expectedFromPassageIndex: scene.passage_index,
+              expectedFromPassageIndex: from_passage_index,
               beforePassageIndex: before_passage_index ?? null, baseVersions: base_versions,
             }, env);
           } else {

@@ -154,9 +154,29 @@ describe("scene connector", () => {
     expect(chapter().version).toBe(6);
   });
 
+  it("preserves CRLF in a scene read so its text can be edited exactly", async () => {
+    const { second } = await setup();
+    expect((await api("PATCH", `/api/scenes/${second}`, { unlink: true })).status).toBe(200);
+    const content = source.replace("Second passage.", "Second passage.\nContinued here.").replace(/\n/g, "\r\n");
+    expect((await api("PUT", `/api/chapters/${CH}`, { content, baseVersion: 5 })).status).toBe(200);
+    expect((await api("PATCH", `/api/scenes/${second}`, { link: { passage_index: 1 } })).status).toBe(200);
+    const read = await call("read_chapter", { chapter_id: CH, scene_id: second });
+    expect(read.isError, textOf(read)).toBeFalsy();
+    const responseText = textOf(read);
+    const separator = "\n\n---\n\n";
+    const bodyStart = responseText.indexOf(separator);
+    expect(bodyStart).toBeGreaterThanOrEqual(0);
+    const passage = responseText.slice(bodyStart + separator.length);
+    expect(passage).toContain("Second passage.\r\nContinued here.");
+    const edited = await call("edit_chapter", {
+      chapter_id: CH, base_version: 6, edits: [{ old_text: passage, new_text: "Revised passage." }],
+    });
+    expect(edited.isError, textOf(edited)).toBeFalsy();
+  });
+
   it("reorders in the chapter and logs the move", async () => {
     const { first, second } = await setup();
-    const result = await call("move_scene", { scene_id: second, from_chapter_id: CH, before_passage_index: 0, base_versions: { from: 5 } });
+    const result = await call("move_scene", { scene_id: second, from_chapter_id: CH, from_passage_index: 1, before_passage_index: 0, base_versions: { from: 5 } });
     expect(result.isError).toBeFalsy();
     expect(bucket.objects.get(KEY)).toBe("Second passage.\n\n***\n\nUncarded passage.\n\n***\n\nFirst passage.");
     expect(db.raw.prepare("SELECT action, target_kind, target_id FROM claude_changes").all())
@@ -167,7 +187,7 @@ describe("scene connector", () => {
   it("moves across chapters before an uncarded passage and logs it", async () => {
     const { second } = await setup();
     const result = await call("move_scene", {
-      scene_id: second, from_chapter_id: CH, to_chapter_id: "ch-2", before_passage_index: 1, base_versions: { from: 5, to: 0 },
+      scene_id: second, from_chapter_id: CH, from_passage_index: 1, to_chapter_id: "ch-2", before_passage_index: 1, base_versions: { from: 5, to: 0 },
     });
     expect(result.isError).toBeFalsy();
     expect(bucket.objects.get(destKey)).toBe("Destination.\n\n***\n\nSecond passage.\n\n***\n\nNo card.");
@@ -180,7 +200,7 @@ describe("scene connector", () => {
     const missing = await call("move_scene", { scene_id: second, base_versions: { from: 5 } });
     expect(missing.isError).toBe(true);
     const moved = await call("move_scene", {
-      scene_id: second, from_chapter_id: CH, to_chapter_id: "ch-2", base_versions: { from: 5, to: 0 },
+      scene_id: second, from_chapter_id: CH, from_passage_index: 1, to_chapter_id: "ch-2", base_versions: { from: 5, to: 0 },
     });
     expect(moved.isError).toBeFalsy();
     const sourceAfter = bucket.objects.get(KEY);
@@ -189,7 +209,7 @@ describe("scene connector", () => {
     const changes = db.raw.prepare("SELECT COUNT(*) AS n FROM claude_changes").get();
     for (const to_chapter_id of [undefined, CH]) {
       const refused = await call("move_scene", {
-        scene_id: second, from_chapter_id: CH, to_chapter_id, base_versions: { from: 1, to: 6 },
+        scene_id: second, from_chapter_id: CH, from_passage_index: 1, to_chapter_id, base_versions: { from: 1, to: 6 },
       });
       expect(refused.isError).toBe(true);
       expect(textOf(refused)).toContain("The chapter has changed since you read it");
@@ -202,11 +222,11 @@ describe("scene connector", () => {
 
   it("refuses stale versions and locked chapters without changing text", async () => {
     const { second } = await setup();
-    const stale = await call("move_scene", { scene_id: second, from_chapter_id: CH, base_versions: { from: 4 } });
+    const stale = await call("move_scene", { scene_id: second, from_chapter_id: CH, from_passage_index: 1, base_versions: { from: 4 } });
     expect(stale.isError).toBe(true);
     expect(textOf(stale)).toContain("changed since you read it");
     db.raw.prepare("UPDATE chapters SET moving_until = ? WHERE id = ?").run(new Date(Date.now() + 60_000).toISOString(), CH);
-    const locked = await call("move_scene", { scene_id: second, from_chapter_id: CH, before_passage_index: 0, base_versions: { from: 5 } });
+    const locked = await call("move_scene", { scene_id: second, from_chapter_id: CH, from_passage_index: 1, before_passage_index: 0, base_versions: { from: 5 } });
     expect(locked.isError).toBe(true);
     expect(textOf(locked)).toBe("A scene is being moved in this chapter; try again in a few seconds.");
     expect(bucket.objects.get(KEY)).toBe(source);
@@ -215,7 +235,7 @@ describe("scene connector", () => {
 
   it("refuses stale destination versions and preserves move failure messages", async () => {
     const { second } = await setup();
-    const args = { scene_id: second, from_chapter_id: CH, to_chapter_id: "ch-2", base_versions: { from: 5, to: 1 } };
+    const args = { scene_id: second, from_chapter_id: CH, from_passage_index: 1, to_chapter_id: "ch-2", base_versions: { from: 5, to: 1 } };
     const stale = await call("move_scene", args);
     expect(stale.isError).toBe(true);
     expect(textOf(stale)).toContain("changed since you read it");
@@ -232,7 +252,7 @@ describe("scene connector", () => {
 
   it("refuses to split a group at an uncarded passage during a reorder", async () => {
     const { first } = await setup();
-    const result = await call("move_scene", { scene_id: first, from_chapter_id: CH, before_passage_index: 2, base_versions: { from: 5 } });
+    const result = await call("move_scene", { scene_id: first, from_chapter_id: CH, from_passage_index: 0, before_passage_index: 2, base_versions: { from: 5 } });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("Uncarded passages stay with the scene before them");
     expect(bucket.objects.get(KEY)).toBe(source);
@@ -252,6 +272,22 @@ describe("scene connector", () => {
     });
     expect(across.status).toBe(409);
     expect(bucket.objects.get(KEY)).toBe(source);
+  });
+
+  it("refuses to move a scene after its passage changed since read_chapter", async () => {
+    const { second } = await setup();
+    const read = await call("read_chapter", { chapter_id: CH, scene_id: second });
+    expect(textOf(read)).toContain("passage_index: 1");
+    expect((await api("PATCH", `/api/scenes/${second}`, { unlink: true })).status).toBe(200);
+    expect((await api("PATCH", `/api/scenes/${second}`, { link: { passage_index: 2 } })).status).toBe(200);
+    const result = await call("move_scene", {
+      scene_id: second, from_chapter_id: CH, from_passage_index: 1, to_chapter_id: "ch-2",
+      base_versions: { from: 5, to: 0 },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("passage has changed since you read it");
+    expect(bucket.objects.get(KEY)).toBe(source);
+    expect(bucket.objects.get(destKey)).toBe("Destination.\n\n***\n\nNo card.");
   });
 });
 
