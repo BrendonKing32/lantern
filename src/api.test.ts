@@ -33,6 +33,13 @@ async function failure(p: Promise<unknown>): Promise<ApiError> {
 }
 
 describe("request validation", () => {
+  it("sends a versioned chapter scene arrangement", async () => {
+    fetchMock.mockResolvedValue(json({ version: 4, word_count: 3, updated_at: "now" }));
+    await expect(api.arrangeScenes("c1", 3, ["b", "a"])).resolves.toMatchObject({ version: 4 });
+    expect(fetchMock).toHaveBeenCalledWith("/api/chapters/c1/scenes/arrangement", expect.objectContaining({
+      method: "PUT", body: JSON.stringify({ baseVersion: 3, sceneIds: ["b", "a"] }),
+    }));
+  });
   it("returns a reply with the expected shape", async () => {
     fetchMock.mockResolvedValue(json([summary]));
     await expect(api.listProjects()).resolves.toEqual([summary]);

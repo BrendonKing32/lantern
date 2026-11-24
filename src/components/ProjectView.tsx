@@ -26,6 +26,7 @@ import { grammarEnabled, setGrammarEnabled } from "../grammar";
 import { DIALECTS } from "../../shared/types";
 import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { arrangeChapters } from "../../shared/acts";
+import { arrangeChapterScenes, SceneMoveError } from "../sceneArrangement";
 
 type View = "write" | "board" | "scenes" | "search" | "bible";
 const VIEWS: View[] = ["write", "board", "scenes", "search", "bible"];
@@ -224,11 +225,21 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
   const [offline, setOffline] = useState(false);
+  const [disconnected, setDisconnected] = useState(() => !navigator.onLine);
+  useEffect(() => {
+    const update = () => setDisconnected(!navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
   const [lastChapterId, setLastChapterId] = useState<string | null>(null);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
   const [placeholders, setPlaceholders] = useState<ScenePlaceholder[]>([]);
   const [scenesError, setScenesError] = useState<string | null>(null);
+  const [sceneMove, setSceneMove] = useState<{ chapter: ChapterMeta; sceneIds: string[]; expectedIds: string[]; title: string } | null>(null);
+  const [movingScene, setMovingScene] = useState(false);
+  const sceneMoveBusy = useRef(false);
   const [searchText, setSearchText] = useState<{ id: string; content: string; version: number } | null>(null);
   // Words written today across all novels, and the daily goal (null: none).
   const [today, setToday] = useState<{ words: number; goal: number | null } | null>(null);
@@ -389,7 +400,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (today_words !== undefined) setToday((t) => (t ? { ...t, words: today_words } : t));
     setDetail((d) =>
       d
-        ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, ...meta } : c)) }
+        ? { ...d, chapters: d.chapters.map((c) => (c.id === id && c.version <= meta.version ? { ...c, ...meta } : c)) }
         : d,
     );
   }, []);
@@ -617,19 +628,56 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
-  const reorderScenes = async (chapterId: string | null, sceneIds: string[]) => {
-    setScenes((list) => list?.map((scene) => {
-      if (scene.chapter_id !== chapterId) return scene;
-      return { ...scene, position: sceneIds.indexOf(scene.id) };
-    }) ?? []);
+  const reorderScenes = async (chapterId: string | null, sceneIds: string[], movedId: string) => {
+    if (sceneMoveBusy.current) return;
+    const group = (scenes ?? []).filter((scene) => scene.chapter_id === chapterId).sort((a, b) => a.position - b.position);
+    const chapter = chapters.find((c) => c.id === chapterId);
+    const moved = group.find((scene) => scene.id === movedId);
+    if (offline || disconnected || !moved) return;
+    sceneMoveBusy.current = true;
+    setMovingScene(true);
     try {
-      await api.reorderScenes(projectId, chapterId, sceneIds);
+      if (chapter && group.some((scene) => scene.in_text)) {
+        const result = await arrangeChapterScenes(chapter, sceneIds, { projectId, sceneIds: group.map((scene) => scene.id) });
+        onSaved(chapter.id, result);
+        setLive((current) => ({ ...current, [chapter.id]: result.word_count }));
+        const cached = await cache.project(projectId);
+        if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === chapter.id ? { ...c, ...result } : c) });
+        setSceneMove({ chapter, sceneIds: group.map((scene) => scene.id), expectedIds: sceneIds, title: moved.title });
+      } else {
+        await api.reorderScenes(projectId, chapterId, sceneIds);
+        setSceneMove(null);
+      }
+      await reloadScenes();
     } catch (e) {
-      alert(describeError(e));
+      alert(e instanceof SceneMoveError ? e.message : describeError(e));
       void reloadScenes().catch((error) => setScenesError(describeError(error)));
+    } finally {
+      sceneMoveBusy.current = false;
+      setMovingScene(false);
     }
   };
 
+  const undoSceneMove = async () => {
+    if (!sceneMove || sceneMoveBusy.current || offline || disconnected) return;
+    sceneMoveBusy.current = true;
+    setMovingScene(true);
+    try {
+      const result = await arrangeChapterScenes(sceneMove.chapter, sceneMove.sceneIds, { projectId, sceneIds: sceneMove.expectedIds });
+      onSaved(sceneMove.chapter.id, result);
+      setLive((current) => ({ ...current, [sceneMove.chapter.id]: result.word_count }));
+      const cached = await cache.project(projectId);
+      if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === sceneMove.chapter.id ? { ...c, ...result } : c) });
+      setSceneMove(null);
+      await reloadScenes();
+    } catch (e) {
+      alert(e instanceof SceneMoveError ? e.message : describeError(e));
+      void reloadScenes().catch((error) => setScenesError(describeError(error)));
+    } finally {
+      sceneMoveBusy.current = false;
+      setMovingScene(false);
+    }
+  };
   const remove = useCallback(async (c: ChapterMeta) => {
     if (chapters.length === 1) {
       alert("A novel needs at least one chapter.");
@@ -975,19 +1023,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
               <p className="screen-message-detail">{scenesError}</p>
             </div>
           ) : scenes ? (
+            <>
+            {sceneMove && <p className="check-notice" role="status">Moved {sceneMove.title}.{" "}
+              <button className="btn btn-quiet" disabled={movingScene || offline || disconnected} onClick={() => void undoSceneMove()}>Undo</button>
+            </p>}
             <SceneBoard
               chapters={chapters}
               acts={acts}
               scenes={scenes}
               placeholders={placeholders}
               projectId={projectId}
-              offline={offline}
+              offline={offline || disconnected}
+              moving={movingScene}
               onAdd={addScene}
               onUpdate={updateScene}
               onDelete={(scene) => void deleteScene(scene)}
-              onMove={(chapterId, sceneIds) => void reorderScenes(chapterId, sceneIds)}
+              onMove={(chapterId, sceneIds, movedId) => void reorderScenes(chapterId, sceneIds, movedId)}
               onOpen={openScene}
             />
+            </>
           ) : <div className="screen-message">Loading scene plans…</div>
         ) : view === "search" ? (
           <SearchPanel

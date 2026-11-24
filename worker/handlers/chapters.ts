@@ -1,6 +1,7 @@
 import { countWords } from "../../shared/wordcount";
-import type { DeletedChapter, SnapshotReason } from "../../shared/types";
-import { chapterKey, chapterPut, getChapterRow, insertChapter, lastActId, MAX_CHAPTER_BYTES, requireProject } from "../db";
+import type { ChapterMeta, DeletedChapter, SnapshotReason } from "../../shared/types";
+import { chapterKey, chapterPut, chapterTextVersion, getChapterRow, insertChapter, lastActId, MAX_CHAPTER_BYTES, requireProject } from "../db";
+import type { Env } from "../env";
 import { body, cleanTitle, HttpError, isDay, json, now, type Handler } from "../http";
 import { snapshotBeforeSave } from "./history";
 import { afterChapterWrite } from "../sceneSync";
@@ -51,9 +52,62 @@ export const createChapter: Handler = async (req, env, p) => {
 export const getChapter: Handler = async (_req, env, p) => {
   const row = await getChapterRow(env, p.id);
   const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+  if (chapterTextVersion(obj, row.version) !== row.version) {
+    throw new HttpError(409, "Chapter is changing; reload and try again");
+  }
   const content = obj ? await obj.text() : "";
   return json({ ...row, content });
 };
+
+/** Claim, preserve and write a chapter. Failed mandatory snapshots and puts roll back the claim. */
+export async function writeChapter(
+  env: Env, row: ChapterMeta, content: string, baseVersion: number, reason: SnapshotReason,
+  options: { snapshotContent?: string; sceneSnapshot?: string } = {},
+): Promise<{ version: number; word_count: number; updated_at: string }> {
+  if (row.version !== baseVersion) throw new HttpError(409, "conflict", { version: row.version });
+  const object = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+  if (chapterTextVersion(object, row.version) !== baseVersion) {
+    throw new HttpError(409, "Chapter is changing; reload and try again");
+  }
+  const ts = now();
+  const words = countWords(content);
+  const guard = options.sceneSnapshot === undefined ? "" : ` AND
+    (SELECT json_group_array(json_array(id, position, in_text, anchor_head, anchor_tail))
+       FROM (SELECT id, position, in_text, anchor_head, anchor_tail FROM scenes WHERE chapter_id = ? ORDER BY id)) = ?`;
+  const claim = await env.DB.prepare(
+    `UPDATE chapters SET version = version + 1, word_count = ?, updated_at = ?
+      WHERE id = ? AND version = ? AND deleted_at IS NULL${guard}`,
+  ).bind(words, ts, row.id, baseVersion, ...(options.sceneSnapshot === undefined ? [] : [row.id, options.sceneSnapshot])).run();
+  if (!claim.meta.changes) {
+    const current = await getChapterRow(env, row.id);
+    if (current.version !== baseVersion) throw new HttpError(409, "conflict", { version: current.version });
+    throw new HttpError(409, "Scene list is out of date; reload and try again");
+  }
+  const rollback = () => env.DB.prepare(
+    "UPDATE chapters SET version = ?, word_count = ?, updated_at = ? WHERE id = ? AND version = ?",
+  ).bind(baseVersion, row.word_count, row.updated_at, row.id, baseVersion + 1).run();
+  try {
+    const savedText = await snapshotBeforeSave(env, row, reason);
+    if (reason === "replace" && options.snapshotContent?.trim() && options.snapshotContent !== savedText) {
+      await snapshotBeforeSave(env, row, reason, options.snapshotContent);
+    }
+  } catch (e) {
+    console.error("snapshot failed", e);
+    if (reason === "replace" || reason === "move") {
+      await rollback();
+      throw new HttpError(500, reason === "move"
+        ? "Could not keep a copy in History, so nothing was moved"
+        : "Could not preserve the earlier versions; no replacement was saved");
+    }
+  }
+  try {
+    await chapterPut(env, row, content, baseVersion + 1);
+  } catch (e) {
+    await rollback();
+    throw e;
+  }
+  return { version: baseVersion + 1, word_count: words, updated_at: ts };
+}
 
 export const saveChapter: Handler = async (req, env, p) => {
   const b = await body<{
@@ -80,55 +134,8 @@ export const saveChapter: Handler = async (req, env, p) => {
     throw new HttpError(413, "Chapter is too large (5 MB limit)");
   }
   const row = await getChapterRow(env, p.id);
-  const ts = now();
-  const words = countWords(b.content);
-
-  // Claim the next version only if nobody else saved in the meantime.
-  const claim = await env.DB.prepare(
-    `UPDATE chapters SET version = version + 1, word_count = ?, updated_at = ?
-      WHERE id = ? AND version = ? AND deleted_at IS NULL`,
-  )
-    .bind(words, ts, row.id, b.baseVersion)
-    .run();
-  if (!claim.meta.changes) {
-    const current = await getChapterRow(env, p.id);
-    throw new HttpError(409, "conflict", { version: current.version });
-  }
-
-  // Keep the server copy and, when it differs, the local draft being replaced.
-  try {
-    const savedText = await snapshotBeforeSave(env, row, reason);
-    if (
-      reason === "replace" &&
-      typeof b.snapshotContent === "string" &&
-      b.snapshotContent.trim() &&
-      b.snapshotContent !== savedText
-    ) {
-      await snapshotBeforeSave(env, row, reason, b.snapshotContent);
-    }
-  } catch (e) {
-    console.error("snapshot failed", e);
-    if (reason === "replace") {
-      await env.DB.prepare(
-        "UPDATE chapters SET version = ?, word_count = ?, updated_at = ? WHERE id = ? AND version = ?",
-      )
-        .bind(b.baseVersion, row.word_count, row.updated_at, row.id, b.baseVersion + 1)
-        .run();
-      throw new HttpError(500, "Could not preserve the earlier versions; no replacement was saved");
-    }
-  }
-
-  try {
-    await chapterPut(env, row, b.content, b.baseVersion + 1);
-  } catch (e) {
-    // Roll the version back so the client's next attempt still lines up.
-    await env.DB.prepare(
-      "UPDATE chapters SET version = ?, word_count = ? WHERE id = ? AND version = ?",
-    )
-      .bind(b.baseVersion, row.word_count, row.id, b.baseVersion + 1)
-      .run();
-    throw e;
-  }
+  const { word_count: words, updated_at: ts } = await writeChapter(env, row, b.content, b.baseVersion, reason,
+    { snapshotContent: typeof b.snapshotContent === "string" ? b.snapshotContent : undefined });
   await afterChapterWrite(env, row, b.content, b.baseVersion + 1);
   // Count the words this save added (or removed) toward the writer's day.
   // Putting back an old version from History isn't writing, so it doesn't count.

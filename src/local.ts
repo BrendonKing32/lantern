@@ -6,6 +6,7 @@
 // nothing and Lantern behaves as it does online-only.
 
 import type { BibleEntry, ChapterWithContent, ProjectDetail, ProjectSummary } from "../shared/types";
+import { draftWriteFailed, draftWriteSucceeded, trackChapterActivity } from "./chapterActivity";
 
 export interface Draft {
   chapterId: string;
@@ -199,22 +200,43 @@ async function migrateLegacyDrafts(db: IDBDatabase) {
 export const drafts = {
   read: readDraft,
   all: allDrafts,
-  write: writeDraft,
+  write: (id: string, content: string, baseVersion: number) => trackChapterActivity(id, writeDraft(id, content, baseVersion).then(
+    () => draftWriteSucceeded(id),
+    (error) => { draftWriteFailed(id, content); throw error; },
+  )),
   /** Remove the draft, but only if it still holds `content` (a newer keystroke wins). */
   clearIf: (chapterId: string, content: string) =>
-    run("drafts", "readwrite", (s) => {
+    trackChapterActivity(chapterId, run("drafts", "readwrite", (s) => {
       const req = s.get(chapterId);
       req.onsuccess = () => {
         if (req.result && req.result.content === content) s.delete(chapterId);
       };
-    }),
+    })),
   clear: (chapterId: string) => run("drafts", "readwrite", (s) => s.delete(chapterId)),
 };
 
+// A moved chapter has no trustworthy cached text until it is fetched again.
+const chapterFloors = new Map<string, number>();
 export const chapters = {
   read: (id: string) =>
     run<ChapterWithContent | undefined>("chapters", "readonly", (s) => s.get(id)).then((c) => c ?? null),
-  write: (chapter: ChapterWithContent) => run("chapters", "readwrite", (s) => s.put(chapter)),
+  write: (chapter: ChapterWithContent) => run("chapters", "readwrite", (s) => {
+    if (chapter.version < (chapterFloors.get(chapter.id) ?? 0)) return;
+    const request = s.get(chapter.id);
+    request.onsuccess = () => {
+      if (chapter.version >= (chapterFloors.get(chapter.id) ?? 0) && (!request.result || request.result.version <= chapter.version)) s.put(chapter);
+    };
+  }),
+  invalidate: (id: string) => {
+    chapterFloors.set(id, Infinity);
+    return run("chapters", "readwrite", (s) => s.delete(id));
+  },
+  restore: (chapter: ChapterWithContent) => {
+    const floor = chapterFloors.get(chapter.id);
+    if (floor !== undefined && floor !== Infinity && chapter.version < floor) return Promise.resolve(undefined);
+    chapterFloors.set(chapter.id, chapter.version);
+    return chapters.write(chapter);
+  },
   /** Which chapters (id → version) are already stored, to skip re-downloading them. */
   versions: async () => {
     const all = (await run<ChapterWithContent[]>("chapters", "readonly", (s) => s.getAll())) ?? [];

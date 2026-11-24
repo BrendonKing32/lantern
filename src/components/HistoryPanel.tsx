@@ -21,6 +21,7 @@ const REASON: Record<SnapshotReason, string> = {
   conflict: "From another device",
   replace: "Before a find and replace",
   claude: "Before an edit by Claude",
+  move: "Before moving a scene",
 };
 
 function when(iso: string): string {

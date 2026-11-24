@@ -13,7 +13,7 @@ import { z } from "zod";
 import { countWords } from "../../shared/wordcount";
 import type { BibleEntry, ChapterMeta, SceneMeta } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
-import { chapterKey, chapterPut, getChapterRow, MAX_CHAPTER_BYTES } from "../db";
+import { chapterKey, chapterPut, chapterTextVersion, getChapterRow, MAX_CHAPTER_BYTES } from "../db";
 import type { Env } from "../env";
 import { createEntry, updateEntry } from "../handlers/bible";
 import { logClaudeChange } from "../handlers/claudeChanges";
@@ -100,6 +100,9 @@ export async function saveAsClaude(env: Env, chapterId: string, baseVersion: num
     throw new EditError("That would make the chapter larger than 5 MB, so nothing was changed.");
   }
   const row = await getChapterRow(env, chapterId);
+  if (row.version !== baseVersion) throw conflict(row.version);
+  const object = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+  if (chapterTextVersion(object, row.version) !== baseVersion) throw conflict(row.version);
   const words = countWords(content);
   const ts = now();
   const claim = await env.DB.prepare(
@@ -145,6 +148,7 @@ async function readFor(env: Env, chapterId: string, baseVersion: number): Promis
   const row = await getChapterRow(env, chapterId);
   if (row.version !== baseVersion) throw conflict(row.version);
   const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+  if (chapterTextVersion(obj, row.version) !== baseVersion) throw conflict(row.version);
   return { row, content: obj ? await obj.text() : "" };
 }
 
