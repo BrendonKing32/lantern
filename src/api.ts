@@ -74,6 +74,9 @@ export const api = {
   createProject: (title: string) => request(schema.projectRef, "POST", "/api/projects", { title }),
   getProject: (id: string) => request(schema.projectDetail, "GET", `/api/projects/${id}`),
   milestones: (id: string) => request(array(schema.milestone), "GET", `/api/projects/${id}/milestones`),
+  milestoneChapters: (id: string) => request(array(schema.milestoneChapter), "GET", `/api/milestones/${id}/chapters`),
+  milestoneChapter: (id: string, chapterId: string) =>
+    request(schema.milestoneChapterWithContent, "GET", `/api/milestones/${id}/chapters/${chapterId}`),
   createMilestone: (id: string, name: string, note: string) =>
     request(schema.milestone, "POST", `/api/projects/${id}/milestones`, { name, note }),
   updateMilestone: (id: string, patch: { name?: string; note?: string }) =>

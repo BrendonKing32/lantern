@@ -1,5 +1,5 @@
 import { countWords } from "../../shared/wordcount";
-import type { ChapterMeta } from "../../shared/types";
+import type { ChapterMeta, MilestoneChapter } from "../../shared/types";
 import { assertChapterUnlocked, CHAPTER_COLS, chapterKey, chapterMoveToken, chapterTextVersion, MARKDOWN, milestoneKey, reconcileChapter, requireProject } from "../db";
 import type { Env } from "../env";
 import { body, HttpError, json, newId, now, type Handler } from "../http";
@@ -112,6 +112,25 @@ async function getMilestone(env: Env, id: string): Promise<Milestone> {
   if (!row) throw new HttpError(404, "Milestone not found");
   return row;
 }
+
+export const listMilestoneChapters: Handler = async (_req, env, p) => {
+  await getMilestone(env, p.id);
+  const { results } = await env.DB.prepare(
+    "SELECT milestone_id, chapter_id, position, title, act_title, version, word_count FROM milestone_chapters WHERE milestone_id = ? ORDER BY position",
+  ).bind(p.id).all<MilestoneChapter>();
+  return json(results);
+};
+
+export const getMilestoneChapter: Handler = async (_req, env, p) => {
+  const milestone = await getMilestone(env, p.id);
+  const row = await env.DB.prepare(
+    "SELECT milestone_id, chapter_id, position, title, act_title, version, word_count FROM milestone_chapters WHERE milestone_id = ? AND chapter_id = ?",
+  ).bind(p.id, p.chapterId).first<MilestoneChapter>();
+  if (!row) throw new HttpError(404, "Milestone chapter not found");
+  const object = await env.BUCKET.get(milestoneKey(milestone.project_id, p.id, p.chapterId));
+  if (!object) throw new HttpError(404, "Milestone chapter text not found");
+  return json({ ...row, content: await object.text() });
+};
 
 export const updateMilestone: Handler = async (req, env, p) => {
   const row = await getMilestone(env, p.id);

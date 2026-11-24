@@ -20,6 +20,7 @@ import {
   type MarginNote,
   type Outline,
   type Milestone,
+  type MilestoneChapter,
   type ProjectDetail,
   type ProjectSummary,
   type SaveResult,
@@ -65,6 +66,13 @@ export const milestone: Check<Milestone> = object({
   id: string, project_id: string, name: string, note: string,
   word_count: number, chapter_count: number, created_at: string,
 });
+
+const milestoneChapterFields = {
+  milestone_id: string, chapter_id: string, position: number, title: string,
+  act_title: nullable(string), version: number, word_count: number,
+};
+export const milestoneChapter: Check<MilestoneChapter> = object(milestoneChapterFields);
+export const milestoneChapterWithContent = object({ ...milestoneChapterFields, content: string });
 
 export const projectArchived = object({ id: string, archived_at: nullable(string) });
 

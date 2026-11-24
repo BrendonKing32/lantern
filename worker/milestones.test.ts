@@ -25,6 +25,21 @@ const request = (method: string, path: string, payload?: unknown) => worker.fetc
 const create = () => request("POST", "/api/projects/p/milestones", { name: "Draft 1", note: "Sent to readers" });
 
 describe("milestones", () => {
+  it("reads only complete milestone chapters, including deleted chapters", async () => {
+    const milestone = await (await create()).json() as { id: string };
+    await request("DELETE", "/api/chapters/a");
+    const path = `/api/milestones/${milestone.id}/chapters`;
+    expect(await (await request("GET", path)).json()).toMatchObject([
+      { chapter_id: "a", title: "First", version: 2 },
+      { chapter_id: "b", title: "Second", version: 0 },
+    ]);
+    expect(await (await request("GET", `${path}/a`)).json()).toMatchObject({ chapter_id: "a", content: "First text" });
+    expect((await request("GET", `${path}/missing`)).status).toBe(404);
+    db.raw.prepare("UPDATE milestones SET complete = 0 WHERE id = ?").run(milestone.id);
+    expect((await request("GET", path)).status).toBe(404);
+    expect((await request("GET", `${path}/a`)).status).toBe(404);
+  });
+
   it("copies reconciled chapter texts and versions and keeps them after deletion", async () => {
     const response = await create();
     expect(response.status).toBe(201);
