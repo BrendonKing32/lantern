@@ -11,6 +11,8 @@ export interface Passage {
   breakLine: string | null;
   /** Offset where the passage body starts (just after the break line's newline; 0 for the first). */
   start: number;
+  /** Offset after a matching chapter-title heading and its following blank lines, or `start`. */
+  lead: number;
   /** Offset (exclusive) where the next break line starts, or the text length. */
   end: number;
   /** countWords() of the body. */
@@ -45,6 +47,8 @@ interface PassageBreak {
   start: number;
   line: string;
 }
+
+let warnedAboutTokenMismatch = false;
 
 export function normalizeText(markdown: string): string {
   return markdown.replace(/\r\n?/g, "\n");
@@ -118,6 +122,7 @@ function makePassage(
   breakStart: number | null,
   breakLine: string | null,
   ignoredHeading?: { start: number; end: number },
+  lead = start,
 ): Passage {
   const body = text.slice(start, end);
   const proseBody = ignoredHeading
@@ -130,6 +135,7 @@ function makePassage(
     breakStart,
     breakLine,
     start,
+    lead,
     end,
     words: countWords(body),
     head: anchor.slice(0, 160),
@@ -139,7 +145,10 @@ function makePassage(
 }
 
 function fallbackPassage(text: string): Passage[] {
-  console.warn("Could not split chapter text because marked tokens did not match the source");
+  if (!warnedAboutTokenMismatch) {
+    warnedAboutTokenMismatch = true;
+    console.warn("Could not split chapter text because marked tokens did not match the source");
+  }
   return [makePassage(text, 0, 0, text.length, null, null)];
 }
 
@@ -151,9 +160,11 @@ export function splitScenes(markdown: string, chapterTitle?: string): Passage[] 
   const breaks: PassageBreak[] = [];
   let offset = 0;
   let titleHeading: { start: number; end: number } | undefined;
+  let titleLead: number | undefined;
   let foundFirstBlock = false;
 
-  for (const token of tokens) {
+  for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
+    const token = tokens[tokenIndex];
     if (!foundFirstBlock && token.type !== "space") {
       foundFirstBlock = true;
       if (
@@ -162,6 +173,10 @@ export function splitScenes(markdown: string, chapterTitle?: string): Passage[] 
         headingText(token).toLowerCase() === chapterTitle.trim().toLowerCase()
       ) {
         titleHeading = { start: offset, end: offset + token.raw.length };
+        titleLead = offset + token.raw.length;
+        for (let following = tokenIndex + 1; tokens[following]?.type === "space"; following++) {
+          titleLead += tokens[following].raw.length;
+        }
       }
     }
     if (token.type === "hr" || (token.type === "heading" && token.text.trim() === "")) {
@@ -190,6 +205,7 @@ export function splitScenes(markdown: string, chapterTitle?: string): Passage[] 
       breakStart,
       breakLine,
       index === 0 ? titleHeading : undefined,
+      index === 0 ? titleLead : undefined,
     ));
     if (nextBreak) {
       start = nextBreak.start;
@@ -217,16 +233,24 @@ function usualBreak(passages: Passage[]): string {
 }
 
 function passageBodies(text: string, passages: Passage[]): string[] {
-  return passages.map((passage) => text.slice(passage.start, passage.end));
+  return passages.map((passage, index) =>
+    text.slice(index === 0 ? passage.lead : passage.start, passage.end),
+  );
 }
 
 function renderPassages(
   bodies: string[],
   breakLines: Array<string | null>,
   originalEndedWithNewline: boolean,
+  prefix = "",
 ): string {
-  if (bodies.length === 0) return "";
-  let text = bodies[0].trimStart();
+  if (bodies.length === 0) {
+    return prefix ? prefix.trimEnd() + (originalEndedWithNewline ? "\n" : "") : "";
+  }
+  const firstBody = bodies[0].trimStart();
+  let text = prefix
+    ? `${prefix.trimEnd()}${firstBody ? `\n\n${firstBody}` : ""}`
+    : firstBody;
   for (let index = 1; index < bodies.length; index++) {
     const line = breakLines[index] ?? "***";
     text = `${text.trimEnd()}\n\n${line}\n\n${bodies[index].trimStart()}`;
@@ -251,6 +275,9 @@ function validateOrder(passages: Passage[], order: number[]): void {
 export function arrangeText(text: string, passages: Passage[], order: number[]): string {
   const normalized = normalizeText(text);
   validateOrder(passages, order);
+  const prefix = passages[0]?.lead > passages[0]?.start
+    ? normalized.slice(0, passages[0].lead)
+    : "";
   const bodies = passageBodies(normalized, passages);
   const breakStyle = usualBreak(passages);
   const arrangedBodies = order.map((index) => bodies[index]);
@@ -259,7 +286,7 @@ export function arrangeText(text: string, passages: Passage[], order: number[]):
     const passage = passages[order[index]];
     breakLines.push(passage.breakLine ?? breakStyle);
   }
-  return renderPassages(arrangedBodies, breakLines, normalized.endsWith("\n"));
+  return renderPassages(arrangedBodies, breakLines, normalized.endsWith("\n"), prefix);
 }
 
 function validatePassageIndex(passages: Passage[], index: number): void {
@@ -276,6 +303,9 @@ export function takePassage(
 ): { rest: string; body: string } {
   const normalized = normalizeText(text);
   validatePassageIndex(passages, index);
+  const prefix = passages[0].lead > passages[0].start
+    ? normalized.slice(0, passages[0].lead)
+    : "";
   const bodies = passageBodies(normalized, passages);
   const removed = bodies[index].trim();
   const remaining = passages
@@ -286,6 +316,7 @@ export function takePassage(
       remaining.map((entry) => entry.body),
       remaining.map((entry, remainingIndex) => remainingIndex === 0 ? null : entry.passage.breakLine),
       normalized.endsWith("\n"),
+      prefix,
     ),
     body: removed,
   };
@@ -302,6 +333,9 @@ export function insertPassage(
   if (beforeIndex !== null) validatePassageIndex(passages, beforeIndex);
   if (!normalized.trim()) return normalizeText(body);
 
+  const prefix = passages[0]?.lead > passages[0]?.start
+    ? normalized.slice(0, passages[0].lead)
+    : "";
   const bodies = passageBodies(normalized, passages);
   const breakStyle = usualBreak(passages);
   const insertionIndex = beforeIndex ?? passages.length;
@@ -315,7 +349,7 @@ export function insertPassage(
       breakLines.push(passages[originalIndex]?.breakLine ?? breakStyle);
     }
   }
-  return renderPassages(bodies, breakLines, normalized.endsWith("\n"));
+  return renderPassages(bodies, breakLines, normalized.endsWith("\n"), prefix);
 }
 
 export function matchScenes(passages: Passage[], cards: MatchCard[]): MatchResult {

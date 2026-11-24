@@ -255,4 +255,41 @@ describe("passage text edits", () => {
       "First passage.\n\n---\n\nInserted passage.\n\n---\n\nLast passage.",
     );
   });
+
+  it("keeps a matching chapter-title heading pinned while rearranging passages", () => {
+    const text = "# Title\n\nAlpha here.\n\n#\n\nBeta here.\n\n---\n\nGamma here.\n";
+    const passages = splitScenes(text, "Title");
+    expect(passages[0].lead).toBe(text.indexOf("Alpha here."));
+
+    const arranged = arrangeText(text, passages, [2, 1, 0]);
+    expect(arranged.startsWith("# Title\n")).toBe(true);
+    expect(splitScenes(arranged, "Title").map((passage) => passage.head)).toEqual([
+      "gamma here.",
+      "beta here.",
+      "alpha here.",
+    ]);
+  });
+
+  it("keeps a matching chapter-title heading pinned when inserting at passage zero", () => {
+    const text = "# Title\n\nAlpha here.\n\n#\n\nBeta here.\n\n---\n\nGamma here.\n";
+    const inserted = insertPassage(text, splitScenes(text, "Title"), "Inserted.", 0);
+    expect(inserted.startsWith("# Title\n")).toBe(true);
+    expect(splitScenes(inserted, "Title").map((passage) => passage.head)).toEqual([
+      "inserted.",
+      "alpha here.",
+      "beta here.",
+      "gamma here.",
+    ]);
+  });
+
+  it("keeps a matching chapter-title heading pinned when taking passage zero", () => {
+    const text = "# Title\n\nAlpha here.\n\n#\n\nBeta here.\n\n---\n\nGamma here.\n";
+    const taken = takePassage(text, splitScenes(text, "Title"), 0);
+    expect(taken.body).toBe("Alpha here.");
+    expect(taken.rest.startsWith("# Title\n")).toBe(true);
+    expect(splitScenes(taken.rest, "Title").map((passage) => passage.head)).toEqual([
+      "beta here.",
+      "gamma here.",
+    ]);
+  });
 });
