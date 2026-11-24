@@ -175,7 +175,26 @@ export interface ClaudeChange {
   detail: string;
 }
 
-/** Why a copy was kept. "claude": the text as it was before Claude edited it through the connector. */
+/**
+ * Changes Claude made to a chapter's text through the connector. They stay
+ * here, outside the chapter, until the author accepts or discards them.
+ */
+export interface ClaudeDraft {
+  chapter_id: string;
+  /** The draft's own version; each edit by Claude adds one. */
+  version: number;
+  /** The chapter version the draft began from. */
+  base_version: number;
+  word_count: number;
+  created_at: string;
+  updated_at: string;
+  content: string;
+}
+
+/**
+ * Why a copy was kept. "claude": the text as it was before Claude edited it through the connector,
+ * or before the author accepted Claude's draft.
+ */
 export type SnapshotReason = "auto" | "restore" | "conflict" | "replace" | "claude" | "move";
 
 export interface Snapshot {

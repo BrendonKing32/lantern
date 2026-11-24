@@ -11,6 +11,7 @@ import { memoryR2, sqliteD1 } from "./testing/d1";
 const NOVEL = "novel-1";
 const CH = "ch-1";
 const KEY = `projects/${NOVEL}/chapters/${CH}.md`;
+const DRAFT_KEY = `projects/${NOVEL}/chapters/${CH}/claude-draft.md`;
 const OPENING = "Mara lit the lamp.\n\nThe “tower” waited in the dark.\n";
 
 let db: ReturnType<typeof sqliteD1>;
@@ -43,6 +44,15 @@ const call = async (name: string, args: Record<string, unknown>) => (await conne
 const chapter = () => db.raw.prepare("SELECT version, word_count, title, synopsis, position FROM chapters WHERE id = ?").get(CH) as {
   version: number; word_count: number; title: string; synopsis: string; position: number;
 };
+const draft = () => db.raw.prepare("SELECT version, base_version, word_count FROM claude_drafts WHERE chapter_id = ?").get(CH) as {
+  version: number; base_version: number; word_count: number;
+} | undefined;
+const app = (method: string, path: string, payload?: unknown) =>
+  worker.fetch(new Request(`https://lantern.test${path}`, {
+    method,
+    headers: payload === undefined ? {} : { "content-type": "application/json" },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  }), env);
 const snapshots = () => db.raw.prepare("SELECT id, version, reason FROM chapter_snapshots WHERE chapter_id = ?").all(CH) as {
   id: string; version: number; reason: string;
 }[];
@@ -81,7 +91,7 @@ describe("which tools a connection gets", () => {
     const editing = (await (await connect(true)).listTools()).tools.map((t) => t.name);
     expect(editing).toEqual(expect.arrayContaining([
       "edit_chapter", "append_to_chapter", "create_chapter", "update_chapter_details",
-      "create_story_entry", "update_story_entry", "create_scene", "update_scene", "read_chapter",
+      "create_story_entry", "update_story_entry", "create_scene", "update_scene", "read_chapter", "read_draft",
     ]));
     expect(editing.some((n) => n.startsWith("delete"))).toBe(false);
   });
@@ -93,43 +103,54 @@ describe("which tools a connection gets", () => {
 });
 
 describe("edit_chapter", () => {
-  it("repairs an interrupted chapter write when editing the current version", async () => {
-    await bucket.put(KEY, OPENING, { customMetadata: { version: "3" } });
-    const r = await call("edit_chapter", {
-      chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }],
-    });
-    expect(r.isError).toBeFalsy();
-    expect(bucket.objects.get(KEY)).toBe(OPENING.replace("Mara", "Nell"));
-    expect((await bucket.get(KEY))?.customMetadata).toEqual({ version: "5" });
-  });
-
-  it("saves the edit and keeps the old text in History", async () => {
+  it("puts the edit in Claude's draft and leaves the chapter alone", async () => {
     const r = await call("edit_chapter", {
       chapter_id: CH,
       base_version: 4,
       edits: [{ old_text: "lit the lamp", new_text: "lit the old brass lamp" }],
     });
     expect(r.isError).toBeFalsy();
-    expect(textOf(r)).toContain("version 5");
-    expect(bucket.objects.get(KEY)).toBe("Mara lit the old brass lamp.\n\nThe “tower” waited in the dark.\n");
-    expect(chapter()).toMatchObject({ version: 5, word_count: 12 });
-    const [snap] = snapshots();
-    expect(snap).toMatchObject({ version: 4, reason: "claude" });
-    expect(bucket.objects.get(`projects/${NOVEL}/chapters/${CH}/history/${snap.id}.md`)).toBe(OPENING);
+    expect(textOf(r)).toContain("draft version 1");
+    expect(bucket.objects.get(DRAFT_KEY)).toBe("Mara lit the old brass lamp.\n\nThe “tower” waited in the dark.\n");
+    expect(draft()).toEqual({ version: 1, base_version: 4, word_count: 12 });
+    expect(bucket.objects.get(KEY)).toBe(OPENING);
+    expect(chapter()).toMatchObject({ version: 4, word_count: 10 });
+    expect(snapshots()).toEqual([]);
+  });
+
+  it("keeps editing the draft, against the draft's version and text", async () => {
+    await call("edit_chapter", { chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }] });
+    const stale = await call("edit_chapter", { chapter_id: CH, base_version: 4, edits: [{ old_text: "dark", new_text: "night" }] });
+    expect(stale.isError).toBe(true);
+    expect(textOf(stale)).toMatch(/draft version 1.*read_draft/s);
+    const missing = await call("edit_chapter", { chapter_id: CH, base_version: 1, edits: [{ old_text: "Mara", new_text: "Ada" }] });
+    expect(textOf(missing)).toMatch(/wasn't found in the draft\. Read the draft again with read_draft/);
+    const r = await call("edit_chapter", { chapter_id: CH, base_version: 1, edits: [{ old_text: "dark", new_text: "night" }] });
+    expect(r.isError).toBeFalsy();
+    expect(bucket.objects.get(DRAFT_KEY)).toBe("Nell lit the lamp.\n\nThe “tower” waited in the night.\n");
+    expect(draft()).toMatchObject({ version: 2, base_version: 4 });
+    expect(bucket.objects.get(KEY)).toBe(OPENING);
+  });
+
+  it("shows Claude the draft, and says so when reading the chapter", async () => {
+    await call("append_to_chapter", { chapter_id: CH, base_version: 4, text: "Morning came." });
+    expect(textOf(await call("read_chapter", { chapter_id: CH }))).toContain("Claude's draft of this chapter is waiting");
+    const read = textOf(await call("read_draft", { chapter_id: CH }));
+    expect(read).toContain("draft version 1");
+    expect(read).toContain("Morning came.");
   });
 
   it("never counts Claude's words toward the author's day", async () => {
     await call("append_to_chapter", { chapter_id: CH, base_version: 4, text: "A great many new words arrived here." });
+    expect((await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1 })).status).toBe(200);
     expect(db.raw.prepare("SELECT COUNT(*) AS n FROM daily_words").get()).toEqual({ n: 0 });
   });
 
-  it("refuses to overwrite writing it hasn't seen", async () => {
+  it("refuses to start a draft from writing it hasn't seen", async () => {
     const r = await call("edit_chapter", { chapter_id: CH, base_version: 3, edits: [{ old_text: "Mara", new_text: "Nell" }] });
     expect(r.isError).toBe(true);
     expect(textOf(r)).toMatch(/changed since you read it \(it's now version 4\)/);
-    expect(bucket.objects.get(KEY)).toBe(OPENING);
-    expect(chapter().version).toBe(4);
-    expect(snapshots()).toEqual([]);
+    expect(draft()).toBeUndefined();
   });
 
   it("changes nothing if any edit fails", async () => {
@@ -140,42 +161,89 @@ describe("edit_chapter", () => {
     });
     expect(r.isError).toBe(true);
     expect(textOf(r)).toMatch(/^Edit 2:/);
+    expect(draft()).toBeUndefined();
+    expect(bucket.objects.has(DRAFT_KEY)).toBe(false);
+  });
+
+  it("leaves no draft behind when its text can't be stored", async () => {
+    bucket.failPuts = /claude-draft\.md$/;
+    const r = await call("edit_chapter", { chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }] });
+    expect(r.isError).toBe(true);
+    expect(draft()).toBeUndefined();
+  });
+});
+
+describe("accepting or discarding Claude's draft", () => {
+  beforeEach(async () => {
+    await call("edit_chapter", { chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }] });
+  });
+  const NELL = OPENING.replace("Mara", "Nell");
+
+  it("shows the draft to the app", async () => {
+    const res = await app("GET", `/api/chapters/${CH}/claude-draft`);
+    expect(await res.json()).toMatchObject({ chapter_id: CH, version: 1, base_version: 4, word_count: 10, content: NELL });
+  });
+
+  it("puts the draft in the chapter and keeps the chapter's text in History", async () => {
+    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: CH, version: 5, word_count: 10, content: NELL });
+    expect(bucket.objects.get(KEY)).toBe(NELL);
+    expect(chapter()).toMatchObject({ version: 5 });
+    const [snap] = snapshots();
+    expect(snap).toMatchObject({ version: 4, reason: "claude" });
+    expect(bucket.objects.get(`projects/${NOVEL}/chapters/${CH}/history/${snap.id}.md`)).toBe(OPENING);
+    expect(draft()).toBeUndefined();
+    expect(bucket.objects.has(DRAFT_KEY)).toBe(false);
+    expect(await (await app("GET", `/api/chapters/${CH}/claude-draft`)).json()).toBeNull();
+  });
+
+  it("refuses when the chapter or the draft changed since the author looked", async () => {
+    const draftMoved = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 0 });
+    expect(draftMoved.status).toBe(409);
+    expect(await draftMoved.json()).toMatchObject({ code: "draft_changed" });
+    expect((await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 3, draftVersion: 1 })).status).toBe(409);
     expect(bucket.objects.get(KEY)).toBe(OPENING);
     expect(chapter().version).toBe(4);
+    expect(draft()).toMatchObject({ version: 1 });
   });
 
   it("changes nothing when History can't keep a copy", async () => {
     bucket.failPuts = /\/history\//;
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    const r = await call("edit_chapter", { chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }] });
+    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1 });
     log.mockRestore();
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toContain("couldn't keep a copy");
+    expect(res.status).toBe(500);
     expect(bucket.objects.get(KEY)).toBe(OPENING);
     expect(chapter()).toMatchObject({ version: 4, word_count: 10 });
+    expect(draft()).toMatchObject({ version: 1 });
   });
 
-  it("rolls back the version when the chapter text can't be stored", async () => {
-    bucket.failPuts = new RegExp(`${CH}\\.md$`);
-    const r = await call("edit_chapter", { chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }] });
-    expect(r.isError).toBe(true);
-    expect(chapter()).toMatchObject({ version: 4, word_count: 10 });
+  it("discards the draft without touching the chapter, and the next edit starts afresh", async () => {
+    expect((await app("DELETE", `/api/chapters/${CH}/claude-draft`)).status).toBe(200);
+    expect(draft()).toBeUndefined();
+    expect(bucket.objects.has(DRAFT_KEY)).toBe(false);
+    expect(bucket.objects.get(KEY)).toBe(OPENING);
+    const r = await call("append_to_chapter", { chapter_id: CH, base_version: 4, text: "Dawn." });
+    expect(r.isError).toBeFalsy();
+    expect(bucket.objects.get(DRAFT_KEY)).toBe(`${OPENING.trimEnd()}\n\nDawn.\n`);
   });
 });
 
 describe("append_to_chapter", () => {
   it("adds after a blank line", async () => {
     await call("append_to_chapter", { chapter_id: CH, base_version: 4, text: "***\n\nMorning came." });
-    expect(bucket.objects.get(KEY)).toBe(`${OPENING.trimEnd()}\n\n***\n\nMorning came.\n`);
+    expect(bucket.objects.get(DRAFT_KEY)).toBe(`${OPENING.trimEnd()}\n\n***\n\nMorning came.\n`);
   });
 });
 
 describe("create_chapter", () => {
-  it("adds a chapter at the end with its synopsis and text", async () => {
+  it("adds a chapter at the end with its synopsis, and its text as Claude's draft", async () => {
     const r = await call("create_chapter", { novel_id: NOVEL, title: "The Storm", synopsis: "The light fails.", text: "Rain." });
     const made = JSON.parse(textOf(r));
-    expect(made).toMatchObject({ title: "The Storm", position: 2, version: 1, word_count: 1 });
-    expect(bucket.objects.get(`projects/${NOVEL}/chapters/${made.chapter_id}.md`)).toBe("Rain.\n");
+    expect(made).toMatchObject({ title: "The Storm", position: 2, version: 0, draft_version: 1, draft_word_count: 1 });
+    expect(bucket.objects.get(`projects/${NOVEL}/chapters/${made.chapter_id}.md`)).toBe("");
+    expect(bucket.objects.get(`projects/${NOVEL}/chapters/${made.chapter_id}/claude-draft.md`)).toBe("Rain.\n");
     const row = db.raw.prepare("SELECT synopsis, position FROM chapters WHERE id = ?").get(made.chapter_id);
     expect(row).toEqual({ synopsis: "The light fails.", position: 1 });
   });
@@ -295,7 +363,7 @@ describe("Changes by Claude", () => {
       chapter_id: CH, base_version: 4,
       edits: [{ old_text: "lit the lamp", new_text: "lit the old brass lamp" }, { old_text: "dark", new_text: "deep dark" }],
     });
-    await call("append_to_chapter", { chapter_id: CH, base_version: 5, text: "Morning came." });
+    await call("append_to_chapter", { chapter_id: CH, base_version: 1, text: "Morning came." });
     const entry = JSON.parse(textOf(await call("create_story_entry", { novel_id: NOVEL, kind: "place", name: "Tower" })));
     await call("update_story_entry", { entry_id: entry.id, add_to_notes: "Brass lamp.", aliases: ["the spire"] });
     const scene = JSON.parse(textOf(await call("create_scene", { chapter_id: CH, title: "Landing" })));
@@ -309,8 +377,8 @@ describe("Changes by Claude", () => {
       ["Added the scene “Landing”", "In “Arrival”"],
       ["Changed the story guide entry “Tower”", "Other names, added to the notes"],
       ["Added “Tower” to the story guide", "Place"],
-      ["Added to the end of “Arrival”", "+2 words"],
-      ["Edited “Arrival”", "2 passages · +3 words"],
+      ["Drafted an addition to the end of “Arrival”", "+2 words"],
+      ["Drafted edits to “Arrival”", "2 passages · +3 words"],
     ]);
     expect(list[1]).toMatchObject({ target_kind: "scene", target_id: scene.id, chapter_id: CH });
     expect(list[4]).toMatchObject({ target_kind: "entry", target_id: entry.id, chapter_id: null });
@@ -322,7 +390,7 @@ describe("Changes by Claude", () => {
     expect(await changes()).toEqual([]);
     await call("create_chapter", { novel_id: NOVEL, title: "The Storm", synopsis: "Rain.", text: "It rained hard." });
     const [made] = await changes();
-    expect(made).toMatchObject({ summary: "Added the chapter “The Storm”", detail: "Chapter 2, 3 words, with a synopsis" });
+    expect(made).toMatchObject({ summary: "Added the chapter “The Storm”", detail: "Chapter 2, 3 words drafted, with a synopsis" });
   });
 
   it("keeps the edit when the log can't be written", async () => {
@@ -331,7 +399,7 @@ describe("Changes by Claude", () => {
     const r = await call("edit_chapter", { chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }] });
     log.mockRestore();
     expect(r.isError).toBeFalsy();
-    expect(chapter().version).toBe(5);
+    expect(draft()?.version).toBe(1);
   });
 
   it("drops changes older than 180 days", async () => {

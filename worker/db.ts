@@ -13,6 +13,8 @@ export const chapterKey = (projectId: string, chapterId: string) =>
   `projects/${projectId}/chapters/${chapterId}.md`;
 export const snapshotKey = (projectId: string, chapterId: string, snapshotId: string) =>
   `projects/${projectId}/chapters/${chapterId}/history/${snapshotId}.md`;
+export const claudeDraftKey = (projectId: string, chapterId: string) =>
+  `projects/${projectId}/chapters/${chapterId}/claude-draft.md`;
 export const MARKDOWN = { httpMetadata: { contentType: "text/markdown; charset=utf-8" } };
 
 export function chapterPut(env: Env, row: Pick<ChapterMeta, "project_id" | "id">, text: string, version: number) {

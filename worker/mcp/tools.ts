@@ -1,4 +1,4 @@
-// The tools Claude sees when Lantern is added as a connector. Read-only for now:
+// The tools Claude sees when Lantern is added as a connector. Read-only:
 // nothing here writes to D1 or R2.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -8,6 +8,7 @@ import { CHAPTER_COLS, chapterKey, getChapterRow, requireProject, snapshotKey } 
 import type { Env } from "../env";
 import { listActs } from "../handlers/acts";
 import { BIBLE_COLS, toEntry, type BibleRow } from "../handlers/bible";
+import { draftRow, readClaudeDraft } from "../handlers/claudeDrafts";
 import { HttpError } from "../http";
 
 /** Longest slice of a chapter returned by one read_chapter call. */
@@ -32,6 +33,15 @@ async function chapters(env: Env, projectId: string): Promise<ChapterMeta[]> {
 async function chapterText(env: Env, row: Pick<ChapterMeta, "project_id" | "id">): Promise<string> {
   const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
   return obj ? await obj.text() : "";
+}
+
+function sliced(content: string, offset: number) {
+  const slice = content.slice(offset, offset + READ_LIMIT);
+  const end = offset + slice.length;
+  const range = offset > 0 || end < content.length
+    ? `characters ${offset}–${end} of ${content.length}` + (end < content.length ? `; continue with offset ${end}` : "")
+    : "";
+  return { slice, range };
 }
 
 /** Literal, line-by-line matches across a book, in reading order. */
@@ -159,7 +169,8 @@ export function registerTools(server: McpServer, env: Env) {
         "The chapter's saved markdown text and its version (edits need it as base_version). " +
         "[[Name]] and [[Name|shown words]] are links to story guide " +
         `entries. Long chapters come back in slices of ${READ_LIMIT.toLocaleString("en-US")} characters; ` +
-        "pass the offset the reply gives to read on.",
+        "pass the offset the reply gives to read on. If Claude's draft of the chapter is waiting for the " +
+        "author, the reply says so; read it with read_draft.",
       inputSchema: {
         chapter_id: z.string().describe("From get_outline"),
         offset: z.number().int().min(0).optional().describe("Character offset to start from (default 0)"),
@@ -169,19 +180,57 @@ export function registerTools(server: McpServer, env: Env) {
     async ({ chapter_id, offset = 0 }) => {
       const row = await getChapterRow(env, chapter_id);
       const content = await chapterText(env, row);
-      const slice = content.slice(offset, offset + READ_LIMIT);
-      const end = offset + slice.length;
+      const draft = await draftRow(env, row.id);
+      const { slice, range } = sliced(content, offset);
       const header = [
         `# ${row.title}`,
         `chapter_id: ${row.id} · version ${row.version} · ${row.word_count} words · saved ${row.updated_at}`,
-        offset > 0 || end < content.length
-          ? `characters ${offset}–${end} of ${content.length}` +
-            (end < content.length ? `; continue with offset ${end}` : "")
+        draft
+          ? `Claude's draft of this chapter is waiting for the author to accept it (draft version ${draft.version}, ` +
+            `${draft.word_count} words). Chapter edits go into that draft: read it with read_draft.`
           : "",
+        range,
       ]
         .filter(Boolean)
         .join("\n");
       return text(`${header}\n\n---\n\n${slice || (content ? "(nothing past this offset)" : "(this chapter is empty)")}`);
+    },
+  );
+
+  server.registerTool(
+    "read_draft",
+    {
+      title: "Read Claude's draft of a chapter",
+      description:
+        "The text of Claude's draft of a chapter: changes made through this connector that wait beside the " +
+        "chapter until the author accepts or discards them in Lantern. While a draft exists, chapter edits " +
+        "apply to it and need its draft version as base_version. Long drafts come back in slices like read_chapter.",
+      inputSchema: {
+        chapter_id: z.string().describe("From get_outline"),
+        offset: z.number().int().min(0).optional().describe("Character offset to start from (default 0)"),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ chapter_id, offset = 0 }) => {
+      const row = await getChapterRow(env, chapter_id);
+      const draft = await readClaudeDraft(env, row.project_id, row.id);
+      if (!draft) {
+        return text(
+          `There's no draft of “${row.title}” by Claude: the author accepted or discarded it, or none was made. ` +
+            `Read the chapter with read_chapter; the next edit starts a new draft from it (chapter version ${row.version}).`,
+        );
+      }
+      const { slice, range } = sliced(draft.content, offset);
+      const header = [
+        `# ${row.title} (Claude's draft, not yet accepted)`,
+        `chapter_id: ${row.id} · draft version ${draft.version} · ${draft.word_count} words · ` +
+          `begun from chapter version ${draft.base_version}${draft.base_version === row.version ? "" : ` (the chapter is now version ${row.version})`}` +
+          ` · last changed ${draft.updated_at}`,
+        range,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return text(`${header}\n\n---\n\n${slice || (draft.content ? "(nothing past this offset)" : "(this draft is empty)")}`);
     },
   );
 

@@ -16,6 +16,7 @@ import {
 import { createAct, deleteAct, reorderChapters, updateAct } from "./handlers/acts";
 import { createEntry, deleteEntry, listBible, updateEntry } from "./handlers/bible";
 import { listClaudeChanges } from "./handlers/claudeChanges";
+import { acceptClaudeDraft, discardClaudeDraft, getClaudeDraft } from "./handlers/claudeDrafts";
 import {
   createChapter,
   deleteChapter,
@@ -96,6 +97,9 @@ const routes: Array<[string, string, Handler]> = [
   ["PUT", "/api/chapters/:id", saveChapter],
   ["PATCH", "/api/chapters/:id", updateChapter],
   ["DELETE", "/api/chapters/:id", deleteChapter],
+  ["GET", "/api/chapters/:id/claude-draft", getClaudeDraft],
+  ["POST", "/api/chapters/:id/claude-draft/accept", acceptClaudeDraft],
+  ["DELETE", "/api/chapters/:id/claude-draft", discardClaudeDraft],
   ["GET", "/api/chapters/:id/history", listHistory],
   ["GET", "/api/chapters/:id/history/:snapshotId", getSnapshot],
   ["GET", "/api/projects/:id/share", getShareStatus],

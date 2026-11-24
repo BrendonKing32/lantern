@@ -160,29 +160,40 @@ When you connect, you choose what Claude may do:
 
 - **Read only:** list novels, read outlines, chapters, scene cards, the story guide and
   History, and search the text.
-- **Read and edit:** also edit chapter text (exact passages, or adding to the end), add
-  chapters, rename chapters and change synopses, and add or change story guide entries
-  and scene cards. Nothing can be deleted through the connector.
+- **Read and edit:** also draft changes to chapter text (exact passages, or adding to the
+  end), add chapters, rename chapters and change synopses, and add or change story guide
+  entries and scene cards. Nothing can be deleted through the connector.
 
 Connector calls are part of your claude.ai plan and don't use the API key or the limits above.
 
 ### How Claude's edits are kept safe
 
-- **Nothing you wrote is overwritten unseen.** Every chapter edit names the version
-  Claude read. If you've saved since, the edit is refused and Claude reads the chapter again.
-- **Every chapter edit can be undone.** The text it replaces goes into the chapter's
-  History first, marked **Before an edit by Claude**; if that copy can't be kept, nothing
-  is changed. Restore it from History to undo.
+- **Claude's writing stays separate from yours.** Claude never changes a chapter's text
+  directly. Its edits, additions and the opening text of chapters it adds collect in
+  **Claude's draft** of that chapter, kept beside the chapter until you decide. Until
+  you accept it, your chapter, word counts, search and export show only your own text.
+- **You review, then accept or discard.** When a chapter you open has a draft waiting, a
+  notice above the title says so. **Review draft** opens it beside the chapter: **Compare
+  with your chapter** shows the lines Claude added and removed, **Read draft** shows the
+  whole text. **Accept draft** puts it in the chapter; **Discard draft** throws it away and
+  leaves the chapter as it is. Both need a connection.
+- **Accepting can be undone.** The chapter's text goes into its History first, marked
+  **Before Claude's changes**; if that copy can't be kept, nothing is changed. Restore it
+  from History to undo. Unsaved writing is saved before the draft goes in, and if the
+  chapter changed after Claude began the draft, the review panel warns you first.
+- **Nothing changes unseen.** Every edit names the version Claude read: the chapter's, or
+  the draft's once there is one. If that has changed since, the edit is refused and
+  Claude reads it again. If Claude edits the draft while you're reviewing it, accepting
+  is refused until you've looked again.
 - **Small, exact changes.** Claude replaces passages it quotes exactly, and each must
   appear exactly once, so an edit can't land in the wrong place.
-- **Your streak is yours.** Claude's words don't count toward your daily words.
-- **An open chapter catches up.** If Claude edits the chapter you have open and nothing
-  on screen is unsaved, the editor shows the change within about 30 seconds (at once
-  when you come back to the window), and undo takes it back out. If you have unsaved
-  writing, Lantern asks which version to keep, as it does for two devices.
+- **Your streak is yours.** Claude's words don't count toward your daily words, even
+  once you accept them.
+- **An open chapter notices a new draft** within about 30 seconds, or at once when you
+  come back to the window.
 - Story guide, scene and chapter-detail changes follow the same rules as edits in the app.
 - **See everything Claude changed** under **More → Changes by Claude**: one line per change,
-  newest first, with links to the chapter (or its History), the story guide entry or the
+  newest first, with links to the chapter (where its draft waits) or its History, the story guide entry or the
   scenes. A dot on **More** and a count show changes this device hasn't shown you yet.
   The list keeps 180 days.
 
@@ -357,7 +368,7 @@ app and private API protected.
   safely check for an unsaved draft.
 - **History:** the History button shows earlier versions of the open chapter. Lantern keeps a
   copy at most every 10 minutes while you write, plus one before every restore, whole-book
-  replacement and edit by Claude, and before you replace another device's version. Pick one to read it, or switch to
+  replacement and accepted draft by Claude, and before you replace another device's version. Pick one to read it, or switch to
   **Compare with current draft** to see added and removed lines, including unsaved edits.
   Refresh the comparison to include newer edits. To revert the chapter, use **Restore this version**
   at the bottom of the panel; it asks before changing anything. Restoring
@@ -367,7 +378,7 @@ app and private API protected.
   writing from any chapter is sent when you reconnect. Creating, renaming, reordering, deleting
   and restoring still need a connection.
 - **Two devices:** if a chapter was saved somewhere else while you were writing (on another
-  device, or by Claude), Lantern stops and asks which version to keep instead of overwriting
+  device), Lantern stops and asks which version to keep instead of overwriting
   either one. With nothing unsaved, an open chapter picks up the newer version by itself.
 - **Deleted chapters** move to **Recently deleted** under the chapter list. The arrow button
   puts one back at the end of the book, with its text and history intact.
