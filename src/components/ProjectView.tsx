@@ -165,6 +165,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   };
   const setView = (v: View) => {
     closeMoreMenu();
+    if (v === "scenes" && v !== view) setScenes(null);
     // The footer's save state belongs to the chapter editor, which unmounts
     // outside Write. Start fresh so a return never shows a stale state.
     if (v !== view) setSave({ state: "loading" });
@@ -239,6 +240,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [lastChapterId, setLastChapterId] = useState<string | null>(null);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
+  const [labelSnapshot, setLabelSnapshot] = useState<{ chapterId: string; baseline: string; scenes: SceneMeta[] } | null>(null);
   const [placeholders, setPlaceholders] = useState<ScenePlaceholder[]>([]);
   const [scenesError, setScenesError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState<{ id: string; content: string; version: number } | null>(null);
@@ -331,14 +333,34 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const readOnly = phone && editingChapter !== selected?.id;
   useEffect(() => setEditingChapter(null), [selected?.id]);
   useEffect(() => {
-    if (view !== "scenes" && view !== "write") return;
+    if (view !== "scenes") return;
     let active = true;
+    setScenes(null);
     setScenesError(null);
     api.scenes(projectId).then(({ scenes, placeholders }) => {
       if (active) { setScenes(scenes); setPlaceholders(placeholders); }
-    }).catch((e) => { if (active && view === "scenes") setScenesError(describeError(e)); });
+    }).catch((e) => { if (active) setScenesError(describeError(e)); });
     return () => { active = false; };
-  }, [projectId, view, selected?.id]);
+  }, [projectId, view]);
+  useEffect(() => {
+    if (view !== "write" || !selected) return;
+    let active = true;
+    setLabelSnapshot(null);
+    const loadLabels = async () => {
+      for (let attempt = 0; attempt < 3 && active; attempt++) {
+        const before = await api.getChapter(selected.id);
+        const listing = await api.scenes(projectId);
+        const after = await api.getChapter(selected.id);
+        if (!active) return;
+        if (before.version !== after.version) continue;
+        setScenes(listing.scenes);
+        setLabelSnapshot({ chapterId: selected.id, baseline: after.content, scenes: listing.scenes });
+        return;
+      }
+    };
+    void loadLabels().catch(() => {});
+    return () => { active = false; };
+  }, [projectId, view, selected?.id, selected?.version]);
   // Novels saved on this device before dialects existed have none: US English.
   const dialect: Dialect = detail?.project.dialect ?? "american";
 
@@ -1043,7 +1065,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onCloseHistory={closeHistory}
             entries={entries}
             onOpenLink={openLink}
-            scenes={scenes}
+            scenes={labelSnapshot?.chapterId === selected.id ? labelSnapshot.scenes : null}
+            sceneBaseline={labelSnapshot?.chapterId === selected.id ? labelSnapshot.baseline : null}
             sceneLabelsOn={sceneLabelsOn}
             onOpenScene={(scene) => {
               setHistoryOpen(false);

@@ -37,6 +37,7 @@ interface Props {
   entries: BibleEntry[];
   onOpenLink: (name: string) => void;
   scenes: SceneMeta[] | null;
+  sceneBaseline: string | null;
   sceneLabelsOn: boolean;
   onOpenScene: (scene: SceneMeta) => void;
   /** Check grammar and spelling with Harper (otherwise the browser's spellcheck is used). */
@@ -91,6 +92,7 @@ export function ChapterEditor({
   entries,
   onOpenLink,
   scenes,
+  sceneBaseline,
   sceneLabelsOn,
   onOpenScene,
   grammarOn,
@@ -121,15 +123,14 @@ export function ChapterEditor({
   const linkHost = useRef({ entries, onOpenLink });
   linkHost.current = { entries, onOpenLink };
   const view = useRef<EditorView | null>(null);
-  const sceneBaseline = useRef<string | null>(null);
-  const sceneHost = useRef({ scenes, title, onOpenScene });
-  sceneHost.current = { scenes, title, onOpenScene };
+  const sceneHost = useRef({ scenes, sceneBaseline, title, onOpenScene });
+  sceneHost.current = { scenes, sceneBaseline, title, onOpenScene };
   const sceneSlot = useRef(new Compartment());
   const labelExtensions = () =>
-    sceneLabelsOn && sceneHost.current.scenes && sceneBaseline.current !== null
+    sceneLabelsOn && sceneHost.current.scenes && sceneHost.current.sceneBaseline !== null
       ? sceneLabels({
           snapshot: () => ({
-            baselineText: sceneBaseline.current!,
+            baselineText: sceneHost.current.sceneBaseline!,
             chapterTitle: sceneHost.current.title,
             cards: (sceneHost.current.scenes ?? []).filter((scene) => scene.chapter_id === chapterId),
           }),
@@ -181,7 +182,7 @@ export function ChapterEditor({
   }, [entries]);
   useEffect(() => {
     view.current?.dispatch({ effects: sceneSlot.current.reconfigure(labelExtensions()) });
-  }, [scenes, sceneLabelsOn, title]);
+  }, [scenes, sceneBaseline, sceneLabelsOn, title]);
   useEffect(() => {
     view.current?.dispatch({ effects: grammarSlot.current.reconfigure(proofing(grammarOn)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -379,7 +380,6 @@ export function ChapterEditor({
       if (cancelled) return;
 
       version.current = ch.version;
-      sceneBaseline.current = ch.content;
       let content = ch.content;
       if (draft && draft.content !== ch.content) {
         content = draft.content;
