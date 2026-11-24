@@ -115,6 +115,8 @@ describe("label snapshot refresh", () => {
     expect(api.scenes).toHaveBeenCalledTimes(2);
     view = "scenes";
     render();
+    view = "board";
+    render();
     view = "write";
     render();
     await settle();
@@ -143,5 +145,16 @@ describe("label snapshot refresh", () => {
     await settle();
     expect(api.scenes).toHaveBeenCalledTimes(3);
     expect(result.snapshot).not.toBe(snapshot);
+  });
+
+  it("retries a failed initial load without waiting for a passage change", async () => {
+    vi.mocked(api.scenes).mockRejectedValueOnce(new Error("offline"));
+    render();
+    await settle();
+    expect(result.snapshot).toBeNull();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    expect(api.scenes).toHaveBeenCalledTimes(2);
+    expect(result.snapshot?.chapterId).toBe("c");
   });
 });

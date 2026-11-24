@@ -55,12 +55,13 @@ export function useLabelSnapshot(
   const [refresh, setRefresh] = useState(0);
   const lastRefresh = useRef(0);
   const lastRequest = useRef<{ projectId: string; chapterId: string; refresh: number } | null>(null);
-  const previousView = useRef<View>(view);
+  const visitedScenes = useRef(false);
 
   useEffect(() => {
-    const returningFromScenes = previousView.current === "scenes";
-    previousView.current = view;
+    if (view === "scenes") visitedScenes.current = true;
     if (view !== "write" || !chapterId) return;
+    const returningFromScenes = visitedScenes.current;
+    visitedScenes.current = false;
     const previous = lastRequest.current;
     if (!returningFromScenes && previous?.projectId === projectId && previous.chapterId === chapterId && previous.refresh === refresh) return;
     const request = { projectId, chapterId, refresh };
@@ -68,6 +69,7 @@ export function useLabelSnapshot(
     lastRefresh.current = Date.now();
     let active = true;
     let finished = false;
+    let retryTimer: number | undefined;
     const loadLabels = async () => {
       for (let attempt = 0; attempt < 3 && active; attempt++) {
         const before = await api.getChapter(chapterId);
@@ -79,22 +81,34 @@ export function useLabelSnapshot(
         if (before.version !== after.version || before.content !== after.content) continue;
         setScenes(listing.scenes);
         setSnapshot({ chapterId, baseline: after.content, scenes: listing.scenes });
-        return;
+        return true;
       }
+      return false;
     };
-    void loadLabels().catch(() => {}).finally(() => { finished = true; });
+    void loadLabels().catch(() => false).then((success) => {
+      finished = true;
+      if (active && !success) retryTimer = window.setTimeout(() => setRefresh((n) => n + 1), 30_000);
+    });
     return () => {
       active = false;
+      window.clearTimeout(retryTimer);
       if (!finished && lastRequest.current === request) lastRequest.current = null;
     };
   }, [projectId, view, chapterId, refresh, setScenes]);
 
   useEffect(() => {
     if (view !== "write" || !chapterId || snapshot?.chapterId !== chapterId) return;
+    const baselineCount = splitScenes(snapshot.baseline, title).length;
+    let lastText: string | undefined;
+    let passageCount = baselineCount;
     const timer = window.setInterval(() => {
       const text = controls.current?.text();
-      if (text !== undefined && Date.now() - lastRefresh.current >= 30_000 &&
-          splitScenes(text, title).length !== splitScenes(snapshot.baseline, title).length) {
+      if (text === undefined || Date.now() - lastRefresh.current < 30_000) return;
+      if (text !== lastText) {
+        lastText = text;
+        passageCount = splitScenes(text, title).length;
+      }
+      if (passageCount !== baselineCount) {
         setRefresh((n) => n + 1);
       }
     }, 1000);
