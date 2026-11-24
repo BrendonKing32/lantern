@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { findAnchor, makeAnchor } from "../shared/anchors";
 import worker, { type Env } from "./index";
 import { getChapterRow } from "./db";
 import { afterChapterWrite } from "./sceneSync";
@@ -44,6 +45,15 @@ const chapter = (id: string) => db.raw.prepare("SELECT version, word_count, movi
   version: number; word_count: number; moving_until: string | null;
 };
 const card = (id: string) => db.raw.prepare("SELECT * FROM scenes WHERE id = ?").get(id) as Record<string, unknown>;
+const note = (id: string, text: string, quote: string, resolved = false, chapterId = "a") => {
+  const start = text.indexOf(quote);
+  const anchor = start === -1 ? { quote, prefix: "", suffix: "" } : makeAnchor(text, start, start + quote.length);
+  db.raw.prepare(`INSERT INTO margin_notes
+    (id, project_id, chapter_id, quote, prefix, suffix, body, resolved_at, created_at, updated_at)
+    VALUES (?, 'p', ?, ?, ?, ?, 'Note', ?, ?, ?)`)
+    .run(id, chapterId, anchor.quote, anchor.prefix, anchor.suffix, resolved ? ts : null, ts, ts);
+};
+const noteChapter = (id: string) => (db.raw.prepare("SELECT chapter_id FROM margin_notes WHERE id = ?").get(id) as { chapter_id: string }).chapter_id;
 
 async function setup() {
   expect((await save("a", source, 0)).status).toBe(200);
@@ -58,6 +68,164 @@ async function setup() {
 }
 
 describe("cross-chapter scene moves", () => {
+  it("moves only open notes wholly anchored in the moved passage", async () => {
+    const { moving } = await setup();
+    note("inside", source, "Moving passage.");
+    note("outside", source, "First scene.");
+    note("crossing", source, "scene.\n\n***\n\nMoving");
+    note("resolved", source, "Moving passage.", true);
+    note("orphan", source, "Missing passage.");
+    note("destination", destination, "Destination passage.", false, "b");
+    expect((await move(moving.id)).status).toBe(200);
+    expect(["inside", "outside", "crossing", "resolved", "orphan", "destination"].map(noteChapter))
+      .toEqual(["b", "a", "a", "a", "a", "b"]);
+  });
+
+  it("uses original text offsets for CRLF passages and leaves the chapter title behind", async () => {
+    const text = "# a\r\n\r\nFirst scene.\r\n\r\n***\r\n\r\nMoving passage.";
+    expect((await save("a", text, 0)).status).toBe(200);
+    expect((await save("b", destination, 0)).status).toBe(200);
+    const moving = await create("a");
+    expect((await link(moving.id, 0)).status).toBe(200);
+    note("title", text, "# a");
+    note("first", text, "First scene.");
+    note("second", text, "Moving passage.");
+    expect((await move(moving.id)).status).toBe(200);
+    expect(["title", "first", "second"].map(noteChapter)).toEqual(["a", "b", "a"]);
+  });
+
+  it("uses anchor context to distinguish duplicates and leaves ambiguous notes behind", async () => {
+    const text = "First Same phrase ends.\r\n\r\n***\r\n\r\nSecond Same phrase ends.";
+    expect((await save("a", text, 0)).status).toBe(200);
+    expect((await save("b", destination, 0)).status).toBe(200);
+    const moving = await create("a");
+    expect((await link(moving.id, 1)).status).toBe(200);
+    const start = text.lastIndexOf("Same phrase");
+    const anchor = makeAnchor(text, start, start + "Same phrase".length);
+    db.raw.prepare(`INSERT INTO margin_notes
+      (id, project_id, chapter_id, quote, prefix, suffix, body, created_at, updated_at)
+      VALUES ('context', 'p', 'a', ?, ?, ?, 'Note', ?, ?)`)
+      .run(anchor.quote, anchor.prefix, anchor.suffix, ts, ts);
+    db.raw.prepare(`INSERT INTO margin_notes
+      (id, project_id, chapter_id, quote, prefix, suffix, body, created_at, updated_at)
+      VALUES ('ambiguous', 'p', 'a', 'Same phrase', '', '', 'Note', ?, ?)`).run(ts, ts);
+    expect((await move(moving.id)).status).toBe(200);
+    expect(["context", "ambiguous"].map(noteChapter)).toEqual(["b", "a"]);
+  });
+
+  it("reanchors a moved note to its passage rather than an existing destination duplicate", async () => {
+    const text = "Similar context here. Shared phrase. Tail text.\r\n\r\n***\r\n\r\nDifferent context. Shared phrase. Other ending.";
+    const target = "Different context. Shared phrase. Other ending.\n\n***\n\nDestination end.";
+    expect((await save("a", text, 0)).status).toBe(200);
+    expect((await save("b", target, 0)).status).toBe(200);
+    const moving = await create("a");
+    expect((await link(moving.id, 1)).status).toBe(200);
+    const start = text.lastIndexOf("Shared phrase");
+    const original = makeAnchor(text, start, start + "Shared phrase".length);
+    db.raw.prepare(`INSERT INTO margin_notes
+      (id, project_id, chapter_id, quote, prefix, suffix, body, created_at, updated_at)
+      VALUES ('duplicate', 'p', 'a', ?, ?, ?, 'Note', ?, ?)`)
+      .run(original.quote, original.prefix, original.suffix, ts, ts);
+    expect((await move(moving.id)).status).toBe(200);
+    const updated = db.raw.prepare("SELECT chapter_id, quote, prefix, suffix FROM margin_notes WHERE id = 'duplicate'").get() as
+      { chapter_id: string; quote: string; prefix: string; suffix: string };
+    const newText = bucket.objects.get(toKey)!;
+    expect(updated.chapter_id).toBe("b");
+    expect(updated.quote).toBe(original.quote);
+    expect(findAnchor(newText, updated)).toEqual({
+      from: newText.lastIndexOf("Shared phrase"),
+      to: newText.lastIndexOf("Shared phrase") + "Shared phrase".length,
+    });
+  });
+
+  it("preserves the original quote while reanchoring whitespace drift across CRLF", async () => {
+    const text = "First scene.\r\n\r\n***\r\n\r\nBefore Line one\r\n   Line two after.";
+    expect((await save("a", text, 0)).status).toBe(200);
+    expect((await save("b", destination, 0)).status).toBe(200);
+    const moving = await create("a");
+    expect((await link(moving.id, 1)).status).toBe(200);
+    db.raw.prepare(`INSERT INTO margin_notes
+      (id, project_id, chapter_id, quote, prefix, suffix, body, created_at, updated_at)
+      VALUES ('drift', 'p', 'a', 'Line one Line two', '', '', 'Note', ?, ?)`).run(ts, ts);
+    expect((await move(moving.id)).status).toBe(200);
+    const updated = db.raw.prepare("SELECT chapter_id, quote, prefix, suffix FROM margin_notes WHERE id = 'drift'").get() as
+      { chapter_id: string; quote: string; prefix: string; suffix: string };
+    const newText = bucket.objects.get(toKey)!;
+    expect(updated).toMatchObject({ chapter_id: "b", quote: "Line one Line two" });
+    const start = newText.indexOf("Line one");
+    expect(findAnchor(newText, updated)).toEqual({ from: start, to: start + "Line one\n   Line two".length });
+  });
+
+  it("transfers even when an exact destination duplicate masks a whitespace-drifted anchor", async () => {
+    const text = "First.\n\n***\n\nBefore Line one\n  Line two after.";
+    expect((await save("a", text, 0)).status).toBe(200);
+    expect((await save("b", "Existing Line one Line two.\n\n***\n\nEnd.", 0)).status).toBe(200);
+    const moving = await create("a");
+    expect((await link(moving.id, 1)).status).toBe(200);
+    db.raw.prepare(`INSERT INTO margin_notes
+      (id, project_id, chapter_id, quote, prefix, suffix, body, created_at, updated_at)
+      VALUES ('uncertain', 'p', 'a', 'Line one Line two', '', '', 'Note', ?, ?)`).run(ts, ts);
+    expect((await move(moving.id)).status).toBe(200);
+    const updated = db.raw.prepare("SELECT chapter_id, quote, prefix, suffix FROM margin_notes WHERE id = 'uncertain'").get() as
+      { chapter_id: string; quote: string; prefix: string; suffix: string };
+    const newText = bucket.objects.get(toKey)!;
+    const start = newText.lastIndexOf("Line one");
+    const end = start + "Line one\n  Line two".length;
+    expect(updated).toEqual({ chapter_id: "b", quote: "Line one Line two",
+      prefix: newText.slice(Math.max(0, start - 32), start), suffix: newText.slice(end, end + 32) });
+  });
+
+  it("transfers an indistinguishable destination duplicate as an orphan", async () => {
+    const body = `${"x".repeat(40)} quote ${"y".repeat(40)}`;
+    const text = `First.\n\n***\n\n${body}`;
+    expect((await save("a", text, 0)).status).toBe(200);
+    expect((await save("b", `${body}\n\n***\n\nEnd.`, 0)).status).toBe(200);
+    const moving = await create("a");
+    expect((await link(moving.id, 1)).status).toBe(200);
+    note("tie", text, "quote");
+    expect((await move(moving.id)).status).toBe(200);
+    const updated = db.raw.prepare("SELECT chapter_id, quote, prefix, suffix FROM margin_notes WHERE id = 'tie'").get() as
+      { chapter_id: string; quote: string; prefix: string; suffix: string };
+    expect(updated.chapter_id).toBe("b");
+    expect(findAnchor(bucket.objects.get(toKey)!, updated)).toBeNull();
+  });
+
+  it.each(["stale", "snapshot", "source", "final guard", "lost lock"] as const)(
+    "does not transfer notes when the move fails at %s", async (failure) => {
+      const { moving } = await setup();
+      note("inside", source, "Moving passage.");
+      const put = bucket.put.bind(bucket);
+      bucket.put = async (key, value, options) => {
+        if (failure === "snapshot" && key.includes("/history/")) throw new Error("snapshot failed");
+        if (failure === "source" && key === fromKey) throw new Error("source failed");
+        const result = await put(key, value, options);
+        if (failure === "final guard" && key === fromKey) {
+          db.raw.prepare("UPDATE chapters SET version = 9 WHERE id = 'a'").run();
+        }
+        if (failure === "lost lock" && key === fromKey) {
+          db.raw.prepare("UPDATE chapters SET moving_until = NULL WHERE id = 'a'").run();
+        }
+        return result;
+      };
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      expect((await move(moving.id, 1, failure === "stale" ? 0 : 1, 1)).status).toBe(failure === "stale" ? 409 : 500);
+      expect(noteChapter("inside")).toBe("a");
+      expect(card(moving.id).chapter_id).toBe("a");
+    },
+  );
+
+  it("rolls back note and scene changes if the final batch fails", async () => {
+    const { moving } = await setup();
+    note("inside", source, "Moving passage.");
+    db.raw.exec(`CREATE TRIGGER reject_note_move BEFORE UPDATE OF chapter_id ON margin_notes
+      BEGIN SELECT RAISE(ABORT, 'note update failed'); END`);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await move(moving.id)).status).toBe(500);
+    expect(noteChapter("inside")).toBe("a");
+    expect(card(moving.id).chapter_id).toBe("a");
+    expect([chapter("a").version, chapter("b").version]).toEqual([1, 1]);
+  });
+
   it("moves before an uncarded passage and preserves History and daily words", async () => {
     const { moving, target } = await setup();
     const daily = db.raw.prepare("SELECT SUM(words) AS words FROM daily_words").get();

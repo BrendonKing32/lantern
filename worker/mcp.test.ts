@@ -227,7 +227,7 @@ describe("connector tools", () => {
     const client = await connect(env());
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "get_outline", "get_story_entry", "get_story_guide", "list_history", "list_novels", "read_chapter", "read_draft", "read_version",
+      "get_outline", "get_story_entry", "get_story_guide", "list_history", "list_margin_notes", "list_novels", "read_chapter", "read_draft", "read_version",
       "search_book",
     ]);
     expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);

@@ -29,6 +29,7 @@ have a draft waiting and what you changed.
 has a draft, edits apply to the draft: read it with read_draft and pass its draft version instead. If the \
 text has changed since you read it, the edit is refused: read it again and redo it.
 - Prefer edit_chapter with small, exact passages over rewriting large stretches.
+- A margin note is often a better way to suggest a change than editing the chapter.
 - move_scene moves an in-text card with its passage and keeps a History copy.
 - Nothing can be deleted through this connection.`;
 

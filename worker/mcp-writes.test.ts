@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "./index";
 import { createMcpServer } from "./mcp/server";
 import { applyEdits, EditError } from "./mcp/writes";
+import { createChapterNote } from "./handlers/notes";
 import { memoryR2, sqliteD1 } from "./testing/d1";
 
 // The write tools against real SQLite with Lantern's migrations applied.
@@ -89,12 +90,18 @@ describe("which tools a connection gets", () => {
     const readOnly = (await (await connect(false)).listTools()).tools.map((t) => t.name);
     expect(readOnly).not.toContain("edit_chapter");
     expect(readOnly).not.toContain("move_scene");
+    expect(readOnly).toContain("list_margin_notes");
+    expect(readOnly).not.toContain("add_margin_note");
+    const refusedNote = await (await connect(false)).callTool({ name: "add_margin_note", arguments: { chapter_id: CH, quote: "Mara", body: "A note" } });
+    expect(refusedNote.isError).toBe(true);
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM margin_notes").get()).toEqual({ n: 0 });
     const refused = await (await connect(false)).callTool({ name: "move_scene", arguments: { scene_id: "s", from_chapter_id: CH, base_versions: { from: 0 } } });
     expect(refused.isError).toBe(true);
     const editing = (await (await connect(true)).listTools()).tools.map((t) => t.name);
     expect(editing).toEqual(expect.arrayContaining([
       "edit_chapter", "append_to_chapter", "create_chapter", "update_chapter_details",
       "create_story_entry", "update_story_entry", "create_scene", "update_scene", "read_chapter", "read_draft", "move_scene",
+      "list_margin_notes", "add_margin_note",
     ]));
     expect(editing.some((n) => n.startsWith("delete"))).toBe(false);
   });
@@ -102,6 +109,79 @@ describe("which tools a connection gets", () => {
   it("tells Claude how to edit only when it may", async () => {
     expect((await connect(false)).getInstructions()).toContain("can read but not change");
     expect((await connect(true)).getInstructions()).toContain("Change only what the author asked for");
+  });
+});
+
+describe("margin note connector", () => {
+  it("adds a uniquely anchored note as Claude and logs it without changing the manuscript", async () => {
+    const result = await call("add_margin_note", { chapter_id: CH, quote: "lit the lamp", body: "Consider a quieter opening." });
+    expect(result.isError, textOf(result)).toBeFalsy();
+    const note = JSON.parse(textOf(result));
+    expect(note).toMatchObject({
+      chapter_id: CH, quote: "lit the lamp", prefix: "Mara ", suffix: ".\n\nThe “tower” waited in the dar", body: "Consider a quieter opening.", author: "claude",
+    });
+    expect(db.raw.prepare("SELECT author, body FROM margin_notes WHERE id = ?").get(note.id))
+      .toEqual({ author: "claude", body: "Consider a quieter opening." });
+    expect(db.raw.prepare("SELECT action, chapter_id FROM claude_changes").get())
+      .toEqual({ action: "add_margin_note", chapter_id: CH });
+    expect(bucket.objects.get(KEY)).toBe(OPENING);
+    expect(chapter().version).toBe(4);
+  });
+
+  it("refuses missing, ambiguous and invalid passages and bodies", async () => {
+    bucket.objects.set(KEY, "lamp and lamp");
+    for (const [quote, body] of [["lamp", "note"], ["missing", "note"], ["", "note"], ["x".repeat(2001), "note"], ["and", "x".repeat(4001)]]) {
+      expect((await call("add_margin_note", { chapter_id: CH, quote, body })).isError).toBe(true);
+    }
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM margin_notes").get()).toEqual({ n: 0 });
+  });
+
+  it("lists notes by chapter or novel, including orphaned and optionally resolved notes", async () => {
+    const note = await createChapterNote(env, CH, { quote: "Mara", prefix: "", suffix: " lit", body: "Open" }, "writer");
+    const orphan = await createChapterNote(env, CH, { quote: "gone", prefix: "", suffix: "", body: "Resolved" }, "claude");
+    db.raw.prepare("UPDATE margin_notes SET resolved_at = ? WHERE id = ?").run("2026-11-02", orphan.id);
+    const readOnly = await connect(false);
+    const tools = await readOnly.listTools();
+    expect(tools.tools.find((t) => t.name === "list_margin_notes")?.annotations?.readOnlyHint).toBe(true);
+    const listed = JSON.parse(textOf(await readOnly.callTool({ name: "list_margin_notes", arguments: { chapter_id: CH } })));
+    expect(listed).toEqual([expect.objectContaining({ id: note.id, author: "writer", body: "Open", resolved: false, passage_found: true })]);
+    const all = JSON.parse(textOf(await readOnly.callTool({ name: "list_margin_notes", arguments: { novel_id: NOVEL, include_resolved: true } })));
+    expect(all).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: note.id, passage_found: true }),
+      expect.objectContaining({ id: orphan.id, author: "claude", resolved: true, passage_found: false }),
+    ]));
+    expect(all).toHaveLength(2);
+    expect((await readOnly.callTool({ name: "list_margin_notes", arguments: {} })).isError).toBe(true);
+    expect((await readOnly.callTool({ name: "list_margin_notes", arguments: { novel_id: "missing", chapter_id: CH } })).isError).toBe(true);
+    db.raw.prepare("INSERT INTO projects (id, title, created_at, updated_at) VALUES ('other', 'Other', '', '')").run();
+    expect((await readOnly.callTool({ name: "list_margin_notes", arguments: { novel_id: "other", chapter_id: CH } })).isError).toBe(true);
+    db.raw.prepare("UPDATE chapters SET deleted_at = ? WHERE id = ?").run("2026-11-02", CH);
+    expect(JSON.parse(textOf(await readOnly.callTool({ name: "list_margin_notes", arguments: { novel_id: NOVEL } })))).toEqual([]);
+    expect((await readOnly.callTool({ name: "list_margin_notes", arguments: { chapter_id: CH } })).isError).toBe(true);
+  });
+
+  it("refuses a move-locked chapter and an intervening move token", async () => {
+    db.raw.prepare("UPDATE chapters SET moving_until = ? WHERE id = ?").run("2999-01-01T00:00:00.000Z", CH);
+    expect((await call("add_margin_note", { chapter_id: CH, quote: "Mara", body: "note" })).isError).toBe(true);
+    db.raw.prepare("UPDATE chapters SET moving_until = NULL WHERE id = ?").run(CH);
+    const originalGet = bucket.get.bind(bucket);
+    bucket.get = async (...args: Parameters<typeof bucket.get>) => {
+      const object = await originalGet(...args);
+      db.raw.prepare("UPDATE chapters SET moving_until = ? WHERE id = ?").run("2020-01-01T00:00:00.000Z", CH);
+      return object;
+    };
+    expect((await call("add_margin_note", { chapter_id: CH, quote: "Mara", body: "note" })).isError).toBe(true);
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM margin_notes").get()).toEqual({ n: 0 });
+  });
+
+  it("uses the saved chapter rather than Claude's draft and refuses an inconsistent text version", async () => {
+    expect((await call("edit_chapter", {
+      chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Draft-only" }],
+    })).isError).toBeFalsy();
+    expect((await call("add_margin_note", { chapter_id: CH, quote: "Draft-only", body: "note" })).isError).toBe(true);
+    await bucket.put(KEY, OPENING, { customMetadata: { version: "5" } });
+    expect((await call("add_margin_note", { chapter_id: CH, quote: "Mara", body: "note" })).isError).toBe(true);
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM margin_notes").get()).toEqual({ n: 0 });
   });
 });
 

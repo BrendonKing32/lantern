@@ -170,6 +170,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const moreMenuRef = useRef<HTMLDetailsElement>(null);
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
@@ -254,6 +255,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     setViewState(v);
     setEditingChapter(null);
     setHistoryOpen(false);
+    setNotesOpen(false);
     setCheckOpen(false);
     setPeek(null);
     setScenePeek(null);
@@ -287,6 +289,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const index = useMemo(() => entryIndex(entries), [entries]);
   const openLink = useCallback((name: string) => {
     setHistoryOpen(false);
+    setNotesOpen(false);
     setCheckOpen(false);
     setScenePeek(null);
     setPeek(name);
@@ -453,6 +456,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   // History belongs to one chapter; the check panel follows you between chapters.
   useEffect(() => setHistoryOpen(false), [selected?.id]);
+  useEffect(() => setNotesOpen(false), [selected?.id]);
   useEffect(() => setScenePeek(null), [selected?.id]);
 
   // Open a chapter and select a passage in it, waiting for the editor to load.
@@ -1106,10 +1110,32 @@ export function ProjectView({ projectId, chapterId }: Props) {
                         setPeek(null);
                         setScenePeek(null);
                         setCheckOpen(false);
+                        setNotesOpen(false);
                         setHistoryOpen((h) => !h);
                       }}
                     >
                       History
+                    </button>
+                    <button
+                      className={`btn btn-quiet${notesOpen ? " is-on" : ""}`}
+                      aria-pressed={notesOpen}
+                      disabled={!selected}
+                      onClick={() => {
+                        closeMoreMenu();
+                        setPeek(null);
+                        setScenePeek(null);
+                        setCheckOpen(false);
+                        setHistoryOpen(false);
+                        setNotesOpen((open) => !open);
+                      }}
+                    >
+                      Notes
+                    </button>
+                    <button className="btn btn-quiet" disabled={!selected} onClick={() => {
+                      closeMoreMenu();
+                      editorControls.current?.addNote?.();
+                    }}>
+                      Add note
                     </button>
                     <button
                       className={`btn btn-quiet${checkOpen ? " is-on" : ""}`}
@@ -1120,6 +1146,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                         setPeek(null);
                         setScenePeek(null);
                         setHistoryOpen(false);
+                        setNotesOpen(false);
                         setCheckOpen((c) => !c);
                       }}
                     >
@@ -1240,6 +1267,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onStatus={onStatus}
             historyOpen={historyOpen}
             onCloseHistory={closeHistory}
+            notesOpen={notesOpen}
+            offline={offline || disconnected}
+            onOpenNotes={() => {
+              setHistoryOpen(false);
+              setCheckOpen(false);
+              setPeek(null);
+              setScenePeek(null);
+              setNotesOpen(true);
+            }}
+            onCloseNotes={() => setNotesOpen(false)}
             entries={entries}
             onOpenLink={openLink}
             scenes={labelSnapshot?.chapterId === selected.id ? labelSnapshot.scenes : null}
@@ -1247,6 +1284,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             sceneLabelsOn={sceneLabelsOn}
             onOpenScene={(scene) => {
               setHistoryOpen(false);
+              setNotesOpen(false);
               setCheckOpen(false);
               setPeek(null);
               setScenePeek(scene.id);

@@ -1,3 +1,4 @@
+import { findAnchor } from "../../shared/anchors";
 import { arrangeText, insertPassage, matchScenes, normalizeAnchor, normalizeText, splitScenes, takePassage } from "../../shared/scenes";
 import type { SceneListing, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { countWords } from "../../shared/wordcount";
@@ -540,7 +541,6 @@ export const moveScene: Handler = async (req, env, p) => {
       if (e instanceof HttpError) throw e;
       throw new HttpError(500, "The scene could not be moved. Try again.");
     }
-    const ts = now();
     const fromWords = countWords(rest);
     const toWords = countWords(destination);
     const updatedCards = (rows: SceneSyncRow[], pairs: Map<string, number>, passages: typeof fromPassages, chapterId: string) =>
@@ -554,6 +554,42 @@ export const moveScene: Handler = async (req, env, p) => {
     const finalFrom = updatedCards(fromRows.filter((row) => row.id !== scene.id), fromPairs, newFromPassages, from.id);
     const finalTo = updatedCards(orderedTo, toPairs, newToPassages, to.id);
     const updates = JSON.stringify([...finalFrom, ...finalTo]);
+    // Passage offsets use normalized line endings, whereas note anchors use the original text.
+    const rawOffset = (offset: number) => {
+      let raw = offset;
+      for (const match of fromText.matchAll(/\r\n/g)) {
+        if (match.index >= raw) break;
+        raw++;
+      }
+      return raw;
+    };
+    const passage = fromPassages[fromIndex];
+    const passageStart = rawOffset(fromIndex === 0 ? passage.lead : passage.start);
+    const passageEnd = rawOffset(passage.end);
+    const sourceBody = normalizeText(fromText.slice(passageStart, passageEnd));
+    const leading = sourceBody.length - sourceBody.replace(/^(?:[ \t]*\n)+/, "").length;
+    const destinationPassage = newToPassages[insertion];
+    const destinationBodyStart = movedBody ? destination.indexOf(movedBody, destinationPassage.start) : -1;
+    const notes = await env.DB.prepare(
+      "SELECT id, quote, prefix, suffix FROM margin_notes WHERE chapter_id = ? AND resolved_at IS NULL",
+    ).bind(from.id).all<{ id: string; quote: string; prefix: string; suffix: string }>();
+    const movingNotes = JSON.stringify(notes.results.flatMap((note) => {
+      const match = findAnchor(fromText, note);
+      if (!match || match.from < passageStart || match.to > passageEnd) return [];
+      const start = normalizeText(fromText.slice(passageStart, match.from)).length - leading;
+      const end = normalizeText(fromText.slice(passageStart, match.to)).length - leading;
+      const canReanchor = destinationBodyStart >= 0 &&
+        destinationBodyStart + movedBody.length <= destinationPassage.end &&
+        start >= 0 && start < end && end <= movedBody.length;
+      const targetFrom = destinationBodyStart + start;
+      const targetTo = destinationBodyStart + end;
+      const anchor = canReanchor ? {
+        prefix: destination.slice(Math.max(0, targetFrom - 32), targetFrom),
+        suffix: destination.slice(targetTo, targetTo + 32),
+      } : note;
+      return [{ id: note.id, prefix: anchor.prefix, suffix: anchor.suffix }];
+    }));
+    const ts = now();
     const snapshotGuard = `(SELECT json_group_array(json_array(id, position, in_text, anchor_head, anchor_tail))
       FROM (SELECT id, position, in_text, anchor_head, anchor_tail FROM scenes WHERE chapter_id = ? ORDER BY id)) = ?`;
     const result = await env.DB.batch([
@@ -565,10 +601,22 @@ export const moveScene: Handler = async (req, env, p) => {
         word_count = (SELECT json_extract(value, '$.word_count') FROM json_each(?) WHERE json_extract(value, '$.id') = scenes.id),
         unlinked_at = (SELECT json_extract(value, '$.unlinked_at') FROM json_each(?) WHERE json_extract(value, '$.id') = scenes.id)
         WHERE id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
-        AND (SELECT COUNT(*) FROM chapters WHERE id IN (?, ?) AND moving_until = ? AND moving_until > ?) = 2
+        AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND version = ? AND moving_until = ? AND moving_until > ?)
+        AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND version = ? AND moving_until = ? AND moving_until > ?)
         AND ${snapshotGuard} AND ${snapshotGuard}`)
-        .bind(updates, updates, updates, updates, updates, updates, updates, from.id, to.id, lockUntil, ts,
+        .bind(updates, updates, updates, updates, updates, updates, updates,
+          from.id, from.version, lockUntil, ts, to.id, to.version, lockUntil, ts,
           from.id, sceneSnapshot(fromRows), to.id, sceneSnapshot(toRows)),
+      env.DB.prepare(`UPDATE margin_notes SET chapter_id = ?,
+        prefix = (SELECT json_extract(value, '$.prefix') FROM json_each(?) WHERE json_extract(value, '$.id') = margin_notes.id),
+        suffix = (SELECT json_extract(value, '$.suffix') FROM json_each(?) WHERE json_extract(value, '$.id') = margin_notes.id)
+        WHERE chapter_id = ? AND resolved_at IS NULL AND id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
+        AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND version = ? AND moving_until = ? AND moving_until > ?)
+        AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND version = ? AND moving_until = ? AND moving_until > ?)
+        AND ${snapshotGuard} AND ${snapshotGuard}`)
+        .bind(to.id, movingNotes, movingNotes, from.id, movingNotes,
+          from.id, from.version, lockUntil, ts, to.id, to.version, lockUntil, ts,
+          from.id, sceneSnapshot(finalFrom), to.id, sceneSnapshot(finalTo)),
       env.DB.prepare(`UPDATE chapters SET version = ?, word_count = ?, updated_at = ?, moving_until = ?
         WHERE id = ? AND version = ? AND moving_until = ? AND moving_until > ?
         AND ${snapshotGuard} AND ${snapshotGuard}`)
@@ -582,7 +630,7 @@ export const moveScene: Handler = async (req, env, p) => {
       env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, from.project_id),
     ]);
     if (result[0].meta.changes !== finalFrom.length + finalTo.length ||
-        result[1].meta.changes !== 1 || result[2].meta.changes !== 1) {
+        result[2].meta.changes !== 1 || result[3].meta.changes !== 1) {
       throw new Error("Move lock expired during finalization");
     }
     await afterChapterWrite(env, to, destination, to.version + 1, { snapshot: sceneSnapshot(finalTo), pairs: toPairs });

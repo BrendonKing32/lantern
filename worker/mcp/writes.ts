@@ -11,16 +11,18 @@
 // so they follow exactly the same rules as edits made in the app.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { makeAnchor } from "../../shared/anchors";
 import { countWords } from "../../shared/wordcount";
 import type { BibleEntry, ChapterMeta, DraftOp, SceneMeta } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
 import { replayDraft } from "../../shared/draftReplay";
-import { assertChapterUnlocked, chapterKey, claudeDraftKey, getChapterRow, MARKDOWN, MAX_CHAPTER_BYTES, reconcileChapter } from "../db";
+import { assertChapterUnlocked, chapterKey, chapterTextVersion, claudeDraftKey, getChapterRow, MARKDOWN, MAX_CHAPTER_BYTES, reconcileChapter } from "../db";
 import type { Env } from "../env";
 import { createEntry, updateEntry } from "../handlers/bible";
 import { logClaudeChange } from "../handlers/claudeChanges";
 import { createChapter, updateChapter } from "../handlers/chapters";
 import { draftRow } from "../handlers/claudeDrafts";
+import { captureNoteChapter, createChapterNote } from "../handlers/notes";
 import { arrangeScenes, createProjectScene, moveScene, sceneListing, updateScene } from "../handlers/scenes";
 import { HttpError, now, type Handler, type Params } from "../http";
 
@@ -226,6 +228,43 @@ const baseVersion = z
   .describe("The chapter's version from read_chapter or, once Claude's draft of it exists, the draft version from read_draft or your last edit");
 
 export function registerWriteTools(server: McpServer, env: Env) {
+  server.registerTool(
+    "add_margin_note",
+    {
+      title: "Add a margin note",
+      description: "Add a private suggestion on a passage in the saved chapter. Copy a quote that appears exactly once.",
+      inputSchema: {
+        chapter_id: z.string(),
+        quote: z.string().min(1).max(2000),
+        body: z.string().max(4000),
+      },
+      annotations: ADDS,
+    },
+    async ({ chapter_id, quote, body }) =>
+      guarded(async () => {
+        const guard = await captureNoteChapter(env, chapter_id);
+        const { chapter } = guard;
+        const obj = await env.BUCKET.get(chapterKey(chapter.project_id, chapter.id));
+        if (chapterTextVersion(obj, chapter.version) !== chapter.version) {
+          throw new EditError("The chapter changed while adding the note. Read it again and try again.");
+        }
+        const content = obj ? await obj.text() : "";
+        const found = occurrences(content, quote);
+        if (found.length !== 1) {
+          throw new EditError(found.length
+            ? `The quote appears ${found.length} times in the chapter. Include more surrounding text so it matches exactly once.`
+            : "The quote wasn't found in the chapter. Read it again and copy the passage exactly.");
+        }
+        const anchor = makeAnchor(content, found[0], found[0] + quote.length);
+        const note = await createChapterNote(env, chapter_id, { ...anchor, body }, "claude", guard);
+        await logClaudeChange(env, {
+          project_id: chapter.project_id, action: "add_margin_note", target_kind: "chapter", target_id: chapter.id,
+          chapter_id: chapter.id, summary: `Added a margin note to “${chapter.title}”`, detail: "",
+        });
+        return data(note);
+      }),
+  );
+
   server.registerTool(
     "edit_chapter",
     {
