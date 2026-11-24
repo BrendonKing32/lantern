@@ -1,6 +1,6 @@
 import { countWords } from "../../shared/wordcount";
 import type { ChapterMeta } from "../../shared/types";
-import { assertChapterUnlocked, CHAPTER_COLS, chapterKey, chapterTextVersion, MARKDOWN, milestoneKey, reconcileChapter, requireProject } from "../db";
+import { assertChapterUnlocked, CHAPTER_COLS, chapterKey, chapterMoveToken, chapterTextVersion, MARKDOWN, milestoneKey, reconcileChapter, requireProject } from "../db";
 import type { Env } from "../env";
 import { body, HttpError, json, newId, now, type Handler } from "../http";
 
@@ -69,13 +69,20 @@ export const createMilestone: Handler = async (req, env, p) => {
     for (const chapter of results) {
       await assertChapterUnlocked(env, chapter.id);
       const row = await reconcileChapter(env, chapter);
+      const moveToken = await chapterMoveToken(env, chapter.id);
       await assertChapterUnlocked(env, chapter.id);
       const object = await env.BUCKET.get(chapterKey(p.id, row.id));
       if (!object) throw new Error("Chapter text is missing");
+      if (object.customMetadata?.version === undefined && row.version !== 0) {
+        throw new Error("Chapter text has no version metadata");
+      }
       const version = chapterTextVersion(object, row.version);
       if (version === null) throw new Error("Chapter version is invalid");
       const text = await object.text();
       await assertChapterUnlocked(env, chapter.id);
+      if (await chapterMoveToken(env, chapter.id) !== moveToken) {
+        throw new HttpError(423, "A scene was moved in this chapter. Try again shortly.");
+      }
       const wordCount = countWords(text);
       const act = row.act_id ? await env.DB.prepare("SELECT title FROM acts WHERE id = ?")
         .bind(row.act_id).first<{ title: string }>() : null;

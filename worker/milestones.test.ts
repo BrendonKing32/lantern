@@ -55,6 +55,45 @@ describe("milestones", () => {
     log.mockRestore();
   });
 
+  it("uses the version of the same R2 object even if a save lands during creation", async () => {
+    const get = bucket.get.bind(bucket);
+    let reads = 0;
+    bucket.get = async (key) => {
+      if (key === "projects/p/chapters/a.md" && ++reads === 2) {
+        await bucket.put(key, "A later save", { customMetadata: { version: "3" } });
+      }
+      return get(key);
+    };
+    const result = await (await create()).json() as { id: string };
+    expect(db.raw.prepare("SELECT version, word_count FROM milestone_chapters WHERE chapter_id = 'a'").get())
+      .toEqual({ version: 3, word_count: 3 });
+    expect(bucket.objects.get(`projects/p/milestones/${result.id}/a.md`)).toBe("A later save");
+  });
+
+  it("refuses a move that starts and finishes while the chapter is read", async () => {
+    const get = bucket.get.bind(bucket);
+    let reads = 0;
+    bucket.get = async (key) => {
+      const object = await get(key);
+      if (key === "projects/p/chapters/b.md" && ++reads === 2) {
+        db.raw.prepare("UPDATE chapters SET moving_until = ? WHERE id = 'b'").run("2020-01-01T00:00:00.000Z");
+      }
+      return object;
+    };
+    expect((await create()).status).toBe(423);
+    expect(db.raw.prepare("SELECT * FROM milestones").all()).toEqual([]);
+    expect([...bucket.objects.keys()].filter((key) => key.includes("/milestones/"))).toEqual([]);
+  });
+
+  it("refuses an older nonzero chapter without version metadata", async () => {
+    db.raw.prepare("UPDATE chapters SET version = 1 WHERE id = 'b'").run();
+    await bucket.put("projects/p/chapters/b.md", "Legacy text");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await create()).status).toBe(500);
+    expect(db.raw.prepare("SELECT * FROM milestones").all()).toEqual([]);
+    log.mockRestore();
+  });
+
   it("hides incomplete milestones and cleans up old copies", async () => {
     db.raw.prepare("INSERT INTO milestones (id, project_id, name, created_at) VALUES ('old', 'p', 'Old', ?)").run(ts);
     db.raw.prepare("INSERT INTO milestones (id, project_id, name, created_at) VALUES ('new', 'p', 'New', ?)").run(new Date().toISOString());
