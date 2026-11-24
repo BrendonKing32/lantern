@@ -28,7 +28,7 @@ import { DIALECTS } from "../../shared/types";
 import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { arrangeChapters } from "../../shared/acts";
 import { splitScenes } from "../../shared/scenes";
-import { arrangeChapterScenes, SceneMoveError } from "../sceneArrangement";
+import { arrangeChapterScenes, moveSceneBetweenChapters, SceneMoveError } from "../sceneArrangement";
 
 type View = "write" | "board" | "scenes" | "search" | "bible";
 const VIEWS: View[] = ["write", "board", "scenes", "search", "bible"];
@@ -331,7 +331,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
   const [placeholders, setPlaceholders] = useState<ScenePlaceholder[]>([]);
   const [scenesError, setScenesError] = useState<string | null>(null);
-  const [sceneMove, setSceneMove] = useState<{ chapter: ChapterMeta; sceneIds: string[]; expectedIds: string[]; title: string } | null>(null);
+  const [sceneMove, setSceneMove] = useState<
+    | { kind: "arrange"; chapter: ChapterMeta; sceneIds: string[]; expectedIds: string[]; title: string }
+    | { kind: "across"; from: ChapterMeta; to: ChapterMeta; sceneId: string; passageIndex: number; sourceVersion: number; title: string }
+    | null
+  >(null);
   const [movingScene, setMovingScene] = useState(false);
   const sceneMoveBusy = useRef(false);
   const [searchText, setSearchText] = useState<{ id: string; content: string; version: number } | null>(null);
@@ -746,7 +750,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
         setLive((current) => ({ ...current, [chapter.id]: result.word_count }));
         const cached = await cache.project(projectId);
         if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === chapter.id ? { ...c, ...result } : c) });
-        setSceneMove({ chapter, sceneIds: group.map((scene) => scene.id), expectedIds: sceneIds, title: moved.title });
+        setSceneMove({ kind: "arrange", chapter, sceneIds: group.map((scene) => scene.id), expectedIds: sceneIds, title: moved.title });
       } else {
         await api.reorderScenes(projectId, chapterId, sceneIds);
         setSceneMove(null);
@@ -761,20 +765,62 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
+  const updateMovedChapters = async (from: ChapterMeta, to: ChapterMeta, result: Awaited<ReturnType<typeof moveSceneBetweenChapters>>) => {
+    const updates = new Map([[from.id, result.from], [to.id, result.to]]);
+    const apply = (chapter: ChapterMeta) => {
+      const update = updates.get(chapter.id);
+      return update && chapter.version <= update.version ? { ...chapter, ...update } : chapter;
+    };
+    setDetail((current) => current ? { ...current, chapters: current.chapters.map(apply) } : current);
+    setLive((current) => ({ ...current, [from.id]: result.from.word_count, [to.id]: result.to.word_count }));
+    const cached = await cache.project(projectId);
+    if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map(apply) });
+  };
+
+  const moveAcrossChapters = async (scene: SceneMeta, chapterId: string, beforePassageIndex: number | null) => {
+    const from = chapters.find((chapter) => chapter.id === scene.chapter_id);
+    const to = chapters.find((chapter) => chapter.id === chapterId);
+    if (sceneMoveBusy.current || offline || disconnected || !from || !to) return;
+    sceneMoveBusy.current = true;
+    setMovingScene(true);
+    setSceneMove(null);
+    try {
+      const result = await moveSceneBetweenChapters(scene.id, from, to, beforePassageIndex);
+      setSceneMove({ kind: "across", from, to, sceneId: scene.id, passageIndex: result.from_passage_index, sourceVersion: result.from.version, title: scene.title });
+      await updateMovedChapters(from, to, result);
+      await reloadScenes();
+    } catch (e) {
+      alert(e instanceof SceneMoveError ? e.message : describeError(e));
+      load();
+      await reloadScenes().catch((error) => setScenesError(describeError(error)));
+    } finally {
+      sceneMoveBusy.current = false;
+      setMovingScene(false);
+    }
+  };
+
   const undoSceneMove = async () => {
     if (!sceneMove || sceneMoveBusy.current || offline || disconnected) return;
     sceneMoveBusy.current = true;
     setMovingScene(true);
     try {
-      const result = await arrangeChapterScenes(sceneMove.chapter, sceneMove.sceneIds, { projectId, sceneIds: sceneMove.expectedIds });
-      onSaved(sceneMove.chapter.id, result);
-      setLive((current) => ({ ...current, [sceneMove.chapter.id]: result.word_count }));
-      const cached = await cache.project(projectId);
-      if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === sceneMove.chapter.id ? { ...c, ...result } : c) });
+      if (sceneMove.kind === "across") {
+        const result = await moveSceneBetweenChapters(sceneMove.sceneId, sceneMove.to, sceneMove.from, sceneMove.passageIndex, {
+          projectId, destinationVersion: sceneMove.sourceVersion,
+        });
+        await updateMovedChapters(sceneMove.to, sceneMove.from, result);
+      } else {
+        const result = await arrangeChapterScenes(sceneMove.chapter, sceneMove.sceneIds, { projectId, sceneIds: sceneMove.expectedIds });
+        onSaved(sceneMove.chapter.id, result);
+        setLive((current) => ({ ...current, [sceneMove.chapter.id]: result.word_count }));
+        const cached = await cache.project(projectId);
+        if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === sceneMove.chapter.id ? { ...c, ...result } : c) });
+      }
       setSceneMove(null);
       await reloadScenes();
     } catch (e) {
       alert(e instanceof SceneMoveError ? e.message : describeError(e));
+      load();
       await reloadScenes().catch((error) => setScenesError(describeError(error)));
     } finally {
       sceneMoveBusy.current = false;
@@ -1139,7 +1185,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             </div>
           ) : scenes ? (
             <>
-            {sceneMove && <p className="check-notice" role="status">Moved {sceneMove.title}.{" "}
+            {sceneMove && <p className="check-notice" role="status">Moved {sceneMove.title}{sceneMove.kind === "across" ? ` to ${sceneMove.to.title}` : ""}.{" "}
               <button className="btn btn-quiet" disabled={movingScene || offline || disconnected} onClick={() => void undoSceneMove()}>Undo</button>
             </p>}
             <SceneBoard
@@ -1154,6 +1200,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
               onUpdate={updateScene}
               onDelete={(scene) => void deleteScene(scene)}
               onMove={(chapterId, sceneIds, movedId) => void reorderScenes(chapterId, sceneIds, movedId)}
+              onMoveAcross={(scene, chapterId, beforePassageIndex) => void moveAcrossChapters(scene, chapterId, beforePassageIndex)}
               onOpen={openScene}
             />
             </>

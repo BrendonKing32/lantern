@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DndContext, PointerSensor, pointerWithin, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { DndContext, PointerSensor, pointerWithin, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, rectSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { ReactNode } from "react";
@@ -22,8 +22,79 @@ interface Props {
   onUpdate: (scene: SceneMeta, patch: ScenePatch) => Promise<void>;
   onDelete: (scene: SceneMeta) => void;
   onMove: (chapterId: string | null, sceneIds: string[], movedId: string) => void;
+  onMoveAcross: (scene: SceneMeta, chapterId: string, beforePassageIndex: number | null) => void;
   onOpen: (scene: SceneMeta) => void;
   moving?: boolean;
+}
+
+type BoardItem = { scene: SceneMeta; index: number } | { placeholder: ScenePlaceholder };
+
+export function sceneGroupItems(group: SceneMeta[], placeholders: ScenePlaceholder[]): BoardItem[] {
+  const inText = group.filter((scene) => scene.in_text && scene.passage_index !== null)
+    .sort((a, b) => a.passage_index! - b.passage_index!);
+  let nextInText = 0;
+  const display = group.map((scene) => scene.in_text && scene.passage_index !== null ? inText[nextInText++] : scene);
+  const remaining = [...placeholders].sort((a, b) => a.passage_index - b.passage_index);
+  const items: BoardItem[] = [];
+  display.forEach((scene) => {
+    while (scene.passage_index !== null && remaining.length && remaining[0].passage_index < scene.passage_index) {
+      items.push({ placeholder: remaining.shift()! });
+    }
+    items.push({ scene, index: group.findIndex((card) => card.id === scene.id) });
+  });
+  remaining.forEach((placeholder) => items.push({ placeholder }));
+  return items;
+}
+
+export function passageBeforeTarget(items: BoardItem[], targetId: string): number | null {
+  const index = items.findIndex((item) => "scene" in item
+    ? item.scene.id === targetId : placeholderId(item.placeholder) === targetId);
+  if (index < 0) return null;
+  for (const item of items.slice(index)) {
+    if ("placeholder" in item) return item.placeholder.passage_index;
+    if (item.scene.in_text && item.scene.passage_index !== null) return item.scene.passage_index;
+  }
+  return null;
+}
+
+const groupId = (id: string | null) => `scene-group:${id ?? ""}`;
+const placeholderId = (p: ScenePlaceholder) => `scene-placeholder:${p.chapter_id}:${p.passage_index}`;
+export function sceneDrop(
+  scenes: SceneMeta[], placeholders: ScenePlaceholder[], chapterIds: string[], activeId: string, targetId: string,
+): { kind: "unassigned" } | { kind: "reorder"; chapterId: string; sceneIds: string[]; sceneId: string }
+  | { kind: "across"; scene: SceneMeta; chapterId: string; beforePassageIndex: number | null } | null {
+  const scene = scenes.find((item) => item.id === activeId);
+  if (!scene?.in_text || !scene.chapter_id || activeId === targetId) return null;
+  const targetScene = scenes.find((item) => item.id === targetId);
+  const targetPlaceholder = placeholders.find((item) => placeholderId(item) === targetId);
+  const group = [null, ...chapterIds].find((id) => groupId(id) === targetId);
+  const chapterId = targetScene ? targetScene.chapter_id : targetPlaceholder ? targetPlaceholder.chapter_id : group;
+  if (chapterId === undefined) return null;
+  if (chapterId === null) return { kind: "unassigned" };
+  const cards = scenes.filter((item) => item.chapter_id === chapterId).sort((a, b) => a.position - b.position);
+  if (chapterId === scene.chapter_id) {
+    const order = sceneDragOrder(cards, scene.id, targetId);
+    return order ? { kind: "reorder", chapterId, sceneIds: order, sceneId: scene.id } : null;
+  }
+  const items = sceneGroupItems(cards, placeholders.filter((item) => item.chapter_id === chapterId));
+  return { kind: "across", scene, chapterId, beforePassageIndex: passageBeforeTarget(items, targetId) };
+}
+
+const boardCollision: CollisionDetection = (args) => {
+  const hits = pointerWithin(args);
+  return hits.filter((hit) => !String(hit.id).startsWith("scene-group:")).concat(
+    hits.filter((hit) => String(hit.id).startsWith("scene-group:")),
+  );
+};
+
+function DropGroup({ id, label, children }: { id: string | null; label: string; children: ReactNode }) {
+  const { setNodeRef } = useDroppable({ id: groupId(id) });
+  return <section ref={setNodeRef} className={id === null ? "scene-group scene-group-unassigned" : "scene-group"} aria-label={label}>{children}</section>;
+}
+
+function PlaceholderTarget({ placeholder, children }: { placeholder: ScenePlaceholder; children: ReactNode }) {
+  const { setNodeRef } = useDroppable({ id: placeholderId(placeholder) });
+  return <li ref={setNodeRef} className="scene-card scene-placeholder">{children}</li>;
 }
 
 export function sceneDragOrder(group: SceneMeta[], activeId: string, overId: string | null): string[] | null {
@@ -39,14 +110,15 @@ function SortableScene({ scene, disabled, children }: { scene: SceneMeta; disabl
   });
   return <li ref={setNodeRef} className="scene-card" style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : undefined }}>
     {children(scene.in_text && <button className="btn btn-quiet scene-drag" type="button" disabled={disabled}
-      aria-label={`Drag ${scene.title} within this chapter`} {...attributes} {...listeners}>Drag</button>)}
+      aria-label={`Drag ${scene.title}`} {...attributes} {...listeners}>Drag</button>)}
   </li>;
 }
 
-export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, offline, onAdd, onUpdate, onDelete, onMove, onOpen, moving = false }: Props) {
+export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, offline, onAdd, onUpdate, onDelete, onMove, onMoveAcross, onOpen, moving = false }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ScenePatch>({});
   const [busy, setBusy] = useState(false);
+  const [moveHint, setMoveHint] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(`lantern.scene-check.${projectId}`) === "1");
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const begin = (scene: SceneMeta) => {
@@ -118,13 +190,26 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
     const title = placeholder.excerpt.split(/\s+/).filter(Boolean).slice(0, 6).join(" ") || "New scene";
     try { await onUpdate(scene, { title, link: { passage_index: placeholder.passage_index } }); } catch { /* parent reports the error */ }
   };
+  const dragEnd = ({ active, over }: DragEndEvent) => {
+    if (offline || moving || !over) return;
+    const action = sceneDrop(scenes, placeholders, chapters.map((chapter) => chapter.id), String(active.id), String(over.id));
+    if (!action) return;
+    if (action.kind === "unassigned") {
+      setMoveHint("To take this scene out of the chapter, cut its text in the editor.");
+      return;
+    }
+    setMoveHint(null);
+    if (action.kind === "reorder") onMove(action.chapterId, action.sceneIds, action.sceneId);
+    else onMoveAcross(action.scene, action.chapterId, action.beforePassageIndex);
+  };
 
   return (
     <section className="scene-board" aria-label="Scene planning board">
       <p className="board-hint">
-        Cards can be planned or linked to passages in the text. Drag an in-text card within its chapter to move its passage.
+        Cards can be planned or linked to passages in the text. Drag an in-text card to move its passage, including to another chapter.
         {offline && " Reconnect to edit scene plans."}
       </p>
+      {moveHint && <p role="status" className="board-hint">{moveHint}</p>}
       {!dismissed && needsCheck.length > 0 && (
         <aside className="scene-check">
           <p>Check how your scene cards line up with the text.</p>
@@ -132,31 +217,15 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
           <button className="btn btn-quiet" onClick={() => { localStorage.setItem(`lantern.scene-check.${projectId}`, "1"); setDismissed(true); }}>Dismiss</button>
         </aside>
       )}
+      <DndContext sensors={sensors} collisionDetection={boardCollision} onDragEnd={dragEnd}>
       {groupOrder.map((g) => {
         const group = scenes.filter((scene) => scene.chapter_id === g.id).sort((a, b) => a.position - b.position);
-        const inText = group.filter((scene) => scene.in_text && scene.passage_index !== null)
-          .sort((a, b) => a.passage_index! - b.passage_index!);
-        let nextInText = 0;
-        const display = group.map((scene) => scene.in_text && scene.passage_index !== null ? inText[nextInText++] : scene);
-        const remaining = placeholders.filter((placeholder) => placeholder.chapter_id === g.id).sort((a, b) => a.passage_index - b.passage_index);
-        const items: ({ scene: SceneMeta; index: number } | { placeholder: ScenePlaceholder })[] = [];
-        display.forEach((scene) => {
-          while (scene.passage_index !== null && remaining.length && remaining[0].passage_index < scene.passage_index) {
-            items.push({ placeholder: remaining.shift()! });
-          }
-          items.push({ scene, index: group.findIndex((card) => card.id === scene.id) });
-        });
-        remaining.forEach((placeholder) => items.push({ placeholder }));
+        const items = sceneGroupItems(group, placeholders.filter((placeholder) => placeholder.chapter_id === g.id));
         const chapter = chapters.find((item) => item.id === g.id);
         const act = chapter && acts.find((item) => item.id === chapter.act_id);
         const firstInAct = act && rows.find((row) => row.kind === "chapter" && row.chapter.act_id === act.id);
-        const dragEnd = ({ active, over }: DragEndEvent) => {
-          if (offline || moving || !over || active.id === over.id) return;
-          const order = sceneDragOrder(group, String(active.id), String(over.id));
-          if (order) onMove(g.id, order, String(active.id));
-        };
         return (
-          <section className={g.id === null ? "scene-group scene-group-unassigned" : "scene-group"} key={g.id ?? "unassigned"} aria-label={g.label}>
+          <DropGroup id={g.id} label={g.label} key={g.id ?? "unassigned"}>
             {act && firstInAct?.kind === "chapter" && firstInAct.chapter.id === g.id && <h2 className="act-name">{act.title}</h2>}
             <header className="scene-group-head">
               <h2>{g.heading}</h2>
@@ -166,11 +235,10 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
               }}>{g.addLabel}</button>
             </header>
             {items.length === 0 ? <p className="scene-empty">{g.empty}</p> : (
-              <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={dragEnd}>
               <SortableContext items={group.map((scene) => scene.id)} strategy={rectSortingStrategy}>
               <ol className="scene-cards">
                 {items.map((item) => "placeholder" in item ? (
-                  <li className="scene-card scene-placeholder" key={`passage-${item.placeholder.passage_index}`}>
+                  <PlaceholderTarget placeholder={item.placeholder} key={`passage-${item.placeholder.passage_index}`}>
                     <span className="scene-status">No card</span>
                     <p className="scene-excerpt">{item.placeholder.excerpt || "Empty passage"}</p>
                     <p className="scene-meta">{item.placeholder.words.toLocaleString()} words</p>
@@ -184,7 +252,7 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
                         {group.filter((card) => !card.in_text).map((card) => <option value={card.id} key={card.id}>{card.title}</option>)}
                       </select></label>
                     </div>
-                  </li>
+                  </PlaceholderTarget>
                 ) : (({ scene, index: i }) => (
                   <SortableScene scene={scene} disabled={offline || moving || editing !== null} key={scene.id}>{(handle) => <>
                     {editing === scene.id ? (
@@ -250,11 +318,11 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
                 ))(item))}
               </ol>
               </SortableContext>
-              </DndContext>
             )}
-          </section>
+          </DropGroup>
         );
       })}
+      </DndContext>
     </section>
   );
 }

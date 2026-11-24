@@ -287,10 +287,12 @@ app and private API protected.
   scene breaks. In-text cards show their word counts and excerpts; **Open** takes you to the
   passage in **Write**. For a passage with no card, use **Add card** or **This is…** to link
   a planned card. Check suggested matches with **Looks right** or **Not this one**.
-  Drag an in-text card within its chapter, or use **Up** and **Down**, to move its passage
-  with it. Lantern saves drafts first; moving needs a connection, and **Undo** or **History**
-  can reverse a move. Edit summaries, POV and locations without changing chapter text.
-  Moving an in-text card to another chapter requires moving its text in the editor first.
+  Drag an in-text card within its chapter or into another chapter to move its passage
+  with it. Drop on a passage to insert before it, or on the chapter to add at the end.
+  Use **Up** and **Down** to reorder within a chapter. Lantern saves both chapters' drafts first;
+  moving needs a connection, and **Undo** or **History** can reverse a move. To take a scene
+  out of a chapter without placing it in another, cut its text in the editor. Edit summaries,
+  POV and locations without changing chapter text.
   In **Write**, scene labels show each passage's card; click a label to see its notes beside
   the page. Turn **Scene labels** on or off under **More** on this device. Press
   ⌘/Ctrl+Shift+Enter to insert a scene break in the chapter's usual style.

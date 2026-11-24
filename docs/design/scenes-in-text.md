@@ -330,27 +330,47 @@ Refactor the claim/snapshot/put/rollback sequence out of `saveChapter` into a he
 
 ### 6.6 Move a passage to another chapter
 
-`POST /api/scenes/:id/move`, body `{ toChapterId: string, beforeSceneId: string | null, baseVersions: { from: number, to: number } }`.
+`POST /api/scenes/:id/move`, body `{ toChapterId: string, beforePassageIndex: number | null, baseVersions: { from: number, to: number } }`.
 
 - The scene must be in the text (planned cards move with the existing `PATCH /api/scenes/:id`).
-  `toChapterId` must be in the same novel and differ from the scene's chapter. `beforeSceneId`, when
-  given, must be a card in the destination chapter.
-- The insert point is before the passage of `beforeSceneId` if that card is in the text. If it's
-  planned, use the next in-text card after it, or the end when there isn't one.
+  `toChapterId` must be in the same novel and differ from the scene's chapter.
+- The client supplies `expectedFromChapterId` to refuse a move if the card has meanwhile moved
+  to another chapter, whose draft has not been flushed.
+- `beforePassageIndex` identifies a passage of the destination at `baseVersions.to`, or null for the
+  end. The response includes `from_passage_index` for Undo, including before uncarded passages.
 
 Sequence. Each step fails safe:
 
-1. **Claim both versions** in one `env.DB.batch` of two conditional `UPDATE chapters SET version = version + 1 … WHERE id = ? AND version = ?`.
-   If either has `meta.changes === 0`, put the other back and return 409 with both current versions.
-2. **History copies of both** with reason `move`. If either fails, put both versions back and return 500
+1. **Lock both chapters** in one D1 batch, conditionally on their versions and an absent or expired
+   `moving_until`. The lock expires in 60 seconds. If either lock fails, release the other and return
+   409 with both current versions and lock states.
+2. Read both R2 objects and verify their metadata versions match the base versions. If not, release
+   both locks and return 409.
+3. **History copies of both** with reason `move`. If either fails, release both locks and return 500
    `"Could not keep a copy in History, so nothing was moved"`.
-3. **Write the destination first**, then the source.
-4. If the source write fails, write the destination's original text back. If that also fails, return 500
-   `"The scene is now in both chapters. Delete one copy."` and leave the versions claimed. Text is never lost.
-5. Update both chapters' `word_count`, then run `afterChapterWrite` for the destination with the moving card
-   pre-assigned (set its `chapter_id` to the destination and keep `in_text = 1` *before* running sync,
-   so its anchors pair it), then for the source.
-6. Daily words delta 0 for both. Return `{ from: {version, word_count}, to: {version, word_count}, scene }`.
+4. **Write the destination first**, then the source, each with R2 metadata version `base + 1`.
+   Before each forward write, require at least 30 seconds remaining on the lock. Otherwise restore
+   any written text while the lock is still held and return 503
+   `"The move took too long; nothing was changed. Try again."` if the restore succeeds.
+5. If the source write fails, restore the destination at its base version and release both locks.
+   If the restore fails too, advance only the destination version, release both locks and return 500
+   `"The scene is now in both chapters. Delete one copy."` when both copies can be confirmed. If a
+   write's outcome is uncertain, ask the writer to check both chapters without deleting a copy.
+6. On success, update both versions and word counts and release the locks in one D1 batch, guarded by
+   each original version and lock value. Assign the card to the destination with `in_text = 1`, then
+   run `afterChapterWrite` on the destination and source. Daily words delta is zero.
+   Return `{ from: {version, word_count}, to: {version, word_count}, scene, from_passage_index }`.
+
+While locked, chapter saves, Claude edits and arrangements return 423 with `retryAfter`; client
+drafts remain queued and retry. Reads remain available. On a read or write after a lock expires,
+if R2 metadata is ahead of D1, roll D1 forward to that version and the word count of the R2 text.
+An old base version then conflicts. A crash before any R2 write changes nothing; after the destination
+write the scene remains in both chapters; after both writes the chapters roll forward to the move.
+An R2 version behind D1 keeps the existing interrupted-save behavior.
+An expired `moving_until` value is retained as a fencing token, so a save cannot miss a lock that
+was acquired and released between its R2 read and its D1 claim. A null or expired value is unlocked.
+For a nonzero chapter version, moving also requires R2 version metadata; a legacy object without it
+cannot prove that a previously claimed save has finished. Saving that chapter supplies the metadata.
 
 ### 6.7 History reason
 
