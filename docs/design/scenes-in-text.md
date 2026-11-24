@@ -74,6 +74,8 @@ export interface Passage {
   breakLine: string | null;
   /** Offset where the passage body starts (just after the break line's newline; 0 for the first). */
   start: number;
+  /** Offset after a matching chapter-title heading and its following blank lines, or `start`. */
+  lead: number;
   /** Offset (exclusive) where the next break line starts, or the text length. */
   end: number;
   /** countWords() of the body. */
@@ -178,6 +180,8 @@ export function arrangeText(text: string, passages: Passage[], order: number[]):
 - The passage that ends up first loses its break line.
 - The passage that *was* first and is no longer first gets a break line: the break style used most
   often in this chapter (ties go to the first one used), or `***` if the chapter had none.
+- A leading chapter-title heading (`passages[0].lead > 0`) stays at the top of the chapter; only the
+  bodies after it are rearranged.
 - Join passages as `body.trimEnd() + "\n\n" + breakLine + "\n\n" + nextBody.trimStart()`. The result
   ends with exactly one `"\n"` if the original ended with a newline.
 - `arrangeText(text, p, identity)` must equal `text` after its spacing is normalized the same way.

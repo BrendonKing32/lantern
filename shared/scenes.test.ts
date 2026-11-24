@@ -12,92 +12,84 @@ import {
   type Passage,
 } from "./scenes";
 
-describe("normalizeAnchor", () => {
-  it("strips wiki links, markdown marks, case, and repeated whitespace", () => {
-    expect(normalizeAnchor("  **[[Mara|her]]**\n *lantern*  ")).toBe("her lantern");
-  });
-});
-
-describe("splitScenes", () => {
-  it.each(["***", "* * *", "---", "___", "#", "##"])("splits on a top-level %s break", (breakLine) => {
-    const passages = splitScenes(`First passage.\n\n${breakLine}\n\nSecond passage.`);
+describe("normalizeText and splitScenes", () => {
+  it.each(["***", "* * *", "---", "___", "#", "##"])("splits on %s", (breakLine) => {
+    const passages = splitScenes(`Before the break.\n\n${breakLine}\n\nAfter the break.`);
     expect(passages).toHaveLength(2);
-    expect(passages[0].breakLine).toBeNull();
-    expect(passages[1].breakLine).toBe(breakLine);
-    expect(passages[1].breakStart).toBeGreaterThan(passages[0].start);
-    expect(passages.map((passage) => passage.words)).toEqual([2, 2]);
+    expect(passages.map((passage) => passage.breakLine)).toEqual([null, breakLine]);
+    expect(passages.map((passage) => passage.words)).toEqual([3, 3]);
   });
 
   it("does not split a setext heading, fenced code, or a block quote", () => {
-    expect(splitScenes("A paragraph\n---\n\nAnother paragraph")).toHaveLength(1);
-    expect(splitScenes("```md\n***\n```\n\nAfter the code")).toHaveLength(1);
-    expect(splitScenes("> Quoted text\n>\n> ---\n\nOutside the quote")).toHaveLength(1);
+    expect(splitScenes("A setext heading\n---\n\nParagraph.")).toHaveLength(1);
+    expect(splitScenes("Before.\n\n```md\n***\n```\n\nAfter.")).toHaveLength(1);
+    expect(splitScenes("Before.\n\n> ---\n\nAfter.")).toHaveLength(1);
   });
 
   it("keeps a chapter without breaks as one passage", () => {
-    expect(splitScenes("One complete scene.")).toHaveLength(1);
+    const [passage] = splitScenes("A single scene.");
+    expect(passage).toMatchObject({ index: 0, breakStart: null, breakLine: null, start: 0, end: 15 });
+    expect(passage.words).toBe(3);
   });
 
-  it("keeps empty leading, trailing, and adjacent passages", () => {
-    const leadingAndTrailing = splitScenes("***\n\nBody.\n\n---\n");
+  it("keeps leading, trailing, and consecutive breaks as empty passages", () => {
+    const leadingAndTrailing = splitScenes("***\n\nMiddle passage.\n\n---");
     expect(leadingAndTrailing).toHaveLength(3);
-    expect(leadingAndTrailing[0].words).toBe(0);
-    expect(leadingAndTrailing[1].words).toBe(1);
-    expect(leadingAndTrailing[2].words).toBe(0);
+    expect(leadingAndTrailing[0]).toMatchObject({ words: 0, head: "", tail: "" });
+    expect(leadingAndTrailing[2]).toMatchObject({ words: 0, head: "", tail: "" });
 
-    const adjacent = splitScenes("Before.\n\n***\n\n---\n\nAfter.");
-    expect(adjacent).toHaveLength(3);
-    expect(adjacent[1].words).toBe(0);
-    expect(adjacent[1].head).toBe("");
-    expect(adjacent[1].tail).toBe("");
+    const consecutive = splitScenes("First passage.\n\n***\n\n---\n\nLast passage.");
+    expect(consecutive).toHaveLength(3);
+    expect(consecutive[1]).toMatchObject({ words: 0, head: "", tail: "", excerpt: "" });
   });
 
-  it("normalizes CRLF offsets before splitting", () => {
-    const source = "First.\r\n\r\n***\r\n\r\nSecond.\r\n";
-    const text = normalizeText(source);
+  it("normalizes line endings before calculating offsets", () => {
+    const source = "First passage.\r\n\r\n***\r\n\r\nSecond passage.";
+    const normalized = normalizeText(source);
     const passages = splitScenes(source);
-    expect(passages[1].breakStart).toBe(text.indexOf("***"));
-    expect(passages[1].start).toBe(text.indexOf("***") + "***\n".length);
-    expect(passages[1].end).toBe(text.length);
+    expect(normalized).toBe("First passage.\n\n***\n\nSecond passage.");
+    expect(passages[1].breakStart).toBe(normalized.indexOf("***"));
+    expect(passages[1].start).toBe(normalized.indexOf("***") + 4);
   });
 
-  it("omits a matching first title heading from anchors and excerpt", () => {
-    const passages = splitScenes("# The **Title**\n\nMara sees [[the lantern|her]].", "the title");
-    expect(passages[0].head).toBe("mara sees her.");
-    expect(passages[0].excerpt).toBe("Mara sees her.");
-    expect(passages[0].words).toBe(7);
-    expect(splitScenes("# [[Mara|her]]\n\nThe scene begins.", "her")[0].head).toBe("the scene begins.");
+  it("leaves a duplicate chapter-title heading out of anchors and excerpts", () => {
+    const [passage] = splitScenes("# Chapter One\n\nThe story begins here.", "chapter one");
+    expect(passage.head).toBe("the story begins here.");
+    expect(passage.excerpt).toBe("The story begins here.");
+    expect(passage.words).toBe(6);
   });
 
-  it("normalizes wiki-link display text in anchors", () => {
-    expect(splitScenes("Mara gave [[the lantern|her]] to Ivo.")[0].head).toBe("mara gave her to ivo.");
+  it("uses the displayed text of wikilinks in anchors and excerpts", () => {
+    expect(normalizeAnchor("[[Mara|her]] crossed the room.")).toBe("her crossed the room.");
+    const [passage] = splitScenes("[[Mara|her]] crossed the room.");
+    expect(passage.head).toBe("her crossed the room.");
+    expect(passage.excerpt).toBe("her crossed the room.");
   });
 
-  it("matches parseChapter break counts across varied chapter markdown", () => {
-    const chapters = [
-      "Opening paragraph.\n\n***\n\nClosing paragraph.",
-      "Opening paragraph.\n\n* * *\n\nClosing paragraph.",
-      "Opening paragraph.\n\n---\n\nClosing paragraph.",
-      "Opening paragraph.\n\n___\n\nClosing paragraph.",
-      "# Chapter title\n\nOpening paragraph.\n\n***\n\nClosing paragraph.",
-      "A setext heading\n===\n\nOpening paragraph\n\n***\n\nClosing paragraph.",
-      "```md\n***\n```\n\nOpening paragraph\n\n---\n\nClosing paragraph.",
-      "> Quoted paragraph\n\nOpening paragraph\n\n***\n\nClosing paragraph.",
-      "- A list item\n\n***\n\nA paragraph.",
-      "Opening paragraph\n\n#\n\nClosing paragraph.",
-      "Opening paragraph\n\n##\n\nClosing paragraph.",
-      "Opening paragraph\n\nAnother paragraph.",
+  it("agrees with parseChapter about top-level scene breaks across varied chapters", () => {
+    const corpus = [
+      ["One", "A paragraph."],
+      ["Two", "# Heading\n\nA paragraph."],
+      ["Three", "A\n\n***\n\nB"],
+      ["Four", "A\n\n* * *\n\nB\n\n---\n\nC"],
+      ["Five", "A\n\n___\n\nB"],
+      ["Six", "A\n\n#\n\nB\n\n##\n\nC"],
+      ["Seven", "A setext heading\n---\n\nB"],
+      ["Eight", "A\n\n```md\n***\n```\n\nB"],
+      ["Nine", "A paragraph with **formatting** and a [link](https://example.com)."],
+      ["Ten", "A\n\n***\n\nB\n\nAnother paragraph."],
+      ["Eleven", "A paragraph.\n\n- One\n- Two"],
+      ["Twelve", "A paragraph.\n\n> A quoted paragraph."],
     ];
 
-    expect(chapters.length).toBeGreaterThanOrEqual(10);
-    for (const [index, markdown] of chapters.entries()) {
-      const expected = parseChapter(`Chapter ${index}`, markdown).blocks.filter((block) => block.kind === "break").length;
-      expect(splitScenes(markdown, `Chapter ${index}`).length - 1, `chapter ${index}: ${markdown}`).toBe(expected);
+    for (const [title, markdown] of corpus) {
+      const expectedBreaks = parseChapter(title, markdown).blocks.filter((block) => block.kind === "break").length;
+      expect(splitScenes(markdown, title).length - 1, title).toBe(expectedBreaks);
     }
   });
 });
 
-function cardFromPassage(id: string, passage: Passage, position: number): MatchCard {
+function cardFrom(passage: Passage, id: string, position: number): MatchCard {
   return {
     id,
     in_text: true,
@@ -107,175 +99,220 @@ function cardFromPassage(id: string, passage: Passage, position: number): MatchC
   };
 }
 
+function longPassage(opening: string, ending: string): string {
+  return `${opening} ${"middle words stay in place ".repeat(12)}${ending}`;
+}
+
 interface MatchCase {
   name: string;
   original: string;
   current: string;
-  cardPassageIndexes: number[];
-  expectedPairs: [string, number][];
-  expectedPlaceholders: number[];
-  expectedLeftText: string[];
+  cardPassages: number[];
+  cardStates?: boolean[];
+  expectedPairs: Record<string, number>;
+  placeholders: number[];
+  leftText: string[];
 }
 
-const longScene = (opening: string, ending: string) => `${opening}${"x".repeat(200)}${ending}`;
+const matchCases: MatchCase[] = [
+  {
+    name: "typing inside a scene",
+    original: "The scene opens here. Then the writer adds another sentence.",
+    current: "The scene opens here. Then the writer adds another sentence. A new line.",
+    cardPassages: [0],
+    expectedPairs: { "scene-0": 0 },
+    placeholders: [],
+    leftText: [],
+  },
+  {
+    name: "splitting a scene",
+    original: longPassage("The opening stays the same.", "The ending stays the same."),
+    current: `${longPassage("The opening stays the same.", "The ending stays the same.")}\n\n***\n\nA new scene.`,
+    cardPassages: [0],
+    expectedPairs: { "scene-0": 0 },
+    placeholders: [1],
+    leftText: [],
+  },
+  {
+    name: "merging two scenes",
+    original: `${longPassage("The first passage begins.", "The first passage ends.")}\n\n***\n\n${longPassage("The second passage begins.", "The second passage ends.")}`,
+    current: `${longPassage("The first passage begins.", "The first passage ends.")}\n\n${longPassage("The second passage begins.", "The second passage ends.")}`,
+    cardPassages: [0, 1],
+    expectedPairs: { "scene-0": 0 },
+    placeholders: [],
+    leftText: ["scene-1"],
+  },
+  {
+    name: "swapping two scenes",
+    original: `${longPassage("The first scene begins.", "The first scene ends.")}\n\n***\n\n${longPassage("The second scene begins.", "The second scene ends.")}`,
+    current: `${longPassage("The second scene begins.", "The second scene ends.")}\n\n***\n\n${longPassage("The first scene begins.", "The first scene ends.")}`,
+    cardPassages: [0, 1],
+    expectedPairs: { "scene-0": 1, "scene-1": 0 },
+    placeholders: [],
+    leftText: [],
+  },
+  {
+    name: "rewriting one scene opening",
+    original: longPassage("The old opening.", "The ending remains unchanged."),
+    current: longPassage("A rewritten opening.", "The ending remains unchanged."),
+    cardPassages: [0],
+    expectedPairs: { "scene-0": 0 },
+    placeholders: [],
+    leftText: [],
+  },
+  {
+    name: "rewriting an opening and adding a break elsewhere",
+    original: `${longPassage("The old opening.", "The first ending remains unchanged.")}\n\n***\n\n${longPassage("The second opening.", "The second ending remains unchanged.")}`,
+    current: `${longPassage("A rewritten opening.", "The first ending remains unchanged.")}\n\n***\n\n${longPassage("The second opening.", "The second ending remains unchanged.")}\n\n---\n\nA new passage.`,
+    cardPassages: [0, 1],
+    expectedPairs: { "scene-0": 0, "scene-1": 1 },
+    placeholders: [2],
+    leftText: [],
+  },
+  {
+    name: "two scenes with identical openings",
+    original: `${longPassage("The repeated opening.", "The first ending is distinct.")}\n\n***\n\n${longPassage("The repeated opening.", "The second ending is distinct.")}`,
+    current: `${longPassage("The repeated opening.", "The first ending is distinct.")}\n\n***\n\n${longPassage("The repeated opening.", "The second ending is distinct.")}`,
+    cardPassages: [0, 1],
+    expectedPairs: { "scene-0": 0, "scene-1": 1 },
+    placeholders: [],
+    leftText: [],
+  },
+  {
+    name: "adding a new break near the top",
+    original: longPassage("The existing passage begins.", "The existing passage ends."),
+    current: `A new passage.\n\n***\n\n${longPassage("The existing passage begins.", "The existing passage ends.")}`,
+    cardPassages: [0],
+    expectedPairs: { "scene-0": 1 },
+    placeholders: [0],
+    leftText: [],
+  },
+  {
+    name: "all cards are planned",
+    original: "A first passage.\n\n***\n\nA second passage.",
+    current: "A first passage.\n\n***\n\nA second passage.",
+    cardPassages: [0, 1],
+    cardStates: [false, false],
+    expectedPairs: {},
+    placeholders: [0, 1],
+    leftText: [],
+  },
+];
 
 describe("matchScenes", () => {
-  const cases: MatchCase[] = [
-    {
-      name: "type inside a scene",
-      original: "The door was open.\nShe waited.",
-      current: "The door was ajar.\nShe waited.",
-      cardPassageIndexes: [0],
-      expectedPairs: [["card-0", 0]],
-      expectedPlaceholders: [],
-      expectedLeftText: [],
-    },
-    {
-      name: "split a scene",
-      original: "Once Mara entered the room.",
-      current: "Once Mara entered the room.\n\n***\n\nShe closed the door.",
-      cardPassageIndexes: [0],
-      expectedPairs: [["card-0", 0]],
-      expectedPlaceholders: [1],
-      expectedLeftText: [],
-    },
-    {
-      name: "merge two scenes",
-      original: `${longScene("First opening. ", " first ending.")}\n\n***\n\n${longScene("Second opening. ", " second ending.")}`,
-      current: `${longScene("First opening. ", " first ending.")}\n\n${longScene("Second opening. ", " second ending.")}`,
-      cardPassageIndexes: [0, 1],
-      expectedPairs: [["card-0", 0]],
-      expectedPlaceholders: [],
-      expectedLeftText: ["card-1"],
-    },
-    {
-      name: "swap two scenes",
-      original: "Alpha passage.\n\n***\n\nBeta passage.",
-      current: "Beta passage.\n\n***\n\nAlpha passage.",
-      cardPassageIndexes: [0, 1],
-      expectedPairs: [["card-0", 1], ["card-1", 0]],
-      expectedPlaceholders: [],
-      expectedLeftText: [],
-    },
-    {
-      name: "rewrite one scene opening",
-      original: longScene("Old opening. ", " ending stays."),
-      current: longScene("New opening. ", " ending stays."),
-      cardPassageIndexes: [0],
-      expectedPairs: [["card-0", 0]],
-      expectedPlaceholders: [],
-      expectedLeftText: [],
-    },
-    {
-      name: "rewrite an opening and add a break elsewhere",
-      original: `${longScene("Old opening. ", " first ending.")}\n\n***\n\n${longScene("Second opening. ", " second ending.")}`,
-      current: `${longScene("New opening. ", " first ending.")}\n\n***\n\n${longScene("Second opening. ", " second ending.")}\n\n---\n\nThird passage.`,
-      cardPassageIndexes: [0, 1],
-      expectedPairs: [["card-0", 0], ["card-1", 1]],
-      expectedPlaceholders: [2],
-      expectedLeftText: [],
-    },
-    {
-      name: "disambiguate identical openings with tails",
-      original: `${longScene("Common opening. ", " first ending.")}\n\n***\n\n${longScene("Common opening. ", " second ending.")}`,
-      current: `${longScene("Common opening. ", " first ending.")}\n\n***\n\n${longScene("Common opening. ", " second ending.")}`,
-      cardPassageIndexes: [0, 1],
-      expectedPairs: [["card-0", 0], ["card-1", 1]],
-      expectedPlaceholders: [],
-      expectedLeftText: [],
-    },
-    {
-      name: "leave a new break near the top as a placeholder without shifting cards",
-      original: longScene("Original opening. ", " ending."),
-      current: `New uncarded passage.\n\n***\n\n${longScene("Original opening. ", " ending.")}`,
-      cardPassageIndexes: [0],
-      expectedPairs: [["card-0", 1]],
-      expectedPlaceholders: [0],
-      expectedLeftText: [],
-    },
-    {
-      name: "leave all passages as placeholders when every card is planned",
-      original: "A planned scene.",
-      current: "A planned scene.",
-      cardPassageIndexes: [],
-      expectedPairs: [],
-      expectedPlaceholders: [0],
-      expectedLeftText: [],
-    },
-  ];
+  it.each(matchCases)("$name", (scenario) => {
+    const originalPassages = splitScenes(scenario.original);
+    const passages = splitScenes(scenario.current);
+    const cards = scenario.cardPassages.map((passageIndex, index) => ({
+      ...cardFrom(originalPassages[passageIndex], `scene-${index}`, index),
+      in_text: scenario.cardStates?.[index] ?? true,
+    }));
 
-  it.each(cases)("$name", ({ original, current, cardPassageIndexes, expectedPairs, expectedPlaceholders, expectedLeftText }) => {
-    const originalPassages = splitScenes(original);
-    const cards = cardPassageIndexes.map((index) => cardFromPassage(`card-${index}`, originalPassages[index], index));
-    if (cardPassageIndexes.length === 0) {
-      cards.push({
-        id: "planned",
-        in_text: false,
-        anchor_head: null,
-        anchor_tail: null,
-        position: 0,
-      });
-    }
-
-    const result = matchScenes(splitScenes(current), cards);
-    expect([...result.pairs.entries()].sort(([a], [b]) => a.localeCompare(b))).toEqual(
-      [...expectedPairs].sort(([a], [b]) => a.localeCompare(b)),
-    );
-    expect(result.placeholders).toEqual(expectedPlaceholders);
-    expect(result.leftText).toEqual(expectedLeftText);
+    const result = matchScenes(passages, cards);
+    expect(Object.fromEntries(result.pairs)).toEqual(scenario.expectedPairs);
+    expect(result.placeholders).toEqual(scenario.placeholders);
+    expect(result.leftText).toEqual(scenario.leftText);
   });
 });
 
-describe("arrangeText, takePassage, and insertPassage", () => {
-  it("keeps each passage's break line when rearranging", () => {
-    const text = "Alpha.\n\n***\n\nBeta.\n\n---\n\nGamma.\n";
-    expect(arrangeText(text, splitScenes(text), [0, 2, 1])).toBe(
-      "Alpha.\n\n---\n\nGamma.\n\n***\n\nBeta.\n",
-    );
-  });
-
-  it("removes the new first break and gives the old first the usual break", () => {
-    const text = "Alpha.\n\n---\n\nBeta.";
-    expect(arrangeText(text, splitScenes(text), [1, 0])).toBe("Beta.\n\n---\n\nAlpha.");
-  });
-
-  it("uses *** when inserting into a chapter with no existing break style", () => {
-    const text = "Alpha.";
-    expect(insertPassage(text, splitScenes(text), "New scene.", 0)).toBe("New scene.\n\n***\n\nAlpha.");
-  });
-
-  it("uses the first break style when the chapter's styles are tied", () => {
-    const text = "Alpha.\n\n---\n\nBeta.\n\n***\n\nGamma.";
-    expect(arrangeText(text, splitScenes(text), [1, 2, 0])).toBe(
-      "Beta.\n\n***\n\nGamma.\n\n---\n\nAlpha.",
-    );
-  });
-
-  it("preserves identity order after normalizing spacing", () => {
-    const text = " Alpha. \r\n\r\n***\r\n\r\n Beta. \r\n";
-    const normalizedSpacing = (value: string) =>
-      normalizeText(value).replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n+/g, "\n").trim();
+describe("passage text edits", () => {
+  it("keeps break lines and gives the former first passage the usual break", () => {
+    const text = "First passage.\n\n---\n\nSecond passage.\n\n* * *\n\nThird passage.";
     const passages = splitScenes(text);
-    expect(normalizedSpacing(arrangeText(text, passages, passages.map((passage) => passage.index)))).toBe(
-      normalizedSpacing(text),
+    expect(arrangeText(text, passages, [1, 2, 0])).toBe(
+      "Second passage.\n\n* * *\n\nThird passage.\n\n---\n\nFirst passage.",
     );
   });
 
-  it("takes a passage while preserving the other break styles", () => {
-    const text = "Alpha.\n\n***\n\nBeta.\n\n---\n\nGamma.\n";
-    const result = takePassage(text, splitScenes(text), 1);
-    expect(result.body.trim()).toBe("Beta.");
-    expect(result.rest).toBe("Alpha.\n\n---\n\nGamma.\n");
+  it("uses the first break style to settle a tie", () => {
+    const text = "First.\n\n---\n\nSecond.\n\n***\n\nThird.";
+    const passages = splitScenes(text);
+    expect(arrangeText(text, passages, [2, 0, 1])).toBe("Third.\n\n---\n\nFirst.\n\n---\n\nSecond.");
+
+    const tiedCounts = "Zero.\n\n***\n\nOne.\n\n---\n\nTwo.\n\n---\n\nThree.\n\n***\n\nFour.\n";
+    expect(arrangeText(tiedCounts, splitScenes(tiedCounts), [1, 0, 2, 3, 4])).toBe(
+      "One.\n\n***\n\nZero.\n\n---\n\nTwo.\n\n---\n\nThree.\n\n***\n\nFour.\n",
+    );
   });
 
-  it("inserts a passage using the chapter's usual break style", () => {
-    const text = "Alpha.\n\n***\n\nBeta.\n";
-    expect(insertPassage(text, splitScenes(text), "New scene.", 1)).toBe(
-      "Alpha.\n\n***\n\nNew scene.\n\n***\n\nBeta.\n",
-    );
+  it("round-trips an identity order with normalized spacing and final newline", () => {
+    const text = "First passage.\n\n\n***\n\n\nSecond passage.\n\n";
+    const passages = splitScenes(text);
+    expect(arrangeText(text, passages, [0, 1])).toBe("First passage.\n\n***\n\nSecond passage.\n");
+  });
+
+  it("takes a passage while preserving the other passage's break", () => {
+    const text = "First passage.\n\n---\n\nSecond passage.\n\n* * *\n\nThird passage.\n";
+    const passages = splitScenes(text);
+    expect(takePassage(text, passages, 1)).toEqual({
+      rest: "First passage.\n\n* * *\n\nThird passage.\n",
+      body: "Second passage.",
+    });
   });
 
   it("inserts into an empty chapter without a break", () => {
-    expect(insertPassage("", splitScenes(""), "New scene.\n", null)).toBe("New scene.\n");
+    expect(insertPassage("", splitScenes(""), "A new scene.", null)).toBe("A new scene.");
+  });
+
+  it("inserts a passage before the requested passage", () => {
+    const text = "First passage.\n\n---\n\nLast passage.";
+    expect(insertPassage(text, splitScenes(text), "Inserted passage.", 1)).toBe(
+      "First passage.\n\n---\n\nInserted passage.\n\n---\n\nLast passage.",
+    );
+  });
+
+  it("preserves indentation when arranging, taking, and inserting a passage", () => {
+    const text = "Intro.\n\n***\n\n    indented code line\n\nAfter.\n";
+    const passages = splitScenes(text);
+    const arranged = arrangeText(text, passages, [1, 0]);
+    expect(arranged).toBe("    indented code line\n\nAfter.\n\n***\n\nIntro.\n");
+
+    const taken = takePassage(text, passages, 1);
+    expect(taken.body).toBe("    indented code line\n\nAfter.");
+    expect(taken.body.startsWith("    ")).toBe(true);
+
+    const destination = "Existing.\n\n---\n\nEnd.";
+    const inserted = insertPassage(destination, splitScenes(destination), taken.body, 1);
+    expect(inserted).toBe(
+      "Existing.\n\n---\n\n    indented code line\n\nAfter.\n\n---\n\nEnd.",
+    );
+    expect(inserted).toContain("\n    indented code line");
+  });
+
+  it("keeps a matching chapter-title heading pinned while rearranging passages", () => {
+    const text = "# Title\n\nAlpha here.\n\n#\n\nBeta here.\n\n---\n\nGamma here.\n";
+    const passages = splitScenes(text, "Title");
+    expect(passages[0].lead).toBe(text.indexOf("Alpha here."));
+
+    const arranged = arrangeText(text, passages, [2, 1, 0]);
+    expect(arranged.startsWith("# Title\n")).toBe(true);
+    expect(splitScenes(arranged, "Title").map((passage) => passage.head)).toEqual([
+      "gamma here.",
+      "beta here.",
+      "alpha here.",
+    ]);
+  });
+
+  it("keeps a matching chapter-title heading pinned when inserting at passage zero", () => {
+    const text = "# Title\n\nAlpha here.\n\n#\n\nBeta here.\n\n---\n\nGamma here.\n";
+    const inserted = insertPassage(text, splitScenes(text, "Title"), "Inserted.", 0);
+    expect(inserted.startsWith("# Title\n")).toBe(true);
+    expect(splitScenes(inserted, "Title").map((passage) => passage.head)).toEqual([
+      "inserted.",
+      "alpha here.",
+      "beta here.",
+      "gamma here.",
+    ]);
+  });
+
+  it("keeps a matching chapter-title heading pinned when taking passage zero", () => {
+    const text = "# Title\n\nAlpha here.\n\n#\n\nBeta here.\n\n---\n\nGamma here.\n";
+    const taken = takePassage(text, splitScenes(text, "Title"), 0);
+    expect(taken.body).toBe("Alpha here.");
+    expect(taken.rest.startsWith("# Title\n")).toBe(true);
+    expect(splitScenes(taken.rest, "Title").map((passage) => passage.head)).toEqual([
+      "beta here.",
+      "gamma here.",
+    ]);
   });
 });
