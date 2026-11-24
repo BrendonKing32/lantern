@@ -2907,6 +2907,9 @@ select {
   background: color-mix(in srgb, var(--lamp) 22%, transparent);
   cursor: pointer;
 }
+/* CodeMirror's base theme paints the gutter container light grey with a #ddd border,
+   which shows as a white line down the page. The note gutter should be invisible. */
+.cm-editor .cm-gutters { background: transparent; border: 0; }
 .cm-editor .cm-note-gutter { background: transparent; border: 0; }
 .cm-note-marker {
   border: 0;
