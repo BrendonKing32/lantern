@@ -35,6 +35,8 @@ spec builds on [`scenes-in-text.md`](scenes-in-text.md): read its sections 6.1 (
 4. **Every server-side write of chapter text goes through `writeChapter`**
    (`worker/handlers/chapters.ts`), so it gets the version check, the History copy, the move lock
    (423), `reconcileChapter` and `afterChapterWrite`. Add no new write path.
+   The one exception is the cross-chapter move in `moveScene` (scenes-in-text 6.6), which keeps
+   its own two-chapter lock and write sequence.
 5. **Milestones are immutable copies.** Creating one copies each chapter's text. Milestones are
    never edited. They can be renamed or deleted, in the app only.
 6. **Restoring from a milestone is per chapter** and works like a History restore. There is no

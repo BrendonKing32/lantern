@@ -167,15 +167,16 @@ describe("scene connector", () => {
 
   it.each([CH, "ch-2"])("refuses a move when %s has a Claude draft", async (draftChapter) => {
     const { second } = await setup();
-    expect((await call("append_to_chapter", {
-      chapter_id: draftChapter, base_version: draftChapter === CH ? 5 : 0, text: "Draft addition.",
+    expect((await call("edit_chapter", {
+      chapter_id: draftChapter, base_version: draftChapter === CH ? 5 : 0,
+      edits: [{ old_text: draftChapter === CH ? "Second passage." : "Destination.", new_text: "Draft passage." }],
     })).isError).toBeFalsy();
     const result = await call("move_scene", {
       scene_id: second, from_chapter_id: CH, from_passage_index: 1, to_chapter_id: "ch-2",
       base_versions: { from: 5, to: 0 },
     });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("This chapter has a draft by Claude waiting for the author");
+    expect(textOf(result)).toBe("This chapter has a draft by Claude waiting for the author. Ask them to accept or discard it first.");
     expect(bucket.objects.get(KEY)).toBe(source);
     expect(bucket.objects.get(destKey)).toBe("Destination.\n\n***\n\nNo card.");
   });
