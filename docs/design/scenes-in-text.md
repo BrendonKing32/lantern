@@ -74,6 +74,8 @@ export interface Passage {
   breakLine: string | null;
   /** Offset where the passage body starts (just after the break line's newline; 0 for the first). */
   start: number;
+  /** Offset after a matching chapter-title heading and its following blank lines, or `start`. */
+  lead: number;
   /** Offset (exclusive) where the next break line starts, or the text length. */
   end: number;
   /** countWords() of the body. */
@@ -178,6 +180,8 @@ export function arrangeText(text: string, passages: Passage[], order: number[]):
 - The passage that ends up first loses its break line.
 - The passage that *was* first and is no longer first gets a break line: the break style used most
   often in this chapter (ties go to the first one used), or `***` if the chapter had none.
+- A leading chapter-title heading (`passages[0].lead > 0`) stays at the top of the chapter; only the
+  bodies after it are rearranged.
 - Join passages as `body.trimEnd() + "\n\n" + breakLine + "\n\n" + nextBody.trimStart()`. The result
   ends with exactly one `"\n"` if the original ended with a newline.
 - `arrangeText(text, p, identity)` must equal `text` after its spacing is normalized the same way.
@@ -197,7 +201,7 @@ whole text, with no break line.
 
 ## 5. Data model
 
-Migration `migrations/0013_scenes_in_text.sql` only adds columns:
+Migration `migrations/0014_scenes_in_text.sql` only adds columns:
 
 ```sql
 -- Scene cards can be tied to a passage of their chapter's text.
@@ -209,9 +213,11 @@ ALTER TABLE scenes ADD COLUMN unlinked_at TEXT;
 -- 1 while an in-text card was paired by order during the one-time migration and the writer hasn't confirmed it.
 ALTER TABLE scenes ADD COLUMN unconfirmed INTEGER NOT NULL DEFAULT 0;
 
--- The chapter version its scene cards were last matched against. 0 = never.
-ALTER TABLE chapters ADD COLUMN scenes_version INTEGER NOT NULL DEFAULT 0;
+-- The chapter version its scene cards were last matched against. -1 = from before this feature, never matched.
+ALTER TABLE chapters ADD COLUMN scenes_version INTEGER NOT NULL DEFAULT -1;
 ```
+
+New chapters explicitly start with `scenes_version = 0`.
 
 `shared/types.ts`, `SceneMeta` gains:
 
@@ -292,8 +298,10 @@ neighbouring paired passage), the UI shows "Merged into *‹title›*" for a day
 ### 6.3 Self-healing listing
 
 `listScenes`: for every chapter of the novel whose `scenes_version < version`, read its text from R2
-and run `afterChapterWrite` before answering. To fill `excerpt`, `passage_index` and `placeholders`, the
-listing needs the passages of every chapter. Read every chapter of the novel that has at least one
+and run `afterChapterWrite` before answering.
+The match uses the R2 object's version metadata, falling back to the D1 version for older objects without it.
+To fill `excerpt`, `passage_index` and `placeholders`, the listing needs the passages of every chapter.
+Read every chapter of the novel that has at least one
 scene row or one break (one R2 read each, in parallel with `Promise.all`), and split them. Books are at
 most a few dozen chapters, so this is acceptable. Don't add caching in this item.
 
@@ -394,15 +402,15 @@ Follow the existing look in `src/styles.css`. Use existing tokens only (`--lamp`
 
 ### 7.2 One-time banner for existing cards
 
-The first match of a chapter that has `scenes_version = 0` and existing in-chapter cards:
+The first match of a chapter that has `scenes_version = -1` and existing in-chapter cards:
 
 - if the number of cards in the chapter equals the number of passages, pair them in order with
   `in_text = 1, unconfirmed = 1`;
 - otherwise leave them all planned.
 
-Do this in `afterChapterWrite` when `scenes_version` was 0, before the normal match. The Scenes view
-then shows a banner while any card is unconfirmed or any chapter has both planned cards and
-placeholders from this migration: "Check how your scene cards line up with the text." It lists those
+Do this in `afterChapterWrite` when `scenes_version` was -1, before the normal match. The Scenes view
+then shows a banner while any card is unconfirmed:
+"Check how your scene cards line up with the text." It lists those
 chapters and can be dismissed (dismissal is remembered per novel in `localStorage`).
 
 ### 7.3 Editor labels (`src/components/ChapterEditor.tsx`, new `src/sceneLabels.ts`)
@@ -469,7 +477,7 @@ avoids duplication.
 
 Tracking issue: https://github.com/BrendonKing32/lantern/issues/79
 
-**Scope:** migration 0013; `SceneMeta` and schema changes; `worker/sceneSync.ts`; calls from
+**Scope:** migration 0014; `SceneMeta` and schema changes; `worker/sceneSync.ts`; calls from
 `saveChapter` and `saveAsClaude`; the self-healing `listScenes` and the new listing shape; linking,
 unlinking and confirming (6.8); `in_text`-aware `PATCH` refusals; the one-time pairing and banner (7.2);
 the Scenes view card states, placeholders, **Add card**, **This is…** and **Open** (7.1, minus dragging

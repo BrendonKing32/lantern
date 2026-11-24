@@ -474,6 +474,69 @@ select {
   border: 1px solid var(--lamp);
   background: var(--night);
 }
+.act {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-top: 0.9rem;
+  border-top: 1px solid var(--rule);
+  padding-top: 0.35rem;
+}
+.chapters > .act:first-child {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+.act-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  cursor: pointer;
+}
+.act-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.act-title:hover .act-name {
+  color: var(--wick);
+}
+.act-meta {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.act .chapter-actions {
+  display: block;
+  opacity: 0.55;
+}
+.act:hover .chapter-actions,
+.act:focus-within .chapter-actions {
+  opacity: 1;
+}
+.add-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.add-row .add-chapter {
+  flex: 1;
+}
+.add-chapter:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .add-chapter {
   margin: 0.6rem 0 0;
   align-self: stretch;
@@ -1854,6 +1917,17 @@ select {
 }
 .scene-drafted {
   color: var(--sage);
+}
+.scene-planned {
+  color: var(--lamp);
+}
+.scene-placeholder {
+  border-style: dashed;
+}
+.scene-excerpt {
+  font: 400 1rem/1.5 var(--font-prose);
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
 }
 .scene-summary {
   flex: 1;

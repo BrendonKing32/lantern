@@ -16,7 +16,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ChapterMeta } from "../../shared/types";
+import type { Act, ChapterMeta } from "../../shared/types";
 
 const MAX_SYNOPSIS = 2000;
 
@@ -59,16 +59,19 @@ function gridKeys(order: () => string[]): KeyboardCoordinateGetter {
 
 interface Props {
   chapters: ChapterMeta[];
+  acts: Act[];
   wordsFor: (c: ChapterMeta) => number;
   selectedId: string | undefined;
   onOpen: (id: string) => void;
-  onReorder: (ids: string[]) => void;
+  /** The new order, the card moved and the card it was dropped on. */
+  onReorder: (ids: string[], movedId: string, overId: string) => void;
   onSynopsis: (id: string, synopsis: string) => void;
   onAdd: () => void;
 }
 
 /** Every chapter as an index card: drag to reorder, write a synopsis, open to write. */
-export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, onSynopsis, onAdd }: Props) {
+export function Corkboard({ chapters, acts, wordsFor, selectedId, onOpen, onReorder, onSynopsis, onAdd }: Props) {
+  const actTitle = new Map(acts.map((a) => [a.id, a.title]));
   const ids = useRef<string[]>([]);
   ids.current = chapters.map((c) => c.id);
   const [coordinateGetter] = useState(() => gridKeys(() => ids.current));
@@ -81,13 +84,13 @@ export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, o
     if (!over || active.id === over.id) return;
     const from = chapters.findIndex((c) => c.id === active.id);
     const to = chapters.findIndex((c) => c.id === over.id);
-    onReorder(arrayMove(chapters, from, to).map((c) => c.id));
+    onReorder(arrayMove(chapters, from, to).map((c) => c.id), String(active.id), String(over.id));
   };
 
   return (
     <section className="board" aria-label="Corkboard">
       <p className="board-hint">
-        Drag cards to reorder chapters. Click a synopsis to write one; open a card to write the chapter.
+        Drag cards to reorder chapters; a card dropped on another joins that card's act. Click a synopsis to write one; open a card to write the chapter.
       </p>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={chapters.map((c) => c.id)} strategy={rectSortingStrategy}>
@@ -97,6 +100,7 @@ export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, o
                 key={c.id}
                 chapter={c}
                 number={i + 1}
+                act={c.act_id ? actTitle.get(c.act_id) : undefined}
                 words={wordsFor(c)}
                 selected={c.id === selectedId}
                 onOpen={onOpen}
@@ -118,13 +122,15 @@ export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, o
 interface CardProps {
   chapter: ChapterMeta;
   number: number;
+  /** The act's title, shown on the card. */
+  act?: string;
   words: number;
   selected: boolean;
   onOpen: (id: string) => void;
   onSynopsis: (id: string, synopsis: string) => void;
 }
 
-function Card({ chapter, number, words, selected, onOpen, onSynopsis }: CardProps) {
+function Card({ chapter, number, act, words, selected, onOpen, onSynopsis }: CardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: chapter.id });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(chapter.synopsis);
@@ -205,7 +211,10 @@ function Card({ chapter, number, words, selected, onOpen, onSynopsis }: CardProp
       )}
 
       <footer className="card-foot">
-        <span>{words.toLocaleString()} {words === 1 ? "word" : "words"}</span>
+        <span>
+          {act && <span className="card-act">{act} · </span>}
+          {words.toLocaleString()} {words === 1 ? "word" : "words"}
+        </span>
         <button className="card-open" onClick={() => onOpen(chapter.id)} {...stop}>
           Open
         </button>

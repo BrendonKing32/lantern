@@ -13,7 +13,7 @@ import { z } from "zod";
 import { countWords } from "../../shared/wordcount";
 import type { BibleEntry, ChapterMeta, SceneMeta } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
-import { chapterKey, getChapterRow, MARKDOWN, MAX_CHAPTER_BYTES } from "../db";
+import { chapterKey, chapterPut, getChapterRow, MAX_CHAPTER_BYTES } from "../db";
 import type { Env } from "../env";
 import { createEntry, updateEntry } from "../handlers/bible";
 import { logClaudeChange } from "../handlers/claudeChanges";
@@ -21,6 +21,7 @@ import { createChapter, updateChapter } from "../handlers/chapters";
 import { snapshotBeforeSave } from "../handlers/history";
 import { createProjectScene, updateScene } from "../handlers/scenes";
 import { HttpError, now, type Handler, type Params } from "../http";
+import { afterChapterWrite } from "../sceneSync";
 
 const EDITS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } as const;
 const ADDS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
@@ -121,11 +122,12 @@ export async function saveAsClaude(env: Env, chapterId: string, baseVersion: num
     throw new EditError("Lantern couldn't keep a copy of the current text in History, so nothing was changed.");
   }
   try {
-    await env.BUCKET.put(chapterKey(row.project_id, row.id), content, MARKDOWN);
+    await chapterPut(env, row, content, baseVersion + 1);
   } catch (e) {
     await rollBack();
     throw e;
   }
+  await afterChapterWrite(env, row, content, baseVersion + 1);
   await env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id).run();
   return {
     version: baseVersion + 1, word_count: words, previous_word_count: row.word_count,

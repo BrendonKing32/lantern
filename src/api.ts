@@ -102,8 +102,17 @@ export const api = {
   restoreChapter: (id: string) => request(schema.chapterMeta, "POST", `/api/chapters/${id}/restore`),
   createChapter: (projectId: string, title: string) =>
     request(schema.chapterMeta, "POST", `/api/projects/${projectId}/chapters`, { title }),
-  reorder: (projectId: string, chapterIds: string[]) =>
-    request(schema.ok, "PUT", `/api/projects/${projectId}/order`, { chapterIds }),
+  /** The whole book in order; with `acts`, also every act in order and each chapter's act. */
+  reorder: (
+    projectId: string,
+    chapterIds: string[],
+    acts?: { actIds: string[]; chapterActs: Record<string, string | null> },
+  ) => request(schema.ok, "PUT", `/api/projects/${projectId}/order`, { chapterIds, ...acts }),
+  /** A new act; from `startChapterId` to the end of that chapter's act, or empty at the end. */
+  createAct: (projectId: string, title: string | undefined, startChapterId: string | null) =>
+    request(schema.outline, "POST", `/api/projects/${projectId}/acts`, { title, startChapterId }),
+  renameAct: (id: string, title: string) => request(schema.act, "PATCH", `/api/acts/${id}`, { title }),
+  deleteAct: (id: string) => request(schema.outline, "DELETE", `/api/acts/${id}`),
   getChapter: (id: string) => request(schema.chapterWithContent, "GET", `/api/chapters/${id}`),
   /** `snapshot` asks the server to keep the text being replaced in history. */
   saveChapter: (
@@ -133,12 +142,14 @@ export const api = {
     ),
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
     request(schema.chapterMeta, "PATCH", `/api/chapters/${id}`, patch),
-  scenes: (projectId: string) => request(array(schema.sceneMeta), "GET", `/api/projects/${projectId}/scenes`),
+  scenes: (projectId: string) => request(schema.sceneListing, "GET", `/api/projects/${projectId}/scenes`),
   createScene: (projectId: string, chapterId: string | null) =>
     request(schema.sceneMeta, "POST", `/api/projects/${projectId}/scenes`, { chapterId }),
   updateScene: (
     id: string,
-    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">>,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">> & {
+      link?: { passage_index: number }; unlink?: true; confirm?: true;
+    },
   ) => request(schema.sceneMeta, "PATCH", `/api/scenes/${id}`, patch),
   deleteScene: (id: string) => request(schema.ok, "DELETE", `/api/scenes/${id}`),
   reorderScenes: (projectId: string, chapterId: string | null, sceneIds: string[]) =>
