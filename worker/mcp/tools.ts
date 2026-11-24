@@ -1,14 +1,15 @@
-// The tools Claude sees when Lantern is added as a connector. Read-only:
-// nothing here writes to D1 or R2.
+// The read tools Claude sees when Lantern is added as a connector.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { BibleEntry, ChapterMeta, SceneMeta, Snapshot } from "../../shared/types";
+import { splitScenes } from "../../shared/scenes";
+import type { BibleEntry, ChapterMeta, Snapshot } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
-import { CHAPTER_COLS, chapterKey, getChapterRow, requireProject, snapshotKey } from "../db";
+import { CHAPTER_COLS, chapterKey, chapterTextVersion, getChapterRow, reconcileChapter, requireProject, snapshotKey } from "../db";
 import type { Env } from "../env";
 import { listActs } from "../handlers/acts";
 import { BIBLE_COLS, toEntry, type BibleRow } from "../handlers/bible";
 import { draftRow, readClaudeDraft } from "../handlers/claudeDrafts";
+import { sceneListing } from "../handlers/scenes";
 import { HttpError } from "../http";
 
 /** Longest slice of a chapter returned by one read_chapter call. */
@@ -42,6 +43,17 @@ function sliced(content: string, offset: number) {
     ? `characters ${offset}–${end} of ${content.length}` + (end < content.length ? `; continue with offset ${end}` : "")
     : "";
   return { slice, range };
+}
+
+/** Translate a position in LF-normalized text back to the stored text. */
+function originalOffset(text: string, normalizedOffset: number): number {
+  let normalized = 0;
+  for (let original = 0; original < text.length; original++) {
+    if (normalized === normalizedOffset) return original;
+    if (text[original] === "\r" && text[original + 1] === "\n") original++;
+    normalized++;
+  }
+  return text.length;
 }
 
 /** Literal, line-by-line matches across a book, in reading order. */
@@ -117,20 +129,15 @@ export function registerTools(server: McpServer, env: Env) {
     },
     async ({ novel_id }) => {
       const project = await requireProject(env, novel_id);
-      const [list, acts, scenesResult] = await Promise.all([
-        chapters(env, novel_id),
+      const [acts, { listing, chapters: snapshots }] = await Promise.all([
         listActs(env, novel_id),
-        env.DB.prepare(
-          `SELECT id, chapter_id, title, summary, pov, location, status, position
-             FROM scenes WHERE project_id = ? ORDER BY position`,
-        )
-          .bind(novel_id)
-          .all<Omit<SceneMeta, "project_id" | "created_at" | "updated_at">>(),
+        sceneListing(env, novel_id),
       ]);
+      const list = snapshots.map(({ chapter }) => chapter);
       const scenesByChapter = new Map<string | null, unknown[]>();
-      for (const { chapter_id, position: _, ...scene } of scenesResult.results) {
+      for (const { id, chapter_id, title, summary, pov, location, status, in_text, word_count, passage_index } of listing.scenes) {
         const list = scenesByChapter.get(chapter_id) ?? [];
-        list.push(scene);
+        list.push({ id, title, summary, pov, location, status, in_text, word_count, passage_index });
         scenesByChapter.set(chapter_id, list);
       }
       const actTitle = new Map(acts.map((a) => [a.id, a.title]));
@@ -150,6 +157,8 @@ export function registerTools(server: McpServer, env: Env) {
           updated_at: c.updated_at,
           act: c.act_id ? (actTitle.get(c.act_id) ?? null) : null,
           scenes: scenesByChapter.get(c.id) ?? [],
+          uncarded_passages: listing.placeholders.filter((p) => p.chapter_id === c.id)
+            .map(({ passage_index, words, excerpt }) => ({ passage_index, words, excerpt })),
         })),
         acts: acts.map((a) => ({
           id: a.id,
@@ -170,21 +179,48 @@ export function registerTools(server: McpServer, env: Env) {
         "[[Name]] and [[Name|shown words]] are links to story guide " +
         `entries. Long chapters come back in slices of ${READ_LIMIT.toLocaleString("en-US")} characters; ` +
         "pass the offset the reply gives to read on. If Claude's draft of the chapter is waiting for the " +
-        "author, the reply says so; read it with read_draft.",
+        "author, the reply says so; read it with read_draft. Give scene_id to read only that scene's passage from the chapter, not the draft.",
       inputSchema: {
         chapter_id: z.string().describe("From get_outline"),
+        scene_id: z.string().optional().describe("An in-text scene from this chapter"),
         offset: z.number().int().min(0).optional().describe("Character offset to start from (default 0)"),
       },
       annotations: READ_ONLY,
     },
-    async ({ chapter_id, offset = 0 }) => {
-      const row = await getChapterRow(env, chapter_id);
-      const content = await chapterText(env, row);
-      const draft = await draftRow(env, row.id);
+    async ({ chapter_id, scene_id, offset = 0 }) => {
+      let row = await reconcileChapter(env, await getChapterRow(env, chapter_id));
+      let content: string;
+      let passageIndex: number | null = null;
+      if (scene_id) {
+        const { listing, chapters: snapshots } = await sceneListing(env, row.project_id);
+        const scene = listing.scenes.find((s) => s.id === scene_id && s.chapter_id === chapter_id);
+        if (!scene?.in_text || scene.passage_index === null) throw new HttpError(400, "That scene is not in this chapter's text");
+        const snapshot = snapshots.find((c) => c.chapter.id === chapter_id);
+        if (!snapshot) throw new HttpError(404, "Chapter not found");
+        const current = await env.BUCKET.get(chapterKey(row.project_id, row.id));
+        const originalText = current ? await current.text() : "";
+        if (snapshot.textVersion !== snapshot.chapter.version ||
+            chapterTextVersion(current, snapshot.chapter.version) !== snapshot.textVersion ||
+            originalText.replace(/\r\n?/g, "\n") !== snapshot.text) {
+          throw new HttpError(409, "The chapter changed while reading the scene. Read it again.");
+        }
+        row = snapshot.chapter;
+        passageIndex = scene.passage_index;
+        const passage = splitScenes(snapshot.text, row.title)[passageIndex];
+        if (!passage) throw new HttpError(409, "The scene changed while reading. Read it again.");
+        content = originalText.slice(
+          originalOffset(originalText, passage.start),
+          originalOffset(originalText, passage.end),
+        );
+      } else {
+        content = await chapterText(env, row);
+      }
       const { slice, range } = sliced(content, offset);
+      const draft = await draftRow(env, row.id);
       const header = [
         `# ${row.title}`,
         `chapter_id: ${row.id} · version ${row.version} · ${row.word_count} words · saved ${row.updated_at}`,
+        passageIndex !== null ? `scene_id: ${scene_id} · passage_index: ${passageIndex}` : "",
         draft
           ? `Claude's draft of this chapter is waiting for the author to accept it (draft version ${draft.version}, ` +
             `${draft.word_count} words). Chapter edits go into that draft: read it with read_draft.`

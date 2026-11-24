@@ -27,7 +27,7 @@ vi.mock("./local", () => ({
 
 import { ApiError } from "./api";
 import { DraftStorageError } from "./local";
-import { draftReadProblem, syncDrafts } from "./sync";
+import { draftReadProblem, moveRetryDelay, syncDrafts } from "./sync";
 
 const draft = { chapterId: "chapter-1", content: "A draft.", baseVersion: 4, savedAt: 123 };
 
@@ -75,6 +75,22 @@ describe("offline draft sync", () => {
 
     expect(mocks.draftsClearIf).not.toHaveBeenCalled();
     expect(mocks.chapterWrite).not.toHaveBeenCalled();
+  });
+
+  it("keeps a locked draft and retries it after the requested delay", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.saveChapter.mockRejectedValueOnce(new ApiError(423, "moving", { retryAfter: 3 }))
+        .mockResolvedValue({ version: 5, word_count: 2, updated_at: "now" });
+      await syncDrafts();
+      expect(mocks.draftsClearIf).not.toHaveBeenCalled();
+      expect(moveRetryDelay(new ApiError(423, "moving", { retryAfter: 3 }))).toBe(3000);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mocks.saveChapter).toHaveBeenCalledTimes(2);
+      expect(mocks.draftsClearIf).toHaveBeenCalledWith(draft.chapterId, draft.content);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports a storage failure instead of treating it as an empty queue", async () => {

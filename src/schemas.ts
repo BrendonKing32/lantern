@@ -29,7 +29,7 @@ import {
   type SnapshotWithContent,
   type Stats,
 } from "../shared/types";
-import { array, boolean, type Check, literal, nullable, number, object, optional, string, tagged } from "./validate";
+import { array, boolean, type Check, literal, nullable, number, object, optional, ShapeError, string, tagged } from "./validate";
 
 export const ok = object({ ok: literal(true) });
 
@@ -234,6 +234,19 @@ export const sceneMeta: Check<SceneMeta> = object({
 export const sceneListing: Check<SceneListing> = object({
   scenes: array(sceneMeta),
   placeholders: array(object({ chapter_id: string, passage_index: number, words: number, excerpt: string })),
+});
+
+const passageIndex: Check<number> = (value, path) => {
+  const index = number(value, path);
+  if (!Number.isInteger(index) || index < 0) throw new ShapeError(path, "a non-negative integer", value);
+  return index;
+};
+
+export const sceneMoveResult = object({
+  from: object({ version: number, word_count: number }),
+  to: object({ version: number, word_count: number }),
+  scene: sceneMeta,
+  from_passage_index: passageIndex,
 });
 
 const snapshotFields = {

@@ -4,7 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { api, ApiError, describeError } from "../api";
 import { drafts } from "../local";
-import { isNetworkError, loadChapter, openEditors, rememberSaved } from "../sync";
+import { isNetworkError, loadChapter, moveRetryDelay, openEditors, rememberSaved } from "../sync";
 import { HistoryPanel } from "./HistoryPanel";
 import { ClaudeDraftPanel } from "./ClaudeDraftPanel";
 import { basicSetup, proseExtensions } from "../editorSetup";
@@ -318,6 +318,11 @@ export function ChapterEditor({
           status("offline");
           schedule(RETRY_DELAY);
         }
+      } else if (e instanceof ApiError && e.status === 423) {
+        saveAgain.current = false;
+        status(draftStorageFailed.current ? "error" : "saving",
+          draftStorageFailed.current ? "This draft isn't saved on this device. Keep this page open while Lantern retries." : undefined);
+        schedule(moveRetryDelay(e));
       } else if (e instanceof ApiError && e.status === 401) {
         if (draftStorageFailed.current) {
           status("error", `This draft isn't saved on this device. ${describeError(e)}`);

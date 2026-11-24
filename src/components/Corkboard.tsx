@@ -16,7 +16,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { Act, ChapterMeta } from "../../shared/types";
+import type { Act, ChapterMeta, SceneMeta } from "../../shared/types";
 
 const MAX_SYNOPSIS = 2000;
 
@@ -60,6 +60,7 @@ function gridKeys(order: () => string[]): KeyboardCoordinateGetter {
 interface Props {
   chapters: ChapterMeta[];
   acts: Act[];
+  scenes: SceneMeta[];
   wordsFor: (c: ChapterMeta) => number;
   selectedId: string | undefined;
   onOpen: (id: string) => void;
@@ -70,7 +71,7 @@ interface Props {
 }
 
 /** Every chapter as an index card: drag to reorder, write a synopsis, open to write. */
-export function Corkboard({ chapters, acts, wordsFor, selectedId, onOpen, onReorder, onSynopsis, onAdd }: Props) {
+export function Corkboard({ chapters, acts, scenes, wordsFor, selectedId, onOpen, onReorder, onSynopsis, onAdd }: Props) {
   const actTitle = new Map(acts.map((a) => [a.id, a.title]));
   const ids = useRef<string[]>([]);
   ids.current = chapters.map((c) => c.id);
@@ -101,6 +102,8 @@ export function Corkboard({ chapters, acts, wordsFor, selectedId, onOpen, onReor
                 chapter={c}
                 number={i + 1}
                 act={c.act_id ? actTitle.get(c.act_id) : undefined}
+                scenes={scenes.filter((s) => s.chapter_id === c.id && s.in_text && s.passage_index !== null)
+                  .sort((a, b) => a.passage_index! - b.passage_index!)}
                 words={wordsFor(c)}
                 selected={c.id === selectedId}
                 onOpen={onOpen}
@@ -124,13 +127,14 @@ interface CardProps {
   number: number;
   /** The act's title, shown on the card. */
   act?: string;
+  scenes: SceneMeta[];
   words: number;
   selected: boolean;
   onOpen: (id: string) => void;
   onSynopsis: (id: string, synopsis: string) => void;
 }
 
-function Card({ chapter, number, act, words, selected, onOpen, onSynopsis }: CardProps) {
+function Card({ chapter, number, act, scenes, words, selected, onOpen, onSynopsis }: CardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: chapter.id });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(chapter.synopsis);
@@ -208,6 +212,18 @@ function Card({ chapter, number, act, words, selected, onOpen, onSynopsis }: Car
         >
           <span className="card-synopsis-text">{chapter.synopsis.trim() || "Add a synopsis"}</span>
         </button>
+      )}
+
+      {scenes.length > 0 && (
+        <ul className="card-scenes" aria-label={`Scenes in ${chapter.title}`}>
+          {scenes.slice(0, 6).map((scene) => (
+            <li key={scene.id}>
+              <span>{scene.title}</span>
+              <span>{scene.word_count.toLocaleString()} {scene.word_count === 1 ? "word" : "words"}</span>
+            </li>
+          ))}
+          {scenes.length > 6 && <li>+{scenes.length - 6} more</li>}
+        </ul>
       )}
 
       <footer className="card-foot">

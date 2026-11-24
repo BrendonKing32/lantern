@@ -162,7 +162,8 @@ When you connect, you choose what Claude may do:
   History, and search the text.
 - **Read and edit:** also draft changes to chapter text (exact passages, or adding to the
   end), add chapters, rename chapters and change synopses, and add or change story guide
-  entries and scene cards. Nothing can be deleted through the connector.
+  and scene cards. Claude can also use `move_scene` to move in-text scenes with their passages,
+  keeping a copy in **History**. Nothing can be deleted through the connector.
 
 Connector calls are part of your claude.ai plan and don't use the API key or the limits above.
 
@@ -291,17 +292,20 @@ app and private API protected.
   own before its first chapter (in EPUB's contents too); the Markdown export files chapters in
   a folder per act.
 - **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
-  index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
+  index card with its title, synopsis, word count and up to six in-text scenes with their word counts.
+  Drag cards (or Space and the arrow keys)
   to reorder the book (a card dropped on another joins that card's act), click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
   **Open** a card to write that chapter.
 - **Scenes:** the **Scenes** view shows planned cards and cards matched to passages between
   scene breaks. In-text cards show their word counts and excerpts; **Open** takes you to the
   passage in **Write**. For a passage with no card, use **Add card** or **This is…** to link
   a planned card. Check suggested matches with **Looks right** or **Not this one**.
-  Drag an in-text card within its chapter, or use **Up** and **Down**, to move its passage
-  with it. Lantern saves drafts first; moving needs a connection, and **Undo** or **History**
-  can reverse a move. Edit summaries, POV and locations without changing chapter text.
-  Moving an in-text card to another chapter requires moving its text in the editor first.
+  Drag an in-text card within its chapter or into another chapter to move its passage
+  with it. Drop on a passage to insert before it, or on the chapter to add at the end.
+  Use **Up** and **Down** to reorder within a chapter. Lantern saves both chapters' drafts first;
+  moving needs a connection, and **Undo** or **History** can reverse a move. To take a scene
+  out of a chapter without placing it in another, cut its text in the editor. Edit summaries,
+  POV and locations without changing chapter text.
   In **Write**, scene labels show each passage's card; click a label to see its notes beside
   the page. Turn **Scene labels** on or off under **More** on this device. Press
   ⌘/Ctrl+Shift+Enter to insert a scene break in the chapter's usual style.

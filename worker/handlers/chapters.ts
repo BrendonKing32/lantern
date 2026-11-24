@@ -1,6 +1,6 @@
 import { countWords } from "../../shared/wordcount";
 import type { ChapterMeta, DeletedChapter, SnapshotReason } from "../../shared/types";
-import { chapterKey, chapterPut, getChapterRow, insertChapter, lastActId, MAX_CHAPTER_BYTES, requireProject } from "../db";
+import { assertChapterUnlocked, chapterKey, chapterMoveToken, chapterPut, getChapterRow, insertChapter, lastActId, MAX_CHAPTER_BYTES, reconcileChapter, requireProject } from "../db";
 import type { Env } from "../env";
 import { body, cleanTitle, HttpError, isDay, json, now, type Handler } from "../http";
 import { snapshotBeforeSave } from "./history";
@@ -50,7 +50,7 @@ export const createChapter: Handler = async (req, env, p) => {
 };
 
 export const getChapter: Handler = async (_req, env, p) => {
-  const row = await getChapterRow(env, p.id);
+  const row = await reconcileChapter(env, await getChapterRow(env, p.id));
   const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
   const content = obj ? await obj.text() : "";
   return json({ ...row, content });
@@ -61,7 +61,14 @@ export async function writeChapter(
   env: Env, row: ChapterMeta, content: string, baseVersion: number, reason: SnapshotReason,
   options: { snapshotContent?: string; sceneSnapshot?: string } = {},
 ): Promise<{ version: number; word_count: number; updated_at: string }> {
-  if (row.version !== baseVersion) throw new HttpError(409, "conflict", { version: row.version });
+  await assertChapterUnlocked(env, row.id);
+  const token = await chapterMoveToken(env, row.id);
+  const originalVersion = row.version;
+  row = await reconcileChapter(env, row);
+  await assertChapterUnlocked(env, row.id);
+  if (row.version !== originalVersion || row.version !== baseVersion) {
+    throw new HttpError(409, "conflict", { version: row.version });
+  }
   const ts = now();
   const words = countWords(content);
   const guard = options.sceneSnapshot === undefined ? "" : ` AND
@@ -69,12 +76,14 @@ export async function writeChapter(
        FROM (SELECT id, position, in_text, anchor_head, anchor_tail FROM scenes WHERE chapter_id = ? ORDER BY id)) = ?`;
   const claim = await env.DB.prepare(
     `UPDATE chapters SET version = version + 1, word_count = ?, updated_at = ?
-      WHERE id = ? AND version = ? AND deleted_at IS NULL${guard}`,
-  ).bind(words, ts, row.id, baseVersion, ...(options.sceneSnapshot === undefined ? [] : [row.id, options.sceneSnapshot])).run();
+      WHERE id = ? AND version = ? AND moving_until IS ? AND deleted_at IS NULL
+        AND (moving_until IS NULL OR moving_until <= ?)${guard}`,
+  ).bind(words, ts, row.id, baseVersion, token, ts, ...(options.sceneSnapshot === undefined ? [] : [row.id, options.sceneSnapshot])).run();
   if (!claim.meta.changes) {
+    await assertChapterUnlocked(env, row.id);
     const current = await getChapterRow(env, row.id);
     if (current.version !== baseVersion) throw new HttpError(409, "conflict", { version: current.version });
-    throw new HttpError(409, "Scene list is out of date; reload and try again");
+    throw new HttpError(409, "Chapter or scene list is out of date; reload and try again");
   }
   const rollback = () => env.DB.prepare(
     "UPDATE chapters SET version = ?, word_count = ?, updated_at = ? WHERE id = ? AND version = ?",
@@ -126,7 +135,7 @@ export const saveChapter: Handler = async (req, env, p) => {
   if (new TextEncoder().encode(b.content).length > MAX_CHAPTER_BYTES) {
     throw new HttpError(413, "Chapter is too large (5 MB limit)");
   }
-  const row = await getChapterRow(env, p.id);
+  const row = await reconcileChapter(env, await getChapterRow(env, p.id));
   const { word_count: words, updated_at: ts } = await writeChapter(env, row, b.content, b.baseVersion, reason,
     { snapshotContent: typeof b.snapshotContent === "string" ? b.snapshotContent : undefined });
   await afterChapterWrite(env, row, b.content, b.baseVersion + 1);
@@ -154,17 +163,32 @@ export const saveChapter: Handler = async (req, env, p) => {
 
 export const updateChapter: Handler = async (req, env, p) => {
   const row = await getChapterRow(env, p.id);
+  await assertChapterUnlocked(env, row.id);
   const b = await body<{ title?: string; synopsis?: string }>(req);
   const title = b.title === undefined ? row.title : cleanTitle(b.title, row.title);
   const synopsis = typeof b.synopsis === "string" ? b.synopsis.slice(0, 2000) : row.synopsis;
-  await env.DB.prepare("UPDATE chapters SET title = ?, synopsis = ? WHERE id = ?")
-    .bind(title, synopsis, row.id)
+  const result = await env.DB.prepare(
+    "UPDATE chapters SET title = ?, synopsis = ? WHERE id = ? AND deleted_at IS NULL AND (moving_until IS NULL OR moving_until <= ?)",
+  )
+    .bind(title, synopsis, row.id, now())
     .run();
+  if (!result.meta.changes) {
+    await assertChapterUnlocked(env, row.id);
+    throw new HttpError(409, "Chapter changed; reload and try again");
+  }
   return json({ ...row, title, synopsis });
 };
 
 export const deleteChapter: Handler = async (_req, env, p) => {
   const row = await getChapterRow(env, p.id);
-  await env.DB.prepare("UPDATE chapters SET deleted_at = ? WHERE id = ?").bind(now(), row.id).run();
+  await assertChapterUnlocked(env, row.id);
+  const ts = now();
+  const result = await env.DB.prepare(
+    "UPDATE chapters SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL AND (moving_until IS NULL OR moving_until <= ?)",
+  ).bind(ts, row.id, ts).run();
+  if (!result.meta.changes) {
+    await assertChapterUnlocked(env, row.id);
+    throw new HttpError(409, "Chapter changed; reload and try again");
+  }
   return json({ ok: true });
 };

@@ -2082,6 +2082,23 @@ select {
   text-decoration: underline;
   text-decoration-color: var(--card-rule);
 }
+.card-scenes {
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0 0;
+  border-top: 1px solid var(--card-line);
+  color: var(--card-faint);
+  font-size: 0.75rem;
+  list-style: none;
+}
+.card-scenes li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+}
+.card-scenes li span:last-child {
+  flex: none;
+}
 .card-synopsis,
 .card-synopsis-input {
   flex: 1;

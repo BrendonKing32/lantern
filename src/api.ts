@@ -157,6 +157,8 @@ export const api = {
     request(schema.ok, "PUT", `/api/projects/${projectId}/scenes/order`, { chapterId, sceneIds }),
   arrangeScenes: (chapterId: string, baseVersion: number, sceneIds: string[]) =>
     request(schema.saveResult, "PUT", `/api/chapters/${chapterId}/scenes/arrangement`, { baseVersion, sceneIds }),
+  moveScene: (id: string, toChapterId: string, beforePassageIndex: number | null, baseVersions: { from: number; to: number }, expectedFromChapterId?: string) =>
+    request(schema.sceneMoveResult, "POST", `/api/scenes/${id}/move`, { toChapterId, beforePassageIndex, baseVersions, expectedFromChapterId }),
   deleteChapter: (id: string) => request(schema.ok, "DELETE", `/api/chapters/${id}`),
   listHistory: (chapterId: string) => request(array(schema.snapshot), "GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>
