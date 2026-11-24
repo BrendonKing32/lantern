@@ -106,6 +106,77 @@ describe("matching scenes to text", () => {
     log.mockRestore();
   });
 
+  it("does not match old R2 text against a claimed version and repairs a failed save match", async () => {
+    const card = await create("c");
+    const key = "projects/p/chapters/c.md";
+    expect((await save("c", "Old prose", 0)).status).toBe(200);
+    expect((await bucket.get(key))?.customMetadata).toEqual({ version: "1" });
+    const planned = await create("c");
+
+    let writing!: () => void;
+    let resume!: () => void;
+    const writeStarted = new Promise<void>((resolve) => { writing = resolve; });
+    const proceed = new Promise<void>((resolve) => { resume = resolve; });
+    const put = bucket.put.bind(bucket);
+    bucket.put = async (putKey, value, options) => {
+      if (putKey === key) {
+        writing();
+        await proceed;
+      }
+      return put(putKey, value, options);
+    };
+    const saving = save("c", "New prose with more words", 1);
+    await writeStarted;
+    expect(version("c")).toEqual({ version: 2, scenes_version: 1 });
+    await list();
+    expect(version("c")).toEqual({ version: 2, scenes_version: 1 });
+    expect(row(card.id)).toMatchObject({ anchor_head: "old prose", word_count: 2 });
+    expect((await request("PATCH", `/api/scenes/${planned.id}`, { link: { passage_index: 0 } })).status).toBe(409);
+
+    const prepare = db.prepare;
+    db.prepare = (sql) => {
+      if (sql.includes("SELECT scenes_version FROM chapters")) throw new Error("sync unavailable");
+      return prepare(sql);
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    resume();
+    expect((await saving).status).toBe(200);
+    expect((await bucket.get(key))?.customMetadata).toEqual({ version: "2" });
+    expect(version("c")).toEqual({ version: 2, scenes_version: 1 });
+    db.prepare = prepare;
+    expect((await list()).scenes.find((scene) => scene.id === card.id)).toMatchObject({ word_count: 5 });
+    expect(row(card.id).anchor_head).toBe("new prose with more words");
+    expect(version("c")).toEqual({ version: 2, scenes_version: 2 });
+    log.mockRestore();
+  });
+
+  it("repairs legacy chapter objects without version metadata", async () => {
+    const card = await create("c");
+    db.raw.prepare("UPDATE chapters SET version = 1 WHERE id = 'c'").run();
+    bucket.objects.set("projects/p/chapters/c.md", "Legacy chapter text");
+    expect((await list()).scenes.find((scene) => scene.id === card.id)).toMatchObject({ in_text: true, word_count: 3 });
+    expect(version("c")).toEqual({ version: 1, scenes_version: 1 });
+  });
+
+  it("does not rematch older text during the cross-chapter repair pass", async () => {
+    const card = await create("c");
+    await save("c", "Current text", 0);
+    db.raw.prepare("UPDATE chapters SET version = 2, scenes_version = 2 WHERE id = 'c'").run();
+    db.raw.prepare("UPDATE chapters SET version = 1 WHERE id = 'd'").run();
+    await bucket.put("projects/p/chapters/c.md", "Older unrelated text", { customMetadata: { version: "1" } });
+    await list();
+    expect(row(card.id)).toMatchObject({ in_text: 1, anchor_head: "current text", word_count: 2 });
+  });
+
+  it("does not treat invalid version metadata as a legacy object", async () => {
+    const card = await create("c");
+    db.raw.prepare("UPDATE chapters SET version = 1 WHERE id = 'c'").run();
+    await bucket.put("projects/p/chapters/c.md", "Unknown version", { customMetadata: { version: "invalid" } });
+    await list();
+    expect(row(card.id).in_text).toBe(0);
+    expect(version("c")).toEqual({ version: 1, scenes_version: 0 });
+  });
+
   it("leaves the lower card planned on merge and follows a cut to another chapter", async () => {
     const a = await create("c");
     const b = await create("c");
@@ -143,5 +214,20 @@ describe("matching scenes to text", () => {
     const card = await create("c");
     await saveAsClaude(env, "c", 0, "Claude writes here.");
     expect(row(card.id)).toMatchObject({ in_text: 1, word_count: 3 });
+    expect((await bucket.get("projects/p/chapters/c.md"))?.customMetadata).toEqual({ version: "1" });
+  });
+
+  it("writes version zero when creating a chapter and retains metadata after a failed save", async () => {
+    const created = await request("POST", "/api/projects/p/chapters", { title: "New chapter" });
+    expect(created.status).toBe(201);
+    const chapter = await created.json() as { id: string };
+    const key = `projects/p/chapters/${chapter.id}.md`;
+    expect((await bucket.get(key))?.customMetadata).toEqual({ version: "0" });
+    bucket.failPuts = new RegExp(`${chapter.id}\\.md$`);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await save(chapter.id, "Not saved", 0)).status).toBe(500);
+    expect(version(chapter.id)).toEqual({ version: 0, scenes_version: 0 });
+    expect((await bucket.get(key))?.customMetadata).toEqual({ version: "0" });
+    log.mockRestore();
   });
 });

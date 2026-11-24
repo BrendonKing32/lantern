@@ -1,6 +1,6 @@
 import { countWords } from "../../shared/wordcount";
 import type { DeletedChapter, SnapshotReason } from "../../shared/types";
-import { chapterKey, getChapterRow, insertChapter, lastActId, MARKDOWN, MAX_CHAPTER_BYTES, requireProject } from "../db";
+import { chapterKey, chapterPut, getChapterRow, insertChapter, lastActId, MAX_CHAPTER_BYTES, requireProject } from "../db";
 import { body, cleanTitle, HttpError, isDay, json, now, type Handler } from "../http";
 import { snapshotBeforeSave } from "./history";
 import { afterChapterWrite } from "../sceneSync";
@@ -119,7 +119,7 @@ export const saveChapter: Handler = async (req, env, p) => {
   }
 
   try {
-    await env.BUCKET.put(chapterKey(row.project_id, row.id), b.content, MARKDOWN);
+    await chapterPut(env, row, b.content, b.baseVersion + 1);
   } catch (e) {
     // Roll the version back so the client's next attempt still lines up.
     await env.DB.prepare(

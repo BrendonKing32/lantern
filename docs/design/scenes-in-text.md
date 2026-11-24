@@ -296,8 +296,10 @@ neighbouring paired passage), the UI shows "Merged into *‹title›*" for a day
 ### 6.3 Self-healing listing
 
 `listScenes`: for every chapter of the novel whose `scenes_version < version`, read its text from R2
-and run `afterChapterWrite` before answering. To fill `excerpt`, `passage_index` and `placeholders`, the
-listing needs the passages of every chapter. Read every chapter of the novel that has at least one
+and run `afterChapterWrite` before answering.
+The match uses the R2 object's version metadata, falling back to the D1 version for older objects without it.
+To fill `excerpt`, `passage_index` and `placeholders`, the listing needs the passages of every chapter.
+Read every chapter of the novel that has at least one
 scene row or one break (one R2 read each, in parallel with `Promise.all`), and split them. Books are at
 most a few dozen chapters, so this is acceptable. Don't add caching in this item.
 

@@ -13,7 +13,7 @@ import { z } from "zod";
 import { countWords } from "../../shared/wordcount";
 import type { BibleEntry, ChapterMeta, SceneMeta } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
-import { chapterKey, getChapterRow, MARKDOWN, MAX_CHAPTER_BYTES } from "../db";
+import { chapterKey, chapterPut, getChapterRow, MAX_CHAPTER_BYTES } from "../db";
 import type { Env } from "../env";
 import { createEntry, updateEntry } from "../handlers/bible";
 import { logClaudeChange } from "../handlers/claudeChanges";
@@ -122,7 +122,7 @@ export async function saveAsClaude(env: Env, chapterId: string, baseVersion: num
     throw new EditError("Lantern couldn't keep a copy of the current text in History, so nothing was changed.");
   }
   try {
-    await env.BUCKET.put(chapterKey(row.project_id, row.id), content, MARKDOWN);
+    await chapterPut(env, row, content, baseVersion + 1);
   } catch (e) {
     await rollBack();
     throw e;

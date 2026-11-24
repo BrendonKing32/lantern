@@ -1,6 +1,6 @@
 import { matchScenes, normalizeAnchor, normalizeText, splitScenes } from "../../shared/scenes";
 import type { SceneMeta, ScenePlaceholder } from "../../shared/types";
-import { chapterKey, getChapterRow, requireProject } from "../db";
+import { chapterKey, chapterTextVersion, getChapterRow, requireProject } from "../db";
 import type { Env } from "../env";
 import { body, cleanTitle, HttpError, json, newId, now, type Handler } from "../http";
 import { afterChapterWrite, matchCards, type SceneSyncRow } from "../sceneSync";
@@ -64,12 +64,13 @@ export const listScenes: Handler = async (_req, env, p) => {
     const chapter = await getChapterRow(env, state.id);
     const object = await env.BUCKET.get(chapterKey(p.id, state.id));
     const text = object ? await object.text() : "";
-    if (state.scenes_version < state.version) await afterChapterWrite(env, chapter, text, state.version);
-    return { chapter, text: normalizeText(text), passages: splitScenes(text, chapter.title), stale: state.scenes_version < state.version };
+    const textVersion = chapterTextVersion(object, chapter.version);
+    if (state.scenes_version < chapter.version && textVersion !== null) await afterChapterWrite(env, chapter, text, textVersion);
+    return { chapter, text: normalizeText(text), textVersion, passages: splitScenes(text, chapter.title), stale: state.scenes_version < chapter.version };
   }));
   if (chapters.some((chapter) => chapter.stale)) {
-    await Promise.all(chapters.filter(({ chapter, stale }) => !stale && chapter.version > 0)
-      .map(({ chapter, text }) => afterChapterWrite(env, chapter, text, chapter.version)));
+    await Promise.all(chapters.filter(({ chapter, stale, textVersion }) => !stale && chapter.version > 0 && textVersion !== null)
+      .map(({ chapter, text, textVersion }) => afterChapterWrite(env, chapter, text, textVersion!)));
   }
   const { results } = await env.DB.prepare(
     `SELECT ${SCENE_COLS} FROM scenes
@@ -187,9 +188,11 @@ export const updateScene: Handler = async (req, env, p) => {
     const chapter = await getChapterRow(env, chapterId);
     const object = await env.BUCKET.get(chapterKey(scene.project_id, chapterId));
     const text = object ? await object.text() : "";
+    const textVersion = chapterTextVersion(object, chapter.version);
+    if (textVersion !== chapter.version) throw new HttpError(409, "Chapter is changing; reload and try again");
     const state = await env.DB.prepare("SELECT scenes_version FROM chapters WHERE id = ?")
       .bind(chapter.id).first<{ scenes_version: number }>();
-    if (state && state.scenes_version < chapter.version) await afterChapterWrite(env, chapter, text, chapter.version);
+    if (state && state.scenes_version < chapter.version) await afterChapterWrite(env, chapter, text, textVersion);
     const passages = splitScenes(text, chapter.title);
     const rows = await env.DB.prepare(`SELECT ${SCENE_COLS} FROM scenes WHERE chapter_id = ? ORDER BY position`)
       .bind(chapterId).all<SceneRow>();
