@@ -78,3 +78,42 @@ export async function arrangeChapterScenes(
   }
   return result;
 }
+
+/** Flush both drafts and discard both cached chapters even if the move response is lost. */
+export async function moveSceneBetweenChapters(
+  sceneId: string, from: ChapterMeta, to: ChapterMeta, beforePassageIndex: number | null,
+  undo?: { projectId: string; destinationVersion: number },
+) {
+  const source = await flushForSceneMove(from);
+  const destination = await flushForSceneMove(to);
+  const listing = await api.scenes(undo?.projectId ?? from.project_id);
+  const scene = listing.scenes.find((item) => item.id === sceneId);
+  if (!scene?.in_text || scene.chapter_id !== from.id) {
+    throw new SceneMoveError("This scene moved elsewhere. Reload the scene list and try again.");
+  }
+  if (undo && destination.version !== undo.destinationVersion) {
+    throw new SceneMoveError(`The text in ${to.title} changed after the move. Use History to restore it instead.`);
+  }
+  if (!undo && beforePassageIndex !== null && destination.version !== to.version) {
+    throw new SceneMoveError(`The text in ${to.title} changed. Reload the scene list and try again.`);
+  }
+  await Promise.all([forgetChapter(from.id), forgetChapter(to.id)]);
+  let result: Awaited<ReturnType<typeof api.moveScene>>;
+  try {
+    result = await api.moveScene(sceneId, to.id, beforePassageIndex, {
+      from: source.version, to: destination.version,
+    }, from.id);
+  } finally {
+    await Promise.all([forgetChapter(from.id), forgetChapter(to.id)]);
+  }
+  await Promise.all([from, to].map(async (chapter) => {
+    try {
+      const fresh = await api.getChapter(chapter.id);
+      const version = chapter.id === from.id ? result.from.version : result.to.version;
+      if (fresh.version >= version) await chapters.restore(fresh);
+    } catch {
+      // The old text is already discarded; the next online open will fetch it.
+    }
+  }));
+  return result;
+}

@@ -3,7 +3,7 @@ import type { ChapterMeta } from "../shared/types";
 import { draftWriteFailed, draftWriteSucceeded, trackChapterActivity } from "./chapterActivity";
 
 const mocks = vi.hoisted(() => ({
-  getChapter: vi.fn(), saveChapter: vi.fn(), arrangeScenes: vi.fn(), scenes: vi.fn(),
+  getChapter: vi.fn(), saveChapter: vi.fn(), arrangeScenes: vi.fn(), moveScene: vi.fn(), scenes: vi.fn(),
   readDraft: vi.fn(), clearIf: vi.fn(), reopen: vi.fn(), writeChapter: vi.fn(),
   forget: vi.fn(), remember: vi.fn(),
 }));
@@ -11,7 +11,7 @@ vi.mock("./api", () => ({
   ApiError: class ApiError extends Error {
     constructor(public status: number, message: string, public data: unknown = null) { super(message); }
   },
-  api: { getChapter: mocks.getChapter, saveChapter: mocks.saveChapter, arrangeScenes: mocks.arrangeScenes, scenes: mocks.scenes },
+  api: { getChapter: mocks.getChapter, saveChapter: mocks.saveChapter, arrangeScenes: mocks.arrangeScenes, moveScene: mocks.moveScene, scenes: mocks.scenes },
   describeError: (e: unknown) => e instanceof Error ? e.message : "Can't reach Lantern.",
 }));
 vi.mock("./local", () => ({
@@ -23,7 +23,7 @@ vi.mock("./sync", () => ({
   forgetChapter: mocks.forget, rememberSaved: mocks.remember, openEditors: new Set<string>(),
 }));
 import { ApiError } from "./api";
-import { arrangeChapterScenes, flushForSceneMove } from "./sceneArrangement";
+import { arrangeChapterScenes, flushForSceneMove, moveSceneBetweenChapters } from "./sceneArrangement";
 import { openEditors } from "./sync";
 
 const chapter: ChapterMeta = { id: "c", project_id: "p", title: "First", synopsis: "", position: 0, word_count: 1, version: 1, updated_at: "", act_id: null };
@@ -143,5 +143,90 @@ describe("moving scenes", () => {
     await expect(arrangeChapterScenes(chapter, ["a", "b"], { projectId: "p", sceneIds: ["b", "a"] }))
       .rejects.toThrow("Scenes changed elsewhere. Reload the scene list");
     expect(mocks.arrangeScenes).not.toHaveBeenCalled();
+  });
+
+  it("flushes both chapters, uses fresh versions and invalidates both caches after an uncertain response", async () => {
+    const to = { ...chapter, id: "d", title: "Second", version: 9 };
+    mocks.getChapter.mockImplementation(async (id: string) => ({ ...(id === "c" ? chapter : to), version: id === "c" ? 7 : 9, content: "old" }));
+    mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "c", in_text: true }], placeholders: [] });
+    mocks.moveScene.mockRejectedValue(new TypeError("lost reply"));
+    await expect(moveSceneBetweenChapters("s", chapter, to, 1)).rejects.toThrow("lost reply");
+    expect(mocks.moveScene).toHaveBeenCalledWith("s", "d", 1, { from: 7, to: 9 }, "c");
+    expect(mocks.forget.mock.calls).toEqual([["c"], ["d"], ["c"], ["d"]]);
+  });
+
+  it("refuses a stale insertion index or a scene moved to another chapter", async () => {
+    const to = { ...chapter, id: "d", title: "Second", version: 3 };
+    mocks.getChapter.mockImplementation(async (id: string) => ({ ...(id === "c" ? chapter : to), version: id === "c" ? 7 : 4, content: "old" }));
+    mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "c", in_text: true }], placeholders: [] });
+    await expect(moveSceneBetweenChapters("s", chapter, to, 1)).rejects.toThrow("text in Second changed");
+    mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "elsewhere", in_text: true }], placeholders: [] });
+    await expect(moveSceneBetweenChapters("s", chapter, to, null)).rejects.toThrow("scene moved elsewhere");
+    expect(mocks.moveScene).not.toHaveBeenCalled();
+    expect(mocks.forget).not.toHaveBeenCalled();
+  });
+
+  it("does not use a drop index from before a destination draft was flushed", async () => {
+    const to = { ...chapter, id: "d", title: "Second", version: 3 };
+    const destinationDraft = { ...draft, chapterId: "d", baseVersion: 3 };
+    let saved = false;
+    let read = false;
+    mocks.getChapter.mockImplementation(async (id: string) => id === "c"
+      ? { ...chapter, version: 7, content: "old" }
+      : { ...to, version: saved ? 4 : 3, content: saved ? "new" : "old" });
+    mocks.readDraft.mockImplementation(async (id: string) => {
+      if (id !== "d" || read) return null;
+      read = true;
+      return destinationDraft;
+    });
+    mocks.saveChapter.mockImplementation(async () => { saved = true; return { ...result, version: 4 }; });
+    mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "c", in_text: true }], placeholders: [] });
+    await expect(moveSceneBetweenChapters("s", chapter, to, 1)).rejects.toThrow("text in Second changed");
+    expect(mocks.saveChapter).toHaveBeenCalledWith("d", "new", 3, { writtenAt: 123 });
+    expect(mocks.moveScene).not.toHaveBeenCalled();
+  });
+
+  it("refuses the whole move if the destination draft conflicts", async () => {
+    const to = { ...chapter, id: "d", title: "Second" };
+    mocks.readDraft.mockImplementation(async (id: string) => id === "d" ? { ...draft, chapterId: "d" } : null);
+    mocks.saveChapter.mockRejectedValue(new ApiError(409, "conflict", null));
+    await expect(moveSceneBetweenChapters("s", chapter, to, null)).rejects.toThrow("Save Second first");
+    expect(mocks.moveScene).not.toHaveBeenCalled();
+    expect(mocks.forget).not.toHaveBeenCalled();
+  });
+
+  it("undo checks the fresh scene location and original chapter version after flushing", async () => {
+    const to = { ...chapter, id: "d", title: "Second" };
+    mocks.getChapter.mockImplementation(async (id: string) => ({ ...(id === "c" ? chapter : to), version: id === "c" ? 8 : 10, content: "old" }));
+    mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "c", in_text: true }], placeholders: [] });
+    await expect(moveSceneBetweenChapters("s", to, chapter, 2, { projectId: "p", destinationVersion: 8 }))
+      .rejects.toThrow("scene moved elsewhere");
+    mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "d", in_text: true }], placeholders: [] });
+    await expect(moveSceneBetweenChapters("s", to, chapter, 2, { projectId: "p", destinationVersion: 7 }))
+      .rejects.toThrow("text in First changed");
+    expect(mocks.moveScene).not.toHaveBeenCalled();
+    mocks.moveScene.mockResolvedValue({ from: { version: 11, word_count: 1 }, to: { version: 9, word_count: 2 }, from_passage_index: 0 });
+    await moveSceneBetweenChapters("s", to, chapter, 2, { projectId: "p", destinationVersion: 8 });
+    expect(mocks.moveScene).toHaveBeenCalledWith("s", "c", 2, { from: 10, to: 8 }, "d");
+  });
+
+  it("refuses undo when flushing the original chapter changes its passage indices", async () => {
+    const from = { ...chapter, id: "d", title: "Second" };
+    let saved = false;
+    let read = false;
+    mocks.getChapter.mockImplementation(async (id: string) => id === "d"
+      ? { ...from, version: 10, content: "old" }
+      : { ...chapter, version: saved ? 9 : 8, content: saved ? "new" : "old" });
+    mocks.readDraft.mockImplementation(async (id: string) => {
+      if (id !== "c" || read) return null;
+      read = true;
+      return { ...draft, baseVersion: 8 };
+    });
+    mocks.saveChapter.mockImplementation(async () => { saved = true; return { ...result, version: 9 }; });
+    mocks.scenes.mockResolvedValue({ scenes: [{ id: "s", chapter_id: "d", in_text: true }], placeholders: [] });
+    await expect(moveSceneBetweenChapters("s", from, chapter, 2, { projectId: "p", destinationVersion: 8 }))
+      .rejects.toThrow("text in First changed");
+    expect(mocks.saveChapter).toHaveBeenCalledWith("c", "new", 8, { writtenAt: 123 });
+    expect(mocks.moveScene).not.toHaveBeenCalled();
   });
 });

@@ -140,6 +140,27 @@ export const openEditors = new Set<string>();
 export type SyncOutcome = "done" | "offline" | "storage-error" | "busy";
 
 let syncing = false;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+let retryAt = Infinity;
+
+export function moveRetryDelay(error: ApiError): number {
+  const seconds = error.data?.retryAfter;
+  return typeof seconds === "number" && Number.isFinite(seconds)
+    ? Math.max(1000, Math.min(60_000, Math.ceil(seconds * 1000)))
+    : 5000;
+}
+
+function retryDraftsAfter(delay: number) {
+  const when = Date.now() + delay;
+  if (when >= retryAt) return;
+  clearTimeout(retryTimer);
+  retryAt = when;
+  retryTimer = setTimeout(async () => {
+    retryAt = Infinity;
+    retryTimer = undefined;
+    if (await syncDrafts() === "busy") retryDraftsAfter(1000);
+  }, delay);
+}
 
 // Whether the last sync pass couldn't read this device's drafts, for the
 // notice that tells the writer (see SyncNotice). Clears on the next good read.
@@ -192,6 +213,7 @@ export async function syncDrafts(): Promise<SyncOutcome> {
         await rememberSaved(d.chapterId, d.content, res);
       } catch (e) {
         if (isNetworkError(e)) return "offline"; // still offline; try again later
+        if (e instanceof ApiError && e.status === 423) retryDraftsAfter(moveRetryDelay(e));
         // 409 (saved elsewhere), 404 (chapter deleted) and the like wait for the writer.
       }
     }
