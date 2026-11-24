@@ -54,6 +54,7 @@ export function normalizeText(markdown: string): string {
   return markdown.replace(/\r\n?/g, "\n");
 }
 
+/** Compare plain heading text using the same rule as chapter export. */
 export function isChapterTitle(headingText: string, chapterTitle: string): boolean {
   return stripLinks(headingText).trim().toLowerCase() === chapterTitle.trim().toLowerCase();
 }
@@ -174,7 +175,7 @@ export function splitScenes(markdown: string, chapterTitle?: string): Passage[] 
       if (
         chapterTitle !== undefined &&
         token.type === "heading" &&
-        headingText(token).toLowerCase() === chapterTitle.trim().toLowerCase()
+        isChapterTitle(headingText(token), chapterTitle)
       ) {
         titleHeading = { start: offset, end: offset + token.raw.length };
         titleLead = offset + token.raw.length;
@@ -343,7 +344,7 @@ export function insertPassage(
 ): string {
   const normalized = normalizeText(text);
   if (beforeIndex !== null) validatePassageIndex(passages, beforeIndex);
-  if (!normalized.trim()) return cleanPassageBody(normalizeText(body));
+  if (!normalized.trim()) return normalizeText(body);
 
   const prefix = passages[0]?.lead > passages[0]?.start
     ? normalized.slice(0, passages[0].lead)
