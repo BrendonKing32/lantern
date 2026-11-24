@@ -78,10 +78,13 @@ describe("which tools a connection gets", () => {
   it("keeps write tools away from read-only connections", async () => {
     const readOnly = (await (await connect(false)).listTools()).tools.map((t) => t.name);
     expect(readOnly).not.toContain("edit_chapter");
+    expect(readOnly).not.toContain("move_scene");
+    const refused = await (await connect(false)).callTool({ name: "move_scene", arguments: { scene_id: "s", base_versions: { from: 0 } } });
+    expect(refused.isError).toBe(true);
     const editing = (await (await connect(true)).listTools()).tools.map((t) => t.name);
     expect(editing).toEqual(expect.arrayContaining([
       "edit_chapter", "append_to_chapter", "create_chapter", "update_chapter_details",
-      "create_story_entry", "update_story_entry", "create_scene", "update_scene", "read_chapter",
+      "create_story_entry", "update_story_entry", "create_scene", "update_scene", "read_chapter", "move_scene",
     ]));
     expect(editing.some((n) => n.startsWith("delete"))).toBe(false);
   });
@@ -89,6 +92,125 @@ describe("which tools a connection gets", () => {
   it("tells Claude how to edit only when it may", async () => {
     expect((await connect(false)).getInstructions()).toContain("can read but not change");
     expect((await connect(true)).getInstructions()).toContain("Change only what the author asked for");
+  });
+});
+
+describe("scene connector", () => {
+  const api = (method: string, path: string, payload?: unknown) => worker.fetch(
+    new Request(`https://lantern.test${path}`, {
+      method, headers: payload === undefined ? {} : { "content-type": "application/json" },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    }), env,
+  );
+  const source = "First passage.\n\n***\n\nSecond passage.\n\n***\n\nUncarded passage.";
+  const destKey = `projects/${NOVEL}/chapters/ch-2.md`;
+  async function setup() {
+    const ts = "2026-11-01T00:00:00.000Z";
+    db.raw.prepare("INSERT INTO chapters (id, project_id, title, position, created_at, updated_at, scenes_version) VALUES ('ch-2', ?, 'Next', 1, ?, ?, 0)")
+      .run(NOVEL, ts, ts);
+    await bucket.put(destKey, "Destination.\n\n***\n\nNo card.", { customMetadata: { version: "0" } });
+    expect((await api("PUT", `/api/chapters/${CH}`, { content: source, baseVersion: 4 })).status).toBe(200);
+    const create = async (index: number) => {
+      const response = await api("POST", `/api/projects/${NOVEL}/scenes`, { chapterId: CH });
+      const scene = await response.json() as { id: string };
+      expect((await api("PATCH", `/api/scenes/${scene.id}`, { link: { passage_index: index } })).status).toBe(200);
+      return scene.id;
+    };
+    return { first: await create(0), second: await create(1) };
+  }
+
+  it("outlines matched scenes and placeholders, without anchors", async () => {
+    const { first, second } = await setup();
+    const result = await call("get_outline", { novel_id: NOVEL });
+    const outline = JSON.parse(textOf(result));
+    expect(outline.chapters[0].scenes).toEqual([
+      expect.objectContaining({ id: first, in_text: true, word_count: 2, passage_index: 0 }),
+      expect.objectContaining({ id: second, in_text: true, word_count: 2, passage_index: 1 }),
+    ]);
+    expect(outline.chapters[0].uncarded_passages).toEqual([{ passage_index: 2, words: 2, excerpt: "Uncarded passage." }]);
+    expect(textOf(result)).not.toContain("anchor_");
+  });
+
+  it("reads only a linked passage and rejects planned and wrong-chapter cards", async () => {
+    const { second } = await setup();
+    const result = await call("read_chapter", { chapter_id: CH, scene_id: second });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain("version 5");
+    expect(textOf(result)).toContain("passage_index: 1");
+    expect(textOf(result)).toContain("Second passage.");
+    expect(textOf(result)).not.toContain("First passage.");
+    expect(textOf(result)).not.toContain("Uncarded passage.");
+    expect((await call("read_chapter", { chapter_id: "ch-2", scene_id: second })).isError).toBe(true);
+    await api("PATCH", `/api/scenes/${second}`, { unlink: true });
+    expect((await call("read_chapter", { chapter_id: CH, scene_id: second })).isError).toBe(true);
+  });
+
+  it("reconciles an interrupted write before reading a scene", async () => {
+    const { second } = await setup();
+    await bucket.put(KEY, source, { customMetadata: { version: "6" } });
+    const result = await call("read_chapter", { chapter_id: CH, scene_id: second });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain("version 6");
+    expect(chapter().version).toBe(6);
+  });
+
+  it("reorders in the chapter and logs the move", async () => {
+    const { first, second } = await setup();
+    const result = await call("move_scene", { scene_id: second, before_passage_index: 0, base_versions: { from: 5 } });
+    expect(result.isError).toBeFalsy();
+    expect(bucket.objects.get(KEY)).toBe("Second passage.\n\n***\n\nUncarded passage.\n\n***\n\nFirst passage.");
+    expect(db.raw.prepare("SELECT action, target_kind, target_id FROM claude_changes").all())
+      .toEqual([{ action: "move_scene", target_kind: "scene", target_id: second }]);
+    expect(first).not.toBe(second);
+  });
+
+  it("moves across chapters before an uncarded passage and logs it", async () => {
+    const { second } = await setup();
+    const result = await call("move_scene", {
+      scene_id: second, to_chapter_id: "ch-2", before_passage_index: 1, base_versions: { from: 5, to: 0 },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(bucket.objects.get(destKey)).toBe("Destination.\n\n***\n\nSecond passage.\n\n***\n\nNo card.");
+    expect(db.raw.prepare("SELECT action, target_kind, target_id, chapter_id FROM claude_changes").get())
+      .toMatchObject({ action: "move_scene", target_kind: "scene", target_id: second, chapter_id: "ch-2" });
+  });
+
+  it("refuses stale versions and locked chapters without changing text", async () => {
+    const { second } = await setup();
+    const stale = await call("move_scene", { scene_id: second, base_versions: { from: 4 } });
+    expect(stale.isError).toBe(true);
+    expect(textOf(stale)).toContain("changed since you read it");
+    db.raw.prepare("UPDATE chapters SET moving_until = ? WHERE id = ?").run(new Date(Date.now() + 60_000).toISOString(), CH);
+    const locked = await call("move_scene", { scene_id: second, before_passage_index: 0, base_versions: { from: 5 } });
+    expect(locked.isError).toBe(true);
+    expect(textOf(locked)).toBe("A scene is being moved in this chapter; try again in a few seconds.");
+    expect(bucket.objects.get(KEY)).toBe(source);
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM claude_changes").get()).toEqual({ n: 0 });
+  });
+
+  it("refuses stale destination versions and preserves move failure messages", async () => {
+    const { second } = await setup();
+    const args = { scene_id: second, to_chapter_id: "ch-2", base_versions: { from: 5, to: 1 } };
+    const stale = await call("move_scene", args);
+    expect(stale.isError).toBe(true);
+    expect(textOf(stale)).toContain("changed since you read it");
+    const put = bucket.put.bind(bucket);
+    let destPuts = 0;
+    bucket.put = async (key, value, options) => {
+      if (key === KEY || (key === destKey && ++destPuts === 2)) throw new Error("write failed");
+      return put(key, value, options);
+    };
+    const result = await call("move_scene", { ...args, base_versions: { from: 5, to: 0 } });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe("The scene is now in both chapters. Delete one copy.");
+  });
+
+  it("refuses to split a group at an uncarded passage during a reorder", async () => {
+    const { first } = await setup();
+    const result = await call("move_scene", { scene_id: first, before_passage_index: 2, base_versions: { from: 5 } });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("Uncarded passages stay with the scene before them");
+    expect(bucket.objects.get(KEY)).toBe(source);
   });
 });
 

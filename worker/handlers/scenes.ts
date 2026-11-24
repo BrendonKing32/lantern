@@ -1,5 +1,5 @@
 import { arrangeText, insertPassage, matchScenes, normalizeAnchor, normalizeText, splitScenes, takePassage } from "../../shared/scenes";
-import type { SceneMeta, ScenePlaceholder } from "../../shared/types";
+import type { SceneListing, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { countWords } from "../../shared/wordcount";
 import { assertChapterUnlocked, chapterKey, chapterMoveToken, chapterPut, chapterTextVersion, getChapterRow, MAX_CHAPTER_BYTES, MOVE_LOCK_MS, reconcileChapter, requireProject } from "../db";
 import type { Env } from "../env";
@@ -58,14 +58,14 @@ async function chapterIn(env: Env, projectId: string, chapterId: unknown): Promi
   return chapter.id;
 }
 
-export const listScenes: Handler = async (_req, env, p) => {
-  await requireProject(env, p.id);
+export async function sceneListing(env: Env, projectId: string) {
+  await requireProject(env, projectId);
   const chapterIds = await env.DB.prepare(
     "SELECT id, scenes_version, version, moving_until FROM chapters WHERE project_id = ? AND deleted_at IS NULL ORDER BY position",
-  ).bind(p.id).all<{ id: string; scenes_version: number; version: number; moving_until: string | null }>();
+  ).bind(projectId).all<{ id: string; scenes_version: number; version: number; moving_until: string | null }>();
   const chapters = await Promise.all(chapterIds.results.map(async (state) => {
-    const chapter = await getChapterRow(env, state.id);
-    const object = await env.BUCKET.get(chapterKey(p.id, state.id));
+    const chapter = await reconcileChapter(env, await getChapterRow(env, state.id));
+    const object = await env.BUCKET.get(chapterKey(projectId, state.id));
     const text = object ? await object.text() : "";
     const textVersion = chapterTextVersion(object, chapter.version);
     const locked = !!state.moving_until && state.moving_until > now();
@@ -83,7 +83,7 @@ export const listScenes: Handler = async (_req, env, p) => {
       ORDER BY chapter_id IS NOT NULL,
         (SELECT position FROM chapters WHERE chapters.id = scenes.chapter_id), position`,
   )
-    .bind(p.id)
+    .bind(projectId)
     .all<SceneRow>();
   const passagesByScene = new Map<string, { index: number; excerpt: string }>();
   const mergedInto = new Map<string, string>();
@@ -107,7 +107,13 @@ export const listScenes: Handler = async (_req, env, p) => {
       placeholders.push({ chapter_id: chapter.id, passage_index: index, words: passages[index].words, excerpt: passages[index].excerpt });
     }
   }
-  return json({ scenes: results.map((row) => sceneMeta(row, passagesByScene.get(row.id), mergedInto.get(row.id))), placeholders });
+  const listing: SceneListing = { scenes: results.map((row) => sceneMeta(row, passagesByScene.get(row.id), mergedInto.get(row.id))), placeholders };
+  return { listing, chapters };
+}
+
+export const listScenes: Handler = async (_req, env, p) => {
+  const { listing } = await sceneListing(env, p.id);
+  return json(listing);
 };
 
 async function insertScene(env: Env, projectId: string, chapterId: string | null): Promise<SceneMeta> {

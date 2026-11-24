@@ -440,6 +440,14 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }).catch((e) => { if (active) setScenesError(describeError(e)); });
     return () => { active = false; };
   }, [projectId, view]);
+  useEffect(() => {
+    if (view !== "board" || scenes !== null) return;
+    let active = true;
+    api.scenes(projectId).then(({ scenes, placeholders }) => {
+      if (active) { setScenes(scenes); setPlaceholders(placeholders); }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [projectId, view]);
   // Novels saved on this device before dialects existed have none: US English.
   const dialect: Dialect = detail?.project.dialect ?? "american";
 
@@ -1170,6 +1178,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
           <Corkboard
             chapters={chapters}
             acts={acts}
+            scenes={scenes ?? []}
             wordsFor={wordsFor}
             selectedId={selected?.id}
             onOpen={openFromBoard}
