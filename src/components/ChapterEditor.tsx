@@ -10,8 +10,10 @@ import { basicSetup, proseExtensions } from "../editorSetup";
 import { entriesChanged, wikilinks } from "../wikilinkEditor";
 import { grammar, recheckGrammar } from "../grammar";
 import { countWords } from "../../shared/wordcount";
+import { splitScenes } from "../../shared/scenes";
+import { sceneBreakKeymap, sceneLabels } from "../sceneLabels";
 import { minimalChange } from "../minimalChange";
-import type { BibleEntry, ChapterWithContent, Dialect, SaveResult } from "../../shared/types";
+import type { BibleEntry, ChapterWithContent, Dialect, SaveResult, SceneMeta } from "../../shared/types";
 
 export type SaveState =
   | "loading"
@@ -34,6 +36,10 @@ interface Props {
   /** Story guide entries, for [[links]]. */
   entries: BibleEntry[];
   onOpenLink: (name: string) => void;
+  scenes: SceneMeta[] | null;
+  sceneBaseline: string | null;
+  sceneLabelsOn: boolean;
+  onOpenScene: (scene: SceneMeta) => void;
   /** Check grammar and spelling with Harper (otherwise the browser's spellcheck is used). */
   grammarOn: boolean;
   /** The English the novel is written in. */
@@ -49,6 +55,7 @@ export interface EditorControls {
   text: () => string;
   /** Select and scroll to a quoted passage. False if it isn't in the chapter. */
   reveal: (quote: string) => boolean;
+  revealScene: (index: number) => boolean;
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -84,6 +91,10 @@ export function ChapterEditor({
   onCloseHistory,
   entries,
   onOpenLink,
+  scenes,
+  sceneBaseline,
+  sceneLabelsOn,
+  onOpenScene,
   grammarOn,
   dialect,
   readOnly,
@@ -112,6 +123,20 @@ export function ChapterEditor({
   const linkHost = useRef({ entries, onOpenLink });
   linkHost.current = { entries, onOpenLink };
   const view = useRef<EditorView | null>(null);
+  const sceneHost = useRef({ scenes, sceneBaseline, title, onOpenScene });
+  sceneHost.current = { scenes, sceneBaseline, title, onOpenScene };
+  const sceneSlot = useRef(new Compartment());
+  const labelExtensions = () =>
+    sceneLabelsOn && sceneHost.current.scenes && sceneHost.current.sceneBaseline !== null
+      ? sceneLabels({
+          snapshot: () => ({
+            baselineText: sceneHost.current.sceneBaseline!,
+            chapterTitle: sceneHost.current.title,
+            cards: (sceneHost.current.scenes ?? []).filter((scene) => scene.chapter_id === chapterId),
+          }),
+          open: (scene) => sceneHost.current.onOpenScene(scene),
+        })
+      : [];
   const readingSlot = useRef(new Compartment());
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
@@ -135,6 +160,8 @@ export function ChapterEditor({
   const [extensions] = useState(() => [
     ...proseExtensions,
     wikilinks({ entries: () => linkHost.current.entries, open: (n) => linkHost.current.onOpenLink(n) }),
+    sceneBreakKeymap,
+    sceneSlot.current.of([]),
     grammarSlot.current.of(proofing(grammarOnRef.current)),
     readingSlot.current.of(readingMode(readOnlyRef.current)),
   ]);
@@ -153,6 +180,9 @@ export function ChapterEditor({
     view.current.dispatch({ effects: entriesChanged.of(null) });
     recheckGrammar(view.current); // story guide names aren't misspellings
   }, [entries]);
+  useEffect(() => {
+    view.current?.dispatch({ effects: sceneSlot.current.reconfigure(labelExtensions()) });
+  }, [scenes, sceneBaseline, sceneLabelsOn, title]);
   useEffect(() => {
     view.current?.dispatch({ effects: grammarSlot.current.reconfigure(proofing(grammarOn)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -175,6 +205,18 @@ export function ChapterEditor({
         v.dispatch({
           selection: EditorSelection.range(at[0], at[1]),
           effects: EditorView.scrollIntoView(at[0], { y: "center" }),
+        });
+        if (!readOnlyRef.current) v.focus();
+        return true;
+      },
+      revealScene: (index) => {
+        const v = view.current;
+        if (!v) return false;
+        const passage = splitScenes(v.state.doc.toString())[index];
+        if (!passage) return false;
+        v.dispatch({
+          selection: EditorSelection.cursor(passage.start),
+          effects: EditorView.scrollIntoView(passage.start, { y: "center" }),
         });
         if (!readOnlyRef.current) v.focus();
         return true;
@@ -483,6 +525,11 @@ export function ChapterEditor({
     setInitialDoc(conflict.content);
     setEditorKey((k) => k + 1);
     flushWordCount();
+    cb.current.onSaved(chapterId, {
+      version: conflict.version,
+      word_count: conflict.word_count,
+      updated_at: conflict.updated_at,
+    });
     setConflict(null);
     status("saved");
   };
@@ -559,6 +606,7 @@ export function ChapterEditor({
             v.dispatch({ effects: [
               grammarSlot.current.reconfigure(proofing(grammarOnRef.current)),
               readingSlot.current.reconfigure(readingMode(readOnlyRef.current)),
+              sceneSlot.current.reconfigure(labelExtensions()),
             ] });
           }}
           basicSetup={basicSetup}

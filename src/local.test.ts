@@ -13,6 +13,20 @@ beforeEach(() => {
 });
 
 describe("draft storage", () => {
+  it("does not let late old chapter writes replace or resurrect invalidated text", async () => {
+    const { chapters } = await import("./local");
+    const old = {
+      id: "c", project_id: "p", title: "First", synopsis: "", position: 0,
+      word_count: 1, version: 1, updated_at: "", act_id: null, content: "old",
+    };
+    await chapters.write(old);
+    await chapters.invalidate("c");
+    await chapters.write(old);
+    expect(await chapters.read("c")).toBeNull();
+    await chapters.restore({ ...old, version: 2, content: "moved" });
+    await chapters.write(old);
+    expect(await chapters.read("c")).toMatchObject({ version: 2, content: "moved" });
+  });
   it("round-trips an unsaved draft", async () => {
     const { drafts } = await import("./local");
 
@@ -130,7 +144,7 @@ describe("draft storage", () => {
       const { selectChapter } = await import("./resume");
       const chapter = (id: string) => ({
         id, project_id: "novel-1", title: id, synopsis: "", position: 0,
-        word_count: 0, version: 1, updated_at: "",
+        word_count: 0, version: 1, updated_at: "", act_id: null,
       });
       await cache.setProject({
         project: {
@@ -138,6 +152,7 @@ describe("draft storage", () => {
           target_words: null, target_date: null, dialect: "american",
         },
         chapters: [chapter("first"), chapter("last")],
+        acts: [],
       });
       await cache.setLastChapter("novel-1", "last");
 

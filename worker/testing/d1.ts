@@ -60,21 +60,25 @@ export function sqliteD1() {
 
 export function memoryR2() {
   const objects = new Map<string, string>();
+  const metadata = new Map<string, Record<string, string>>();
   return {
     objects,
     /** Make puts to keys matching this fail, to test what happens when storage does. */
     failPuts: null as RegExp | null,
     async get(key: string) {
       const value = objects.get(key);
-      return value === undefined ? null : { text: async () => value, key };
+      return value === undefined ? null : { text: async () => value, key, customMetadata: metadata.get(key) };
     },
-    async put(key: string, value: string) {
+    async put(key: string, value: string, options?: { customMetadata?: Record<string, string> }) {
       if (this.failPuts?.test(key)) throw new Error(`R2 put failed for ${key}`);
       objects.set(key, value);
+      if (options?.customMetadata) metadata.set(key, { ...options.customMetadata });
+      else metadata.delete(key);
       return { key };
     },
     async delete(key: string) {
       objects.delete(key);
+      metadata.delete(key);
     },
   };
 }

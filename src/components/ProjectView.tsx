@@ -23,8 +23,11 @@ import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
 import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
+import { sceneLabelsEnabled, setSceneLabelsEnabled } from "../sceneLabels";
 import { DIALECTS } from "../../shared/types";
-import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, ProjectDetail, SaveResult, SceneMeta } from "../../shared/types";
+import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
+import { arrangeChapters } from "../../shared/acts";
+import { arrangeChapterScenes, SceneMoveError } from "../sceneArrangement";
 
 type View = "write" | "board" | "scenes" | "search" | "bible";
 const VIEWS: View[] = ["write", "board", "scenes", "search", "bible"];
@@ -163,6 +166,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   };
   const setView = (v: View) => {
     closeMoreMenu();
+    if (v === "scenes" && v !== view) setScenes(null);
     // The footer's save state belongs to the chapter editor, which unmounts
     // outside Write. Start fresh so a return never shows a stale state.
     if (v !== view) setSave({ state: "loading" });
@@ -171,6 +175,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     setHistoryOpen(false);
     setCheckOpen(false);
     setPeek(null);
+    setScenePeek(null);
     try {
       sessionStorage.setItem(viewKey, v);
     } catch {
@@ -183,6 +188,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [entries, setEntriesState] = useState<BibleEntry[]>([]);
   const [entryId, setEntryId] = useState<string | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
+  const [scenePeek, setScenePeek] = useState<string | null>(null);
   const setEntries = useCallback(
     (update: (list: BibleEntry[]) => BibleEntry[]) =>
       setEntriesState((list) => {
@@ -201,17 +207,26 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const openLink = useCallback((name: string) => {
     setHistoryOpen(false);
     setCheckOpen(false);
+    setScenePeek(null);
     setPeek(name);
   }, []);
   // The continuity check panel reads the editor's text and points into it.
   const [checkOpen, setCheckOpen] = useState(false);
   const [grammarOn, setGrammarOn] = useState(grammarEnabled);
   useEffect(() => setGrammarEnabled(grammarOn), [grammarOn]);
+  const [sceneLabelsOn, setSceneLabelsOn] = useState(sceneLabelsEnabled);
+  useEffect(() => setSceneLabelsEnabled(sceneLabelsOn), [sceneLabelsOn]);
 
   const [checkTab, setCheckTab] = useState<CheckTab>("chapter");
   const editorControls = useRef<EditorControls | null>(null);
   const closeCheck = useCallback(() => setCheckOpen(false), []);
   const closePeek = useCallback(() => setPeek(null), []);
+  useEffect(() => {
+    if (scenePeek === null) return;
+    const close = (e: KeyboardEvent) => { if (e.key === "Escape") setScenePeek(null); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [scenePeek]);
   const createFromLink = async (name: string, kind: BibleKind) => {
     try {
       const e = await api.createEntry(projectId, { name, kind });
@@ -223,10 +238,22 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
   const [offline, setOffline] = useState(false);
+  const [disconnected, setDisconnected] = useState(() => !navigator.onLine);
+  useEffect(() => {
+    const update = () => setDisconnected(!navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
   const [lastChapterId, setLastChapterId] = useState<string | null>(null);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
+  const [labelSnapshot, setLabelSnapshot] = useState<{ chapterId: string; baseline: string; scenes: SceneMeta[] } | null>(null);
+  const [placeholders, setPlaceholders] = useState<ScenePlaceholder[]>([]);
   const [scenesError, setScenesError] = useState<string | null>(null);
+  const [sceneMove, setSceneMove] = useState<{ chapter: ChapterMeta; sceneIds: string[]; expectedIds: string[]; title: string } | null>(null);
+  const [movingScene, setMovingScene] = useState(false);
+  const sceneMoveBusy = useRef(false);
   const [searchText, setSearchText] = useState<{ id: string; content: string; version: number } | null>(null);
   // Words written today across all novels, and the daily goal (null: none).
   const [today, setToday] = useState<{ words: number; goal: number | null } | null>(null);
@@ -260,6 +287,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [projectId]);
 
   const chapters = detail?.chapters ?? [];
+  // Novels saved on this device before acts existed have none.
+  const acts = detail?.acts ?? [];
+  const [renamingActId, setRenamingActId] = useState<string | null>(null);
 
   // Changes by Claude: how many this device hasn't shown yet, checked when the
   // novel opens and whenever the window comes back into focus.
@@ -315,15 +345,39 @@ export function ProjectView({ projectId, chapterId }: Props) {
   useEffect(() => setEditingChapter(null), [selected?.id]);
   useEffect(() => {
     if (view !== "scenes") return;
+    let active = true;
     setScenes(null);
     setScenesError(null);
-    api.scenes(projectId).then(setScenes).catch((e) => setScenesError(describeError(e)));
-  }, [projectId, view]);
+    api.scenes(projectId).then(({ scenes, placeholders }) => {
+      if (active) { setScenes(scenes); setPlaceholders(placeholders); }
+    }).catch((e) => { if (active) setScenesError(describeError(e)); });
+    return () => { active = false; };
+  }, [projectId, view, selected?.version]);
+  useEffect(() => {
+    if (view !== "write" || !selected) return;
+    let active = true;
+    setLabelSnapshot(null);
+    const loadLabels = async () => {
+      for (let attempt = 0; attempt < 3 && active; attempt++) {
+        const before = await api.getChapter(selected.id);
+        const listing = await api.scenes(projectId);
+        const after = await api.getChapter(selected.id);
+        if (!active) return;
+        if (before.version !== after.version || before.content !== after.content) continue;
+        setScenes(listing.scenes);
+        setLabelSnapshot({ chapterId: selected.id, baseline: after.content, scenes: listing.scenes });
+        return;
+      }
+    };
+    void loadLabels().catch(() => {});
+    return () => { active = false; };
+  }, [projectId, view, selected?.id, selected?.version]);
   // Novels saved on this device before dialects existed have none: US English.
   const dialect: Dialect = detail?.project.dialect ?? "american";
 
   // History belongs to one chapter; the check panel follows you between chapters.
   useEffect(() => setHistoryOpen(false), [selected?.id]);
+  useEffect(() => setScenePeek(null), [selected?.id]);
 
   // Open a chapter and select a passage in it, waiting for the editor to load.
   const openQuote = (chapterId: string, quote: string): Promise<boolean> => {
@@ -384,7 +438,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (today_words !== undefined) setToday((t) => (t ? { ...t, words: today_words } : t));
     setDetail((d) =>
       d
-        ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, ...meta } : c)) }
+        ? { ...d, chapters: d.chapters.map((c) => (c.id === id && c.version <= meta.version ? { ...c, ...meta } : c)) }
         : d,
     );
   }, []);
@@ -414,17 +468,101 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
-  const reorder = async (ids: string[]) => {
-    setDetail((d) =>
-      d
-        ? {
-            ...d,
-            chapters: ids.map((id, i) => ({ ...d.chapters.find((c) => c.id === id)!, position: i })),
-          }
-        : d,
+  /**
+   * Put the book in this order, with chapters in these acts and the acts in
+   * this order. Each act's chapters are kept together, as the server does.
+   */
+  const arrange = async (
+    chapterIds: string[],
+    chapterActs: Record<string, string | null>,
+    actIds: string[] = acts.map((a) => a.id),
+  ) => {
+    if (!detail) return;
+    const nextActs = actIds.map((id, i) => ({ ...acts.find((a) => a.id === id)!, position: i }));
+    const next = arrangeChapters(
+      chapterIds.map((id, i) => {
+        const c = chapters.find((x) => x.id === id)!;
+        return { ...c, act_id: id in chapterActs ? chapterActs[id] : (c.act_id ?? null), position: i };
+      }),
+      nextActs,
     );
+    setDetail((d) => (d ? { ...d, chapters: next, acts: nextActs } : d));
     try {
-      await api.reorder(projectId, ids);
+      await api.reorder(
+        projectId,
+        next.map((c) => c.id),
+        acts.length ? { actIds, chapterActs: Object.fromEntries(next.map((c) => [c.id, c.act_id])) } : undefined,
+      );
+    } catch (e) {
+      alert(describeError(e));
+      load();
+    }
+  };
+
+  // On the corkboard a moved card joins the act of the card it was dropped on.
+  const reorderFromBoard = (ids: string[], movedId: string, overId: string) => {
+    const over = chapters.find((c) => c.id === overId);
+    void arrange(ids, { [movedId]: over?.act_id ?? null });
+  };
+
+  // The server's word on acts and chapter order, keeping what this page knows
+  // about each chapter's text.
+  const applyOutline = (o: Outline) =>
+    setDetail((d) => {
+      if (!d) return d;
+      const local = new Map(d.chapters.map((c) => [c.id, c]));
+      return {
+        ...d,
+        acts: o.acts,
+        chapters: o.chapters.map((c) => {
+          const mine = local.get(c.id);
+          return mine ? { ...mine, position: c.position, act_id: c.act_id } : c;
+        }),
+      };
+    });
+
+  const startAct = async (chapterId: string | null) => {
+    try {
+      const o = await api.createAct(projectId, undefined, chapterId);
+      const known = new Set(acts.map((a) => a.id));
+      applyOutline(o);
+      setRenamingActId(o.acts.find((a) => !known.has(a.id))?.id ?? null);
+    } catch (e) {
+      alert(describeError(e));
+    }
+  };
+
+  // Stable for the memoized chapter rows, while always calling the latest startAct.
+  const startActRef = useRef(startAct);
+  startActRef.current = startAct;
+  const onStartAct = useCallback((id: string) => void startActRef.current(id), []);
+
+  // The first act takes the whole book; later ones start empty at the end.
+  const addAct = () => void startAct(acts.length === 0 && chapters.length ? chapters[0].id : null);
+
+  const renameAct = async (id: string, title: string) => {
+    setDetail((d) => (d ? { ...d, acts: (d.acts ?? []).map((a) => (a.id === id ? { ...a, title } : a)) } : d));
+    try {
+      await api.renameAct(id, title);
+    } catch (e) {
+      alert(describeError(e));
+      load();
+    }
+  };
+
+  const moveAct = (id: string, by: -1 | 1) => {
+    const ids = acts.map((a) => a.id);
+    const from = ids.indexOf(id);
+    const to = from + by;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    void arrange(chapters.map((c) => c.id), {}, ids);
+  };
+
+  const removeAct = async (act: Act) => {
+    if (!confirm(`Remove the act “${act.title}”? Its chapters stay where they are in the book.`)) return;
+    try {
+      applyOutline(await api.deleteAct(act.id));
     } catch (e) {
       alert(describeError(e));
       load();
@@ -472,6 +610,26 @@ export function ProjectView({ projectId, chapterId }: Props) {
     select(id);
   };
 
+  const reloadScenes = async () => {
+    const listing = await api.scenes(projectId);
+    setScenes(listing.scenes);
+    setPlaceholders(listing.placeholders);
+  };
+
+  const openScene = (scene: SceneMeta) => {
+    if (!scene.chapter_id || scene.passage_index === null) return;
+    const chapter = scene.chapter_id;
+    const index = scene.passage_index;
+    setView("write");
+    select(chapter);
+    const start = Date.now();
+    const attempt = () => {
+      if (editorControls.current?.revealScene(index)) return;
+      if (Date.now() - start < 4000) window.setTimeout(attempt, 120);
+    };
+    window.setTimeout(attempt, 150);
+  };
+
   const addScene = async (chapterId: string | null): Promise<SceneMeta | null> => {
     try {
       const scene = await api.createScene(projectId, chapterId);
@@ -485,11 +643,13 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const updateScene = async (
     scene: SceneMeta,
-    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">>,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">> & {
+      link?: { passage_index: number }; unlink?: true; confirm?: true;
+    },
   ) => {
     try {
-      const updated = await api.updateScene(scene.id, patch);
-      setScenes((list) => list?.map((item) => item.id === scene.id ? updated : item) ?? []);
+      await api.updateScene(scene.id, patch);
+      await reloadScenes();
     } catch (e) {
       alert(describeError(e));
       throw e;
@@ -500,25 +660,62 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (!confirm(`Delete the scene plan “${scene.title}”?`)) return;
     try {
       await api.deleteScene(scene.id);
-      setScenes((list) => list?.filter((item) => item.id !== scene.id) ?? []);
+      await reloadScenes();
     } catch (e) {
       alert(describeError(e));
     }
   };
 
-  const reorderScenes = async (chapterId: string | null, sceneIds: string[]) => {
-    setScenes((list) => list?.map((scene) => {
-      if (scene.chapter_id !== chapterId) return scene;
-      return { ...scene, position: sceneIds.indexOf(scene.id) };
-    }) ?? []);
+  const reorderScenes = async (chapterId: string | null, sceneIds: string[], movedId: string) => {
+    if (sceneMoveBusy.current) return;
+    const group = (scenes ?? []).filter((scene) => scene.chapter_id === chapterId).sort((a, b) => a.position - b.position);
+    const chapter = chapters.find((c) => c.id === chapterId);
+    const moved = group.find((scene) => scene.id === movedId);
+    if (offline || disconnected || !moved) return;
+    sceneMoveBusy.current = true;
+    setMovingScene(true);
     try {
-      await api.reorderScenes(projectId, chapterId, sceneIds);
+      if (chapter && group.some((scene) => scene.in_text)) {
+        const result = await arrangeChapterScenes(chapter, sceneIds, { projectId, sceneIds: group.map((scene) => scene.id) });
+        onSaved(chapter.id, result);
+        setLive((current) => ({ ...current, [chapter.id]: result.word_count }));
+        const cached = await cache.project(projectId);
+        if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === chapter.id ? { ...c, ...result } : c) });
+        setSceneMove({ chapter, sceneIds: group.map((scene) => scene.id), expectedIds: sceneIds, title: moved.title });
+      } else {
+        await api.reorderScenes(projectId, chapterId, sceneIds);
+        setSceneMove(null);
+      }
+      await reloadScenes();
     } catch (e) {
-      alert(describeError(e));
-      api.scenes(projectId).then(setScenes).catch((error) => setScenesError(describeError(error)));
+      alert(e instanceof SceneMoveError ? e.message : describeError(e));
+      await reloadScenes().catch((error) => setScenesError(describeError(error)));
+    } finally {
+      sceneMoveBusy.current = false;
+      setMovingScene(false);
     }
   };
 
+  const undoSceneMove = async () => {
+    if (!sceneMove || sceneMoveBusy.current || offline || disconnected) return;
+    sceneMoveBusy.current = true;
+    setMovingScene(true);
+    try {
+      const result = await arrangeChapterScenes(sceneMove.chapter, sceneMove.sceneIds, { projectId, sceneIds: sceneMove.expectedIds });
+      onSaved(sceneMove.chapter.id, result);
+      setLive((current) => ({ ...current, [sceneMove.chapter.id]: result.word_count }));
+      const cached = await cache.project(projectId);
+      if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === sceneMove.chapter.id ? { ...c, ...result } : c) });
+      setSceneMove(null);
+      await reloadScenes();
+    } catch (e) {
+      alert(e instanceof SceneMoveError ? e.message : describeError(e));
+      await reloadScenes().catch((error) => setScenesError(describeError(error)));
+    } finally {
+      sceneMoveBusy.current = false;
+      setMovingScene(false);
+    }
+  };
   const remove = useCallback(async (c: ChapterMeta) => {
     if (chapters.length === 1) {
       alert("A novel needs at least one chapter.");
@@ -647,17 +844,34 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
         <ChapterList
           chapters={chapters}
+          acts={acts}
           wordsFor={wordsFor}
           selectedId={selected?.id}
           onSelect={select}
-          onReorder={reorder}
+          onArrange={(ids, chapterActs) => void arrange(ids, chapterActs)}
           onRename={rename}
           onDelete={remove}
+          onStartAct={onStartAct}
+          onRenameAct={(id, title) => void renameAct(id, title)}
+          onMoveAct={moveAct}
+          onDeleteAct={(act) => void removeAct(act)}
+          renamingActId={renamingActId}
+          onRenamingActDone={() => setRenamingActId(null)}
         />
 
-        <button className="add-chapter" onClick={addChapter}>
-          Add chapter
-        </button>
+        <div className="add-row">
+          <button className="add-chapter" onClick={addChapter}>
+            Add chapter
+          </button>
+          <button
+            className="add-chapter"
+            onClick={addAct}
+            disabled={offline}
+            title={acts.length ? "Add an empty act at the end" : "Group the chapters into acts"}
+          >
+            Add act
+          </button>
+        </div>
 
         {trash.length > 0 && (
           <details className="trash">
@@ -770,6 +984,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       onClick={() => {
                         closeMoreMenu();
                         setPeek(null);
+                        setScenePeek(null);
                         setCheckOpen(false);
                         setHistoryOpen((h) => !h);
                       }}
@@ -783,6 +998,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       onClick={() => {
                         closeMoreMenu();
                         setPeek(null);
+                        setScenePeek(null);
                         setHistoryOpen(false);
                         setCheckOpen((c) => !c);
                       }}
@@ -790,6 +1006,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       Check
                     </button>
                     <span className="desk-more-divider" />
+                    <button
+                      className={`btn btn-quiet${sceneLabelsOn ? " is-on" : ""}`}
+                      aria-pressed={sceneLabelsOn}
+                      onClick={() => {
+                        closeMoreMenu();
+                        setSceneLabelsOn((on) => !on);
+                      }}
+                    >
+                      Scene labels
+                    </button>
                     <select
                       className={`theme-picker grammar-picker desk-more-select${grammarOn ? " is-on" : ""}`}
                       aria-label="Grammar checking"
@@ -832,10 +1058,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
         ) : board ? (
           <Corkboard
             chapters={chapters}
+            acts={acts}
             wordsFor={wordsFor}
             selectedId={selected?.id}
             onOpen={openFromBoard}
-            onReorder={reorder}
+            onReorder={reorderFromBoard}
             onSynopsis={setSynopsis}
             onAdd={addChapter}
           />
@@ -846,15 +1073,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
               <p className="screen-message-detail">{scenesError}</p>
             </div>
           ) : scenes ? (
+            <>
+            {sceneMove && <p className="check-notice" role="status">Moved {sceneMove.title}.{" "}
+              <button className="btn btn-quiet" disabled={movingScene || offline || disconnected} onClick={() => void undoSceneMove()}>Undo</button>
+            </p>}
             <SceneBoard
               chapters={chapters}
+              acts={acts}
               scenes={scenes}
-              offline={offline}
+              placeholders={placeholders}
+              projectId={projectId}
+              offline={offline || disconnected}
+              moving={movingScene}
               onAdd={addScene}
               onUpdate={updateScene}
               onDelete={(scene) => void deleteScene(scene)}
-              onMove={(chapterId, sceneIds) => void reorderScenes(chapterId, sceneIds)}
+              onMove={(chapterId, sceneIds, movedId) => void reorderScenes(chapterId, sceneIds, movedId)}
+              onOpen={openScene}
             />
+            </>
           ) : <div className="screen-message">Loading scene plans…</div>
         ) : view === "search" ? (
           <SearchPanel
@@ -882,6 +1119,15 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onCloseHistory={closeHistory}
             entries={entries}
             onOpenLink={openLink}
+            scenes={labelSnapshot?.chapterId === selected.id ? labelSnapshot.scenes : null}
+            sceneBaseline={labelSnapshot?.chapterId === selected.id ? labelSnapshot.baseline : null}
+            sceneLabelsOn={sceneLabelsOn}
+            onOpenScene={(scene) => {
+              setHistoryOpen(false);
+              setCheckOpen(false);
+              setPeek(null);
+              setScenePeek(scene.id);
+            }}
             grammarOn={grammarOn}
             dialect={dialect}
             readOnly={readOnly}
@@ -919,6 +1165,28 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onClose={closePeek}
           />
         )}
+
+        {view === "write" && scenePeek !== null && (() => {
+          const scene = scenes?.find((item) => item.id === scenePeek);
+          if (!scene) return null;
+          return (
+            <aside className="history peek" aria-label={`Scene: ${scene.title}`}>
+              <header className="history-head">
+                <h2 className="history-title">Scene</h2>
+                <span className="desk-spacer" />
+                <button className="icon-btn" aria-label="Close" title="Close" onClick={() => setScenePeek(null)}>
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+                </button>
+              </header>
+              <div className="history-body">
+                <h3 className="peek-name">{scene.title}</h3>
+                {(scene.pov || scene.location) && <p className="peek-aka">{[scene.pov, scene.location].filter(Boolean).join(" · ")}</p>}
+                <div className="peek-body">{scene.summary.trim() || <span className="peek-empty">No notes yet.</span>}</div>
+                <button className="btn btn-lamp" onClick={() => setView("scenes")}>Open Scenes</button>
+              </div>
+            </aside>
+          );
+        })()}
 
         {exportOpen && <ExportDialog detail={detail} onClose={() => setExportOpen(false)} />}
         {changesOpen && (

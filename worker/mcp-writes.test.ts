@@ -93,6 +93,16 @@ describe("which tools a connection gets", () => {
 });
 
 describe("edit_chapter", () => {
+  it("repairs an interrupted chapter write when editing the current version", async () => {
+    await bucket.put(KEY, OPENING, { customMetadata: { version: "3" } });
+    const r = await call("edit_chapter", {
+      chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }],
+    });
+    expect(r.isError).toBeFalsy();
+    expect(bucket.objects.get(KEY)).toBe(OPENING.replace("Mara", "Nell"));
+    expect((await bucket.get(KEY))?.customMetadata).toEqual({ version: "5" });
+  });
+
   it("saves the edit and keeps the old text in History", async () => {
     const r = await call("edit_chapter", {
       chapter_id: CH,
@@ -249,7 +259,7 @@ describe("scenes in the app", () => {
     const moved = await (await api("PATCH", `/api/scenes/${a.id}`, { chapter_id: CH })).json();
     expect(moved).toMatchObject({ chapter_id: CH, position: 1 });
 
-    const list = (await (await api("GET", `/api/projects/${NOVEL}/scenes`)).json()) as { id: string }[];
+    const { scenes: list } = (await (await api("GET", `/api/projects/${NOVEL}/scenes`)).json()) as { scenes: { id: string }[] };
     expect(list.map((s) => s.id)).toEqual([b.id, c.id, a.id]);
 
     expect((await api("PUT", `/api/projects/${NOVEL}/scenes/order`, { chapterId: CH, sceneIds: [a.id, c.id] })).status).toBe(200);

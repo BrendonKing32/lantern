@@ -1,7 +1,10 @@
-import type { SceneMeta } from "../../shared/types";
-import { getChapterRow, requireProject } from "../db";
+import { arrangeText, matchScenes, normalizeAnchor, normalizeText, splitScenes } from "../../shared/scenes";
+import type { SceneMeta, ScenePlaceholder } from "../../shared/types";
+import { chapterKey, chapterTextVersion, getChapterRow, MAX_CHAPTER_BYTES, requireProject } from "../db";
 import type { Env } from "../env";
 import { body, cleanTitle, HttpError, json, newId, now, type Handler } from "../http";
+import { afterChapterWrite, matchCards, type SceneSyncRow } from "../sceneSync";
+import { writeChapter } from "./chapters";
 
 // Scene cards belong to a novel. A chapter is optional: a scene with no
 // chapter is "unassigned" and can be placed in (or taken out of) a chapter
@@ -9,17 +12,26 @@ import { body, cleanTitle, HttpError, json, newId, now, type Handler } from "../
 // unassigned scenes).
 
 const SCENE_COLS =
-  "id, project_id, chapter_id, title, summary, pov, location, status, position, created_at, updated_at";
+  "id, project_id, chapter_id, title, summary, pov, location, status, position, created_at, updated_at, in_text, anchor_head, anchor_tail, word_count, unlinked_at, unconfirmed";
+
+type SceneRow = Omit<SceneMeta, "in_text" | "unconfirmed" | "excerpt" | "passage_index" | "merged_into"> &
+  Omit<SceneSyncRow, "chapter_id"> & { chapter_id: string | null };
+
+function sceneMeta(row: SceneRow, passage?: { index: number; excerpt: string }, mergedInto: string | null = null): SceneMeta {
+  const { anchor_head: _head, anchor_tail: _tail, ...scene } = row;
+  return { ...scene, in_text: !!row.in_text, unconfirmed: !!row.unconfirmed,
+    excerpt: passage?.excerpt ?? "", passage_index: passage?.index ?? null, merged_into: mergedInto };
+}
 
 // A scene is visible while its novel is, and, when it has a chapter, while
 // that chapter is. Scenes of a deleted chapter come back if it's restored.
 const VISIBLE = `project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)
   AND (chapter_id IS NULL OR chapter_id IN (SELECT id FROM chapters WHERE deleted_at IS NULL))`;
 
-async function getSceneRow(env: Env, id: string): Promise<SceneMeta> {
+async function getSceneRow(env: Env, id: string): Promise<SceneRow> {
   const row = await env.DB.prepare(`SELECT ${SCENE_COLS} FROM scenes WHERE id = ? AND ${VISIBLE}`)
     .bind(id)
-    .first<SceneMeta>();
+    .first<SceneRow>();
   if (!row) throw new HttpError(404, "Scene not found");
   return row;
 }
@@ -46,6 +58,21 @@ async function chapterIn(env: Env, projectId: string, chapterId: unknown): Promi
 
 export const listScenes: Handler = async (_req, env, p) => {
   await requireProject(env, p.id);
+  const chapterIds = await env.DB.prepare(
+    "SELECT id, scenes_version, version FROM chapters WHERE project_id = ? AND deleted_at IS NULL ORDER BY position",
+  ).bind(p.id).all<{ id: string; scenes_version: number; version: number }>();
+  const chapters = await Promise.all(chapterIds.results.map(async (state) => {
+    const chapter = await getChapterRow(env, state.id);
+    const object = await env.BUCKET.get(chapterKey(p.id, state.id));
+    const text = object ? await object.text() : "";
+    const textVersion = chapterTextVersion(object, chapter.version);
+    if (state.scenes_version < chapter.version && textVersion !== null) await afterChapterWrite(env, chapter, text, textVersion);
+    return { chapter, text: normalizeText(text), textVersion, passages: splitScenes(text, chapter.title), stale: state.scenes_version < chapter.version };
+  }));
+  if (chapters.some((chapter) => chapter.stale)) {
+    await Promise.all(chapters.filter(({ chapter, stale, textVersion }) => !stale && chapter.version > 0 && textVersion !== null)
+      .map(({ chapter, text, textVersion }) => afterChapterWrite(env, chapter, text, textVersion!)));
+  }
   const { results } = await env.DB.prepare(
     `SELECT ${SCENE_COLS} FROM scenes
       WHERE project_id = ? AND ${VISIBLE}
@@ -53,8 +80,30 @@ export const listScenes: Handler = async (_req, env, p) => {
         (SELECT position FROM chapters WHERE chapters.id = scenes.chapter_id), position`,
   )
     .bind(p.id)
-    .all<SceneMeta>();
-  return json(results);
+    .all<SceneRow>();
+  const passagesByScene = new Map<string, { index: number; excerpt: string }>();
+  const mergedInto = new Map<string, string>();
+  const placeholders: ScenePlaceholder[] = [];
+  for (const { chapter, text, passages } of chapters) {
+    const cards = results.filter((row) => row.chapter_id === chapter.id);
+    const matched = matchScenes(passages, matchCards(cards as SceneSyncRow[]));
+    for (const [id, index] of matched.pairs) passagesByScene.set(id, passages[index]);
+    for (const row of cards) {
+      if (row.in_text || !row.unlinked_at || Date.now() - Date.parse(row.unlinked_at) >= 86400000) continue;
+      const previous = cards.filter((card) => card.position < row.position && matched.pairs.has(card.id))
+        .sort((a, b) => b.position - a.position)[0];
+      if (!previous) continue;
+      const passage = passages[matched.pairs.get(previous.id)!];
+      const prose = normalizeAnchor(text.slice(passage.start, passage.end));
+      if ((row.anchor_head && prose.includes(row.anchor_head)) || (row.anchor_tail && prose.includes(row.anchor_tail))) {
+        mergedInto.set(row.id, previous.title);
+      }
+    }
+    for (const index of matched.placeholders) {
+      placeholders.push({ chapter_id: chapter.id, passage_index: index, words: passages[index].words, excerpt: passages[index].excerpt });
+    }
+  }
+  return json({ scenes: results.map((row) => sceneMeta(row, passagesByScene.get(row.id), mergedInto.get(row.id))), placeholders });
 };
 
 async function insertScene(env: Env, projectId: string, chapterId: string | null): Promise<SceneMeta> {
@@ -69,12 +118,19 @@ async function insertScene(env: Env, projectId: string, chapterId: string | null
     location: "",
     status: "planned",
     position: await nextPosition(env, projectId, chapterId),
+    in_text: false,
+    word_count: 0,
+    excerpt: "",
+    passage_index: null,
+    unconfirmed: false,
+    unlinked_at: null,
+    merged_into: null,
     created_at: ts,
     updated_at: ts,
   };
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO scenes (${SCENE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO scenes (id, project_id, chapter_id, title, summary, pov, location, status, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       scene.id, scene.project_id, scene.chapter_id, scene.title, scene.summary, scene.pov,
       scene.location, scene.status, scene.position, scene.created_at, scene.updated_at,
@@ -103,6 +159,7 @@ export const updateScene: Handler = async (req, env, p) => {
   const scene = await getSceneRow(env, p.id);
   const b = await body<{
     title?: unknown; summary?: unknown; pov?: unknown; location?: unknown; status?: unknown; chapter_id?: unknown;
+    link?: unknown; unlink?: unknown; confirm?: unknown;
   }>(req);
   for (const field of ["title", "summary", "pov", "location"] as const) {
     if (b[field] !== undefined && typeof b[field] !== "string") {
@@ -114,29 +171,119 @@ export const updateScene: Handler = async (req, env, p) => {
   }
   const chapterId = b.chapter_id === undefined ? scene.chapter_id : await chapterIn(env, scene.project_id, b.chapter_id);
   const moved = chapterId !== scene.chapter_id;
+  if (moved && scene.in_text) throw new HttpError(400, "Move scenes that are in the text with the move action");
+  if (b.unlink !== undefined && b.unlink !== true) throw new HttpError(400, "unlink must be true");
+  if (b.confirm !== undefined && b.confirm !== true) throw new HttpError(400, "confirm must be true");
+  if ([b.link !== undefined, b.unlink === true, b.confirm === true].filter(Boolean).length > 1) {
+    throw new HttpError(400, "Choose one scene action");
+  }
+  let linkedPassage: ReturnType<typeof splitScenes>[number] | undefined;
+  let positions: D1PreparedStatement[] = [];
+  let linkVersion: number | undefined;
+  let linkSnapshot = "";
+  if (b.link !== undefined) {
+    if (scene.in_text || !chapterId || moved || typeof b.link !== "object" || b.link === null ||
+      !Number.isInteger((b.link as { passage_index?: unknown }).passage_index)) {
+      throw new HttpError(400, "Choose a planned card and a passage in its chapter");
+    }
+    const chapter = await getChapterRow(env, chapterId);
+    const object = await env.BUCKET.get(chapterKey(scene.project_id, chapterId));
+    const text = object ? await object.text() : "";
+    const textVersion = chapterTextVersion(object, chapter.version);
+    if (textVersion !== chapter.version) throw new HttpError(409, "Chapter is changing; reload and try again");
+    const state = await env.DB.prepare("SELECT scenes_version FROM chapters WHERE id = ?")
+      .bind(chapter.id).first<{ scenes_version: number }>();
+    if (state && state.scenes_version < chapter.version) await afterChapterWrite(env, chapter, text, textVersion);
+    const passages = splitScenes(text, chapter.title);
+    const rows = await env.DB.prepare(`SELECT ${SCENE_COLS} FROM scenes WHERE chapter_id = ? ORDER BY position`)
+      .bind(chapterId).all<SceneRow>();
+    if (rows.results.find((row) => row.id === scene.id)?.in_text) throw new HttpError(409, "That card is already in the text");
+    const match = matchScenes(passages, matchCards(rows.results as SceneSyncRow[]));
+    const index = (b.link as { passage_index: number }).passage_index;
+    if (!passages[index]) throw new HttpError(400, "Passage not found");
+    if (!match.placeholders.includes(index)) throw new HttpError(409, "That passage already has a card");
+    linkedPassage = passages[index];
+    linkVersion = chapter.version;
+    linkSnapshot = JSON.stringify([...rows.results].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      .map((row) => [row.id, row.position, row.in_text, row.anchor_head, row.anchor_tail]));
+    const next = [...match.pairs.entries()].filter(([, i]) => i > index).sort((a, b) => a[1] - b[1])[0];
+    const reordered = rows.results.filter((row) => row.id !== scene.id);
+    const insertAt = next ? reordered.findIndex((row) => row.id === next[0]) : reordered.length;
+    reordered.splice(insertAt, 0, scene);
+    positions = reordered.map((row, i) => env.DB.prepare(
+      `UPDATE scenes SET position = ? WHERE id = ? AND EXISTS
+       (SELECT 1 FROM scenes WHERE id = ? AND in_text = 1 AND anchor_head = ? AND anchor_tail = ?)`,
+    ).bind(i, row.id, scene.id, linkedPassage!.head, linkedPassage!.tail));
+    scene.position = insertAt;
+  }
+  if (b.unlink && !scene.in_text) throw new HttpError(400, "This card is not in the text");
   const updated: SceneMeta = {
-    ...scene,
+    ...sceneMeta(scene, linkedPassage),
     title: b.title === undefined ? scene.title : cleanTitle(b.title, scene.title),
     summary: typeof b.summary === "string" ? b.summary.slice(0, 2000) : scene.summary,
     pov: typeof b.pov === "string" ? b.pov.slice(0, 120) : scene.pov,
     location: typeof b.location === "string" ? b.location.slice(0, 120) : scene.location,
-    status: b.status === undefined ? scene.status : b.status,
     chapter_id: chapterId,
     // A scene placed in another chapter (or unassigned) goes to the end of its new group.
     position: moved ? await nextPosition(env, scene.project_id, chapterId) : scene.position,
     updated_at: now(),
+    in_text: linkedPassage ? true : b.unlink ? false : !!scene.in_text,
+    word_count: linkedPassage ? linkedPassage.words : b.unlink ? 0 : scene.word_count,
+    unlinked_at: linkedPassage || b.unlink ? null : scene.unlinked_at,
+    unconfirmed: linkedPassage || b.confirm || b.unlink ? false : !!scene.unconfirmed,
+    status: linkedPassage && scene.status === "planned" ? "drafted" : b.status === undefined ? scene.status : b.status,
   };
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE scenes SET title = ?, summary = ?, pov = ?, location = ?, status = ?, chapter_id = ?, position = ?, updated_at = ?
-        WHERE id = ?`,
-    ).bind(
-      updated.title, updated.summary, updated.pov, updated.location, updated.status,
-      updated.chapter_id, updated.position, updated.updated_at, scene.id,
-    ),
+  const fields: string[] = [];
+  const values: (string | number | null)[] = [];
+  const field = (name: string, value: string | number | null) => { fields.push(`${name} = ?`); values.push(value); };
+  if (b.title !== undefined) field("title", updated.title);
+  if (b.summary !== undefined) field("summary", updated.summary);
+  if (b.pov !== undefined) field("pov", updated.pov);
+  if (b.location !== undefined) field("location", updated.location);
+  if (b.status !== undefined || linkedPassage) field("status", updated.status);
+  if (moved) field("chapter_id", updated.chapter_id);
+  if (moved || linkedPassage) field("position", updated.position);
+  if (linkedPassage || b.unlink) {
+    field("in_text", +updated.in_text);
+    field("word_count", updated.word_count);
+    field("unlinked_at", updated.unlinked_at);
+    field("unconfirmed", +updated.unconfirmed);
+    if (linkedPassage) {
+      field("anchor_head", linkedPassage.head);
+      field("anchor_tail", linkedPassage.tail);
+    }
+  } else if (b.confirm) field("unconfirmed", 0);
+  field("updated_at", updated.updated_at);
+  let guard = "";
+  const guardValues: (string | number | null)[] = [];
+  if (moved) { guard += " AND in_text = 0 AND chapter_id IS ?"; guardValues.push(scene.chapter_id); }
+  if (linkedPassage) {
+    guard += ` AND in_text = 0 AND chapter_id = ?
+      AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND version = ?)
+      AND (SELECT json_group_array(json_array(id, position, in_text, anchor_head, anchor_tail))
+           FROM (SELECT id, position, in_text, anchor_head, anchor_tail FROM scenes WHERE chapter_id = ? ORDER BY id)) = ?`;
+    guardValues.push(chapterId, chapterId, linkVersion!, chapterId, linkSnapshot);
+  }
+  const result = await env.DB.batch([
+    env.DB.prepare(`UPDATE scenes SET ${fields.join(", ")} WHERE id = ?${guard}`).bind(...values, scene.id, ...guardValues),
+    ...positions,
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(updated.updated_at, scene.project_id),
   ]);
-  return json(updated);
+  if (!result[0].meta.changes) {
+    if (moved) throw new HttpError(400, "Move scenes that are in the text with the move action");
+    throw new HttpError(409, "Scene list is out of date; reload and try again");
+  }
+  const fresh = await getSceneRow(env, scene.id);
+  if (fresh.in_text && fresh.chapter_id) {
+    const chapter = await getChapterRow(env, fresh.chapter_id);
+    const object = await env.BUCKET.get(chapterKey(fresh.project_id, chapter.id));
+    const passages = splitScenes(object ? await object.text() : "", chapter.title);
+    const rows = await env.DB.prepare(`SELECT ${SCENE_COLS} FROM scenes WHERE chapter_id = ? ORDER BY position`)
+      .bind(chapter.id).all<SceneRow>();
+    const index = matchScenes(passages, matchCards(rows.results as SceneSyncRow[])).pairs.get(fresh.id);
+    return json(sceneMeta(fresh, index === undefined ? undefined : passages[index]));
+  }
+  return json(sceneMeta(fresh));
 };
 
 export const deleteScene: Handler = async (_req, env, p) => {
@@ -170,4 +317,106 @@ export const reorderScenes: Handler = async (req, env, p) => {
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(now(), p.id),
   ]);
   return json({ ok: true });
+};
+
+const sceneListError = "Scene list is out of date; reload and try again";
+const sceneSnapshot = (rows: SceneSyncRow[]) => JSON.stringify([...rows]
+  .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  .map((row) => [row.id, row.position, row.in_text, row.anchor_head, row.anchor_tail]));
+
+/** Reorder cards and their passages, leaving uncarded passages with their preceding passage. */
+export const arrangeScenes: Handler = async (req, env, p) => {
+  const b = await body<{ baseVersion?: unknown; sceneIds?: unknown }>(req);
+  if (!Number.isSafeInteger(b.baseVersion) || (b.baseVersion as number) < 0 ||
+      !Array.isArray(b.sceneIds) || !b.sceneIds.every((id) => typeof id === "string")) {
+    throw new HttpError(400, "baseVersion and sceneIds are required");
+  }
+  const baseVersion = b.baseVersion as number;
+  const ids = b.sceneIds as string[];
+  const chapter = await getChapterRow(env, p.id);
+  if (chapter.version !== baseVersion) throw new HttpError(409, "conflict", { version: chapter.version });
+  const object = await env.BUCKET.get(chapterKey(chapter.project_id, chapter.id));
+  if (chapterTextVersion(object, chapter.version) !== baseVersion) {
+    throw new HttpError(409, "Chapter is changing; reload and try again");
+  }
+  const text = object ? await object.text() : "";
+  const { results: rows } = await env.DB.prepare(
+    "SELECT id, chapter_id, position, status, in_text, anchor_head, anchor_tail, word_count, unlinked_at, unconfirmed FROM scenes WHERE chapter_id = ? ORDER BY position",
+  ).bind(chapter.id).all<SceneSyncRow>();
+  const existing = new Set(rows.map((row) => row.id));
+  if (ids.length !== existing.size || new Set(ids).size !== ids.length || ids.some((id) => !existing.has(id))) {
+    throw new HttpError(409, sceneListError);
+  }
+  const passages = splitScenes(text, chapter.title);
+  const match = matchScenes(passages, matchCards(rows));
+  if (match.leftText.length) throw new HttpError(409, sceneListError);
+  const snapshot = sceneSnapshot(rows);
+  const paired = new Set(match.pairs.values());
+  const groups = new Map<number, number[]>();
+  const leading: number[] = [];
+  let group: number[] = leading;
+  for (const passage of passages) {
+    if (paired.has(passage.index)) {
+      group = [passage.index];
+      groups.set(passage.index, group);
+    } else group.push(passage.index);
+  }
+  const order = [...leading, ...ids.flatMap((id) => {
+    const index = match.pairs.get(id);
+    return index === undefined ? [] : groups.get(index)!;
+  })];
+  const changed = order.some((index, i) => index !== i);
+  let result = { version: chapter.version, word_count: chapter.word_count, updated_at: chapter.updated_at };
+  const arranged = changed ? arrangeText(text, passages, order) : text;
+  if (changed) {
+    if (new TextEncoder().encode(arranged).length > MAX_CHAPTER_BYTES) {
+      throw new HttpError(413, "Chapter is too large (5 MB limit)");
+    }
+    result = await writeChapter(env, chapter, arranged, baseVersion, "move", { sceneSnapshot: snapshot });
+  }
+  try {
+    if (changed) {
+      const pairs = new Map([...match.pairs].map(([id, index]) => [id, order.indexOf(index)]));
+      await afterChapterWrite(env, chapter, arranged, result.version, { snapshot, pairs });
+      const sync = await env.DB.prepare("SELECT version, scenes_version FROM chapters WHERE id = ?")
+        .bind(chapter.id).first<{ version: number; scenes_version: number }>();
+      if (!sync || sync.version !== result.version || sync.scenes_version !== result.version) {
+        throw new Error("Scene sync did not finish");
+      }
+    }
+    // One guarded statement makes the list check and every position update atomic.
+    const currentRows = changed
+      ? (await env.DB.prepare(
+        "SELECT id, chapter_id, position, status, in_text, anchor_head, anchor_tail, word_count, unlinked_at, unconfirmed FROM scenes WHERE chapter_id = ? ORDER BY position",
+      ).bind(chapter.id).all<SceneSyncRow>()).results
+      : rows;
+    if (currentRows.length !== ids.length || currentRows.some((row) => !existing.has(row.id))) {
+      throw new HttpError(409, sceneListError);
+    }
+    if (ids.length) {
+      const positions = await env.DB.prepare(
+        `UPDATE scenes SET position = (SELECT CAST(key AS INTEGER) FROM json_each(?) WHERE value = scenes.id)
+         WHERE chapter_id = ? AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND version = ? AND deleted_at IS NULL)
+         AND (SELECT json_group_array(json_array(id, position, in_text, anchor_head, anchor_tail))
+              FROM (SELECT id, position, in_text, anchor_head, anchor_tail FROM scenes WHERE chapter_id = ? ORDER BY id)) = ?`,
+      ).bind(JSON.stringify(ids), chapter.id, chapter.id, result.version, chapter.id, sceneSnapshot(currentRows)).run();
+      if (positions.meta.changes !== ids.length) {
+        const current = await getChapterRow(env, chapter.id);
+        if (current.version !== result.version) throw new HttpError(409, "conflict", { version: current.version });
+        throw new HttpError(409, sceneListError);
+      }
+    } else {
+      const current = await getChapterRow(env, chapter.id);
+      if (current.version !== baseVersion) throw new HttpError(409, "conflict", { version: current.version });
+      const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM scenes WHERE chapter_id = ?")
+        .bind(chapter.id).first<{ n: number }>();
+      if (count?.n) throw new HttpError(409, sceneListError);
+    }
+    await env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(now(), chapter.project_id).run();
+    return json(result);
+  } catch (e) {
+    if (!changed) throw e;
+    console.error("scene arrangement partially completed", e);
+    throw new HttpError(500, "The chapter text was moved, but the scene cards could not be updated. Reload and check the chapter.", { version: result.version });
+  }
 };
