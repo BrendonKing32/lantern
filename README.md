@@ -180,8 +180,12 @@ Connector calls are part of your claude.ai plan and don't use the API key or the
   leaves the chapter as it is. Both need a connection.
 - **Accepting can be undone.** The chapter's text goes into its History first, marked
   **Before Claude's changes**; if that copy can't be kept, nothing is changed. Restore it
-  from History to undo. Unsaved writing is saved before the draft goes in, and if the
-  chapter changed after Claude began the draft, the review panel warns you first.
+  from History to undo. Unsaved writing is saved before the draft goes in. If the chapter
+  changed after Claude began the draft, Lantern applies the edits that still fit to your
+  current text and shows the comparison. Edits that no longer fit are listed, not forced.
+  Your newer writing stays in the chapter.
+- **Scene moves:** Claude can't move a scene while either chapter has a draft waiting.
+  Accept or discard the draft first. You can still move scenes yourself.
 - **Nothing changes unseen.** Every edit names the version Claude read: the chapter's, or
   the draft's once there is one. If that has changed since, the edit is refused and
   Claude reads it again. If Claude edits the draft while you're reviewing it, accepting
@@ -278,6 +282,10 @@ app and private API protected.
 
 ## Using it
 
+- **Claude's draft:** **Review draft** compares pending connector edits with your chapter.
+  If you wrote more since the draft began, the comparison shows the edits that still fit
+  your current text and lists the ones that don't. Save your writing, then accept the
+  fitting edits or discard the draft.
 - **On phones** (600px wide or less), chapters open for reading so the keyboard stays away.
   Tap **Edit** for a quick change and **Done** to go back to reading; saving works as usual.
   The other views, Search and the theme are under **More**, and **Chapters** opens the list.

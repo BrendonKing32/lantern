@@ -166,10 +166,12 @@ export const api = {
   claudeDraft: (chapterId: string) =>
     request(nullable(schema.claudeDraft), "GET", `/api/chapters/${chapterId}/claude-draft`),
   /** Put Claude's draft in the chapter; both versions must still be the ones on screen. */
-  acceptClaudeDraft: (chapterId: string, baseVersion: number, draftVersion: number) =>
+  acceptClaudeDraft: (chapterId: string, baseVersion: number, draftVersion: number, mode: "as-drafted" | "replayed", expectedText?: string) =>
     request(schema.chapterWithContent, "POST", `/api/chapters/${chapterId}/claude-draft/accept`, {
       baseVersion,
       draftVersion,
+      mode,
+      expectedText,
     }),
   discardClaudeDraft: (chapterId: string) => request(schema.ok, "DELETE", `/api/chapters/${chapterId}/claude-draft`),
   claudeChanges: (projectId: string) =>

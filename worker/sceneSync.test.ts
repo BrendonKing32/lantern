@@ -247,7 +247,7 @@ describe("matching scenes to text", () => {
        VALUES ('c', 'p', 1, 0, 3, ?, ?)`,
     ).run(ts, ts);
     bucket.objects.set("projects/p/chapters/c/claude-draft.md", "Claude writes here.");
-    expect((await request("POST", "/api/chapters/c/claude-draft/accept", { baseVersion: 0, draftVersion: 1 })).status).toBe(200);
+    expect((await request("POST", "/api/chapters/c/claude-draft/accept", { baseVersion: 0, draftVersion: 1, mode: "as-drafted" })).status).toBe(200);
     expect(row(card.id)).toMatchObject({ in_text: 1, word_count: 3 });
     expect((await bucket.get("projects/p/chapters/c.md"))?.customMetadata).toEqual({ version: "1" });
   });

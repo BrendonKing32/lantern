@@ -179,6 +179,11 @@ export interface ClaudeChange {
  * Changes Claude made to a chapter's text through the connector. They stay
  * here, outside the chapter, until the author accepts or discards them.
  */
+export type DraftOp =
+  | { kind: "replace"; old_text: string; new_text: string }
+  | { kind: "append"; text: string }
+  | { kind: "set"; text: string };
+
 export interface ClaudeDraft {
   chapter_id: string;
   /** The draft's own version; each edit by Claude adds one. */
@@ -186,6 +191,7 @@ export interface ClaudeDraft {
   /** The chapter version the draft began from. */
   base_version: number;
   word_count: number;
+  ops: DraftOp[];
   created_at: string;
   updated_at: string;
   content: string;

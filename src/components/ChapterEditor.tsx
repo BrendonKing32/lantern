@@ -11,6 +11,7 @@ import { basicSetup, proseExtensions } from "../editorSetup";
 import { entriesChanged, wikilinks } from "../wikilinkEditor";
 import { grammar, recheckGrammar } from "../grammar";
 import { countWords } from "../../shared/wordcount";
+import { replayDraft } from "../../shared/draftReplay";
 import { splitScenes } from "../../shared/scenes";
 import { sceneBreakKeymap, sceneLabels } from "../sceneLabels";
 import { minimalChange } from "../minimalChange";
@@ -115,6 +116,7 @@ export function ChapterEditor({
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
+  const [, refreshDraftReview] = useState(0);
 
   const text = useRef("");
   const version = useRef(0);
@@ -256,7 +258,10 @@ export function ChapterEditor({
     }, WORD_COUNT_DELAY);
   };
   const status = (s: SaveState, detail?: string) => {
-    if (alive.current) cb.current.onStatus(s, detail);
+    if (alive.current) {
+      cb.current.onStatus(s, detail);
+      refreshDraftReview((n) => n + 1);
+    }
   };
 
   const saveRef = useRef<() => Promise<void>>(async () => {});
@@ -384,6 +389,7 @@ export function ChapterEditor({
           version.current = draft.baseVersion;
           text.current = draft.content;
           dirty.current = true;
+          refreshDraftReview((n) => n + 1);
           setInitialDoc(draft.content);
           cb.current.onWords(chapterId, countWords(draft.content), true);
           status("offline");
@@ -597,6 +603,7 @@ export function ChapterEditor({
     onCloseHistory();
     setDraftError(null);
     setDraftOpen(true);
+    if (dirty.current) void saveRef.current();
   };
 
   const draftFailed = (e: unknown, action: string) => {
@@ -607,7 +614,7 @@ export function ChapterEditor({
 
   // Put Claude's draft in the chapter. Unsaved writing is saved first, so the
   // server can keep it in History before the draft replaces it.
-  const acceptDraft = async () => {
+  const acceptDraft = async (mode: "as-drafted" | "replayed", expectedText: string) => {
     const d = claudeDraft;
     if (!d || blocked.current || draftBusy) return;
     setDraftBusy(true);
@@ -620,10 +627,15 @@ export function ChapterEditor({
         return;
       }
       const before = text.current;
+      const currentMode = d.base_version === version.current ? "as-drafted" : "replayed";
+      if (mode !== currentMode || (mode === "replayed" && replayDraft(before, d.ops).text !== expectedText)) {
+        setDraftError("The chapter changed while you were reviewing. Look it over again.");
+        return;
+      }
       blocked.current = true; // no saves while the chapter is being replaced
       let res: ChapterWithContent;
       try {
-        res = await api.acceptClaudeDraft(chapterId, version.current, d.version);
+        res = await api.acceptClaudeDraft(chapterId, version.current, d.version, mode, expectedText);
       } catch (e) {
         blocked.current = false;
         if (dirty.current) schedule(SAVE_DELAY);
@@ -704,12 +716,13 @@ export function ChapterEditor({
       <ClaudeDraftPanel
         title={title}
         draft={claudeDraft}
-        chapterText={() => text.current}
+        chapterText={text.current}
         chapterChanged={claudeDraft.base_version !== version.current || dirty.current}
-        blockedBy={conflict ? "Choose a version in the notice first." : null}
+        blockedBy={conflict ? "Choose a version in the notice first." : dirty.current || inFlight.current
+          ? "Your latest writing must be saved before accepting." : null}
         busy={draftBusy}
         error={draftError}
-        onAccept={() => void acceptDraft()}
+        onAccept={(mode, expectedText) => void acceptDraft(mode, expectedText)}
         onDiscard={() => void discardDraft()}
         onClose={() => setDraftOpen(false)}
       />

@@ -7,6 +7,7 @@ CREATE TABLE claude_drafts (
   version      INTEGER NOT NULL,   -- the draft's own version; each edit by Claude adds one
   base_version INTEGER NOT NULL,   -- the chapter version the draft began from
   word_count   INTEGER NOT NULL,
+  ops          TEXT NOT NULL DEFAULT '[]',
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );

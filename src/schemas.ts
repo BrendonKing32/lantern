@@ -281,6 +281,11 @@ export const claudeDraft: Check<ClaudeDraft> = object({
   version: number,
   base_version: number,
   word_count: number,
+  ops: array(tagged("kind", {
+    replace: object({ kind: literal("replace"), old_text: string, new_text: string }),
+    append: object({ kind: literal("append"), text: string }),
+    set: object({ kind: literal("set"), text: string }),
+  })),
   created_at: string,
   updated_at: string,
   content: string,

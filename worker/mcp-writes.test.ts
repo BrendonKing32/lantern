@@ -155,6 +155,31 @@ describe("scene connector", () => {
     expect((await call("read_chapter", { chapter_id: CH, scene_id: second })).isError).toBe(true);
   });
 
+  it("reads the chapter passage rather than a pending draft", async () => {
+    const { second } = await setup();
+    expect((await call("edit_chapter", {
+      chapter_id: CH, base_version: 5, edits: [{ old_text: "Second passage.", new_text: "Draft passage." }],
+    })).isError).toBeFalsy();
+    const read = textOf(await call("read_chapter", { chapter_id: CH, scene_id: second }));
+    expect(read).toContain("Second passage.");
+    expect(read).not.toContain("Draft passage.");
+  });
+
+  it.each([CH, "ch-2"])("refuses a move when %s has a Claude draft", async (draftChapter) => {
+    const { second } = await setup();
+    expect((await call("append_to_chapter", {
+      chapter_id: draftChapter, base_version: draftChapter === CH ? 5 : 0, text: "Draft addition.",
+    })).isError).toBeFalsy();
+    const result = await call("move_scene", {
+      scene_id: second, from_chapter_id: CH, from_passage_index: 1, to_chapter_id: "ch-2",
+      base_versions: { from: 5, to: 0 },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("This chapter has a draft by Claude waiting for the author");
+    expect(bucket.objects.get(KEY)).toBe(source);
+    expect(bucket.objects.get(destKey)).toBe("Destination.\n\n***\n\nNo card.");
+  });
+
   it("reconciles an interrupted write before reading a scene", async () => {
     const { second } = await setup();
     await bucket.put(KEY, source, { customMetadata: { version: "6" } });
@@ -341,7 +366,7 @@ describe("edit_chapter", () => {
 
   it("never counts Claude's words toward the author's day", async () => {
     await call("append_to_chapter", { chapter_id: CH, base_version: 4, text: "A great many new words arrived here." });
-    expect((await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1 })).status).toBe(200);
+    expect((await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1, mode: "as-drafted" })).status).toBe(200);
     expect(db.raw.prepare("SELECT COUNT(*) AS n FROM daily_words").get()).toEqual({ n: 0 });
   });
 
@@ -384,7 +409,7 @@ describe("accepting or discarding Claude's draft", () => {
   });
 
   it("puts the draft in the chapter and keeps the chapter's text in History", async () => {
-    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1 });
+    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1, mode: "as-drafted" });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ id: CH, version: 5, word_count: 10, content: NELL });
     expect(bucket.objects.get(KEY)).toBe(NELL);
@@ -397,11 +422,74 @@ describe("accepting or discarding Claude's draft", () => {
     expect(await (await app("GET", `/api/chapters/${CH}/claude-draft`)).json()).toBeNull();
   });
 
+  it("replays a stale draft without losing a paragraph the writer added", async () => {
+    const later = `${OPENING}\nA paragraph the writer added later.\n`;
+    expect((await app("PUT", `/api/chapters/${CH}`, { content: later, baseVersion: 4 })).status).toBe(200);
+    const wordsBefore = db.raw.prepare("SELECT * FROM daily_words").all();
+    expect((await app("POST", `/api/chapters/${CH}/claude-draft/accept`, {
+      baseVersion: 5, draftVersion: 1, mode: "as-drafted",
+    })).status).toBe(409);
+    const expectedText = later.replace("Mara", "Nell");
+    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, {
+      baseVersion: 5, draftVersion: 1, mode: "replayed", expectedText,
+    });
+    expect(res.status).toBe(200);
+    expect(bucket.objects.get(KEY)).toBe(expectedText);
+    expect(bucket.objects.get(KEY)).toContain("A paragraph the writer added later.");
+    expect(db.raw.prepare("SELECT * FROM daily_words").all()).toEqual(wordsBefore);
+  });
+
+  it("replays applicable edits and skips those that no longer fit", async () => {
+    await call("edit_chapter", { chapter_id: CH, base_version: 1, edits: [{ old_text: "dark", new_text: "night" }] });
+    const later = `${OPENING.replace("dark", "rain")}\nThe writer's paragraph.\n`;
+    expect((await app("PUT", `/api/chapters/${CH}`, { content: later, baseVersion: 4 })).status).toBe(200);
+    const expectedText = later.replace("Mara", "Nell");
+    expect((await app("POST", `/api/chapters/${CH}/claude-draft/accept`, {
+      baseVersion: 5, draftVersion: 2, mode: "replayed", expectedText,
+    })).status).toBe(200);
+    expect(bucket.objects.get(KEY)).toBe(expectedText);
+    expect(db.raw.prepare("SELECT summary FROM claude_changes WHERE action = 'accept_draft'").get())
+      .toEqual({ summary: "Accepted Claude's draft of “Arrival” (1 of 2 edits applied)" });
+  });
+
+  it("refuses a replay that differs from the reviewed text", async () => {
+    expect((await app("PUT", `/api/chapters/${CH}`, { content: `${OPENING}\nLater.`, baseVersion: 4 })).status).toBe(200);
+    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, {
+      baseVersion: 5, draftVersion: 1, mode: "replayed", expectedText: "old preview",
+    });
+    expect(res.status).toBe(409);
+    expect(bucket.objects.get(KEY)).toBe(`${OPENING}\nLater.`);
+    expect(draft()).toBeDefined();
+  });
+
+  it("refuses acceptance under a move lock without changing anything", async () => {
+    db.raw.prepare("UPDATE chapters SET moving_until = ? WHERE id = ?").run(new Date(Date.now() + 60_000).toISOString(), CH);
+    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, {
+      baseVersion: 4, draftVersion: 1, mode: "as-drafted",
+    });
+    expect(res.status).toBe(423);
+    expect(bucket.objects.get(KEY)).toBe(OPENING);
+    expect(chapter().version).toBe(4);
+    expect(draft()).toBeDefined();
+  });
+
+  it("reconciles an interrupted save before accepting a replay", async () => {
+    const later = `${OPENING}\nRecovered paragraph.\n`;
+    await bucket.put(KEY, later, { customMetadata: { version: "5" } });
+    const expectedText = later.replace("Mara", "Nell");
+    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, {
+      baseVersion: 5, draftVersion: 1, mode: "replayed", expectedText,
+    });
+    expect(res.status).toBe(200);
+    expect(chapter().version).toBe(6);
+    expect(bucket.objects.get(KEY)).toBe(expectedText);
+  });
+
   it("refuses when the chapter or the draft changed since the author looked", async () => {
-    const draftMoved = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 0 });
+    const draftMoved = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 0, mode: "as-drafted" });
     expect(draftMoved.status).toBe(409);
     expect(await draftMoved.json()).toMatchObject({ code: "draft_changed" });
-    expect((await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 3, draftVersion: 1 })).status).toBe(409);
+    expect((await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 3, draftVersion: 1, mode: "as-drafted" })).status).toBe(409);
     expect(bucket.objects.get(KEY)).toBe(OPENING);
     expect(chapter().version).toBe(4);
     expect(draft()).toMatchObject({ version: 1 });
@@ -410,7 +498,7 @@ describe("accepting or discarding Claude's draft", () => {
   it("changes nothing when History can't keep a copy", async () => {
     bucket.failPuts = /\/history\//;
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1 });
+    const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1, mode: "as-drafted" });
     log.mockRestore();
     expect(res.status).toBe(500);
     expect(bucket.objects.get(KEY)).toBe(OPENING);
