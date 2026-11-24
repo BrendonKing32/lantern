@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createBackup } from "./backups";
+import { sqliteD1 } from "./testing/d1";
 
 function fakeBucket(initialKeys: string[] = []) {
   const contents = new Map<string, { value: unknown; version: string }>();
@@ -155,6 +156,30 @@ describe("scheduled backups", () => {
     await expectIncomplete(({ DB }) => {
       DB.tables.chapters[0].version = 3;
     }, "The database changed during backup");
+  });
+
+  it("restores open and resolved margin notes with foreign keys enabled", async () => {
+    const db = sqliteD1();
+    db.raw.exec("PRAGMA foreign_keys = ON");
+    const ts = "2026-01-01T00:00:00.000Z";
+    db.raw.prepare("INSERT INTO projects (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)").run("p", "Book", ts, ts);
+    db.raw.prepare("INSERT INTO chapters (id, project_id, title, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run("c", "p", "Chapter", 0, ts, ts);
+    const insert = db.raw.prepare(
+      `INSERT INTO margin_notes (id, project_id, chapter_id, quote, prefix, suffix, body, author, resolved_at, created_at, updated_at)
+       VALUES (?, 'p', 'c', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insert.run("open", "Writer's quote", "before ", " after", "Private 'note'", "writer", null, ts, ts);
+    insert.run("resolved", "Passage", "", "", "Claude's note", "claude", ts, ts, ts);
+    const original = db.raw.prepare("SELECT * FROM margin_notes ORDER BY id").all();
+    const backups = fakeBucket();
+    await createBackup({ DB: db as unknown as D1Database, BUCKET: fakeBucket(), BACKUPS: backups });
+    const sql = [...backups.contents.entries()].find(([key]) => key.endsWith("/database.sql"))?.[1].value as string;
+    expect(sql).toContain('INSERT INTO "margin_notes"');
+    db.raw.prepare("UPDATE margin_notes SET body = 'changed'").run();
+    insert.run("extra", "Other", "", "", "New", "writer", null, ts, ts);
+    db.raw.exec(sql);
+    expect(db.raw.prepare("SELECT * FROM margin_notes ORDER BY id").all()).toEqual(original);
   });
 
   it("does not mark a backup complete if any other database record changes during the copy", async () => {

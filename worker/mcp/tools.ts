@@ -1,6 +1,7 @@
 // The read tools Claude sees when Lantern is added as a connector.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { createAnchorMatcher } from "../../shared/anchors";
 import { splitScenes } from "../../shared/scenes";
 import type { BibleEntry, ChapterMeta, Snapshot } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
@@ -9,6 +10,7 @@ import type { Env } from "../env";
 import { listActs } from "../handlers/acts";
 import { BIBLE_COLS, toEntry, type BibleRow } from "../handlers/bible";
 import { draftRow, readClaudeDraft } from "../handlers/claudeDrafts";
+import { listChapterNotes } from "../handlers/notes";
 import { sceneListing } from "../handlers/scenes";
 import { HttpError } from "../http";
 
@@ -91,6 +93,42 @@ export function findMatches(
 }
 
 export function registerTools(server: McpServer, env: Env) {
+  server.registerTool(
+    "list_margin_notes",
+    {
+      title: "List margin notes",
+      description: "Private margin notes on the saved chapter text, including whether each passage is still found.",
+      inputSchema: {
+        novel_id: z.string().optional().describe("From list_novels"),
+        chapter_id: z.string().optional().describe("From get_outline"),
+        include_resolved: z.boolean().optional().describe("Include resolved notes (default false)"),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ novel_id, chapter_id, include_resolved = false }) => {
+      if (!novel_id && !chapter_id) throw new HttpError(400, "Give novel_id or chapter_id.");
+      if (novel_id) await requireProject(env, novel_id);
+      const selected = chapter_id ? [await getChapterRow(env, chapter_id)] : await chapters(env, novel_id!);
+      if (novel_id && selected.some((chapter) => chapter.project_id !== novel_id)) {
+        throw new HttpError(400, "That chapter isn't in that novel.");
+      }
+      const notes = await Promise.all(selected.map(async (chapter) => {
+        const [content, open, resolved] = await Promise.all([
+          chapterText(env, chapter),
+          listChapterNotes(env, chapter.id, false),
+          include_resolved ? listChapterNotes(env, chapter.id, true) : Promise.resolve([]),
+        ]);
+        const findAnchor = createAnchorMatcher(content);
+        return [...open, ...resolved].map((note) => ({
+          ...note,
+          resolved: note.resolved_at !== null,
+          passage_found: findAnchor(note) !== null,
+        }));
+      }));
+      return data(notes.flat());
+    },
+  );
+
   server.registerTool(
     "list_novels",
     {

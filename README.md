@@ -324,6 +324,11 @@ app and private API protected.
   In **Write**, scene labels show each passage's card; click a label to see its notes beside
   the page. Turn **Scene labels** on or off under **More** on this device. Press
   ⌘/Ctrl+Shift+Enter to insert a scene break in the chapter's usual style.
+- **Notes:** select a passage and choose **More → Add note**, or press ⌘/Ctrl+Alt+M.
+  Open **More → Notes** to jump to, edit, resolve or delete notes; resolved notes and notes
+  whose passage is no longer found are listed separately. Highlights and margin markers open
+  notes beside the page, and Claude's notes are labelled. Notes need a connection and stay
+  private: they are not part of the chapter, its word count, search, exports or review links.
 - **Search:** the **Search** view finds literal words or phrases across the whole book, including
   drafts saved on this device. Choose whether to match case, then open a result to jump to it
   in the chapter editor. Search shows up to 500 matches at a time. **Replace across the book**

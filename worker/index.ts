@@ -28,6 +28,7 @@ import {
 } from "./handlers/chapters";
 import { getSnapshot, listHistory } from "./handlers/history";
 import { cleanupIncompleteMilestones, createMilestone, deleteMilestone, listMilestones, updateMilestone } from "./handlers/milestones";
+import { createNote, deleteNote, listNotes, updateNote } from "./handlers/notes";
 import {
   createProject,
   deleteProject,
@@ -109,6 +110,10 @@ const routes: Array<[string, string, Handler]> = [
   ["DELETE", "/api/chapters/:id/claude-draft", discardClaudeDraft],
   ["GET", "/api/chapters/:id/history", listHistory],
   ["GET", "/api/chapters/:id/history/:snapshotId", getSnapshot],
+  ["GET", "/api/chapters/:id/notes", listNotes],
+  ["POST", "/api/chapters/:id/notes", createNote],
+  ["PATCH", "/api/notes/:id", updateNote],
+  ["DELETE", "/api/notes/:id", deleteNote],
   ["GET", "/api/projects/:id/share", getShareStatus],
   ["POST", "/api/projects/:id/share", createShare],
   ["DELETE", "/api/projects/:id/share", revokeShare],

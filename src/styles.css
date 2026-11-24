@@ -2860,6 +2860,31 @@ select {
   }
 }
 
+/* Margin notes are decorations, not chapter text. */
+.cm-editor .cm-note-highlight {
+  background: color-mix(in srgb, var(--lamp) 22%, transparent);
+  cursor: pointer;
+}
+.cm-editor .cm-note-gutter { background: transparent; border: 0; }
+.cm-note-marker {
+  border: 0;
+  padding: 0 0.15rem;
+  background: transparent;
+  color: var(--lamp);
+  cursor: pointer;
+}
+.margin-note-list { list-style: none; padding: 0; margin: 0; }
+.margin-note { border-top: 1px solid var(--rule); padding: 0.8rem 0; }
+.margin-note.is-selected { border-left: 2px solid var(--lamp); padding-left: 0.6rem; }
+.margin-note blockquote, .margin-note-form blockquote {
+  margin: 0.3rem 0;
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+}
+.margin-note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.margin-note-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.margin-notes textarea { display: block; width: 100%; min-height: 6rem; }
+
 .check-tabs {
   display: flex;
   gap: 0.25rem;
