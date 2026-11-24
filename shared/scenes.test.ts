@@ -13,6 +13,10 @@ import {
 } from "./scenes";
 
 describe("normalizeText and splitScenes", () => {
+  it("strips wiki links, markdown marks, case, and repeated whitespace from anchors", () => {
+    expect(normalizeAnchor("  **[[Mara|her]]**\n *lantern*  ")).toBe("her lantern");
+  });
+
   it.each(["***", "* * *", "---", "___", "#", "##"])("splits on %s", (breakLine) => {
     const passages = splitScenes(`Before the break.\n\n${breakLine}\n\nAfter the break.`);
     expect(passages).toHaveLength(2);
@@ -22,6 +26,7 @@ describe("normalizeText and splitScenes", () => {
 
   it("does not split a setext heading, fenced code, or a block quote", () => {
     expect(splitScenes("A setext heading\n---\n\nParagraph.")).toHaveLength(1);
+    expect(splitScenes("A setext heading\n===\n\nParagraph.")).toHaveLength(1);
     expect(splitScenes("Before.\n\n```md\n***\n```\n\nAfter.")).toHaveLength(1);
     expect(splitScenes("Before.\n\n> ---\n\nAfter.")).toHaveLength(1);
   });
@@ -50,6 +55,7 @@ describe("normalizeText and splitScenes", () => {
     expect(normalized).toBe("First passage.\n\n***\n\nSecond passage.");
     expect(passages[1].breakStart).toBe(normalized.indexOf("***"));
     expect(passages[1].start).toBe(normalized.indexOf("***") + 4);
+    expect(passages[1].end).toBe(normalized.length);
   });
 
   it("leaves a duplicate chapter-title heading out of anchors and excerpts", () => {
@@ -57,6 +63,14 @@ describe("normalizeText and splitScenes", () => {
     expect(passage.head).toBe("the story begins here.");
     expect(passage.excerpt).toBe("The story begins here.");
     expect(passage.words).toBe(6);
+  });
+
+  it("recognizes formatted and linked duplicate chapter-title headings", () => {
+    const formatted = splitScenes("# The **Title**\n\nMara sees [[the lantern|her]].", "the title");
+    expect(formatted[0].head).toBe("mara sees her.");
+    expect(formatted[0].excerpt).toBe("Mara sees her.");
+    expect(formatted[0].words).toBe(7);
+    expect(splitScenes("# [[Mara|her]]\n\nThe scene begins.", "her")[0].head).toBe("the scene begins.");
   });
 
   it("uses the displayed text of wikilinks in anchors and excerpts", () => {
@@ -117,8 +131,8 @@ interface MatchCase {
 const matchCases: MatchCase[] = [
   {
     name: "typing inside a scene",
-    original: "The scene opens here. Then the writer adds another sentence.",
-    current: "The scene opens here. Then the writer adds another sentence. A new line.",
+    original: "The door was open.\nShe waited.",
+    current: "The door was ajar.\nShe waited.",
     cardPassages: [0],
     expectedPairs: { "scene-0": 0 },
     placeholders: [],
@@ -258,6 +272,26 @@ describe("passage text edits", () => {
     const text = "First passage.\n\n---\n\nLast passage.";
     expect(insertPassage(text, splitScenes(text), "Inserted passage.", 1)).toBe(
       "First passage.\n\n---\n\nInserted passage.\n\n---\n\nLast passage.",
+    );
+  });
+
+  it("uses the default break style when inserting into a chapter without breaks", () => {
+    expect(insertPassage("Alpha.", splitScenes("Alpha."), "New scene.", 0)).toBe(
+      "New scene.\n\n***\n\nAlpha.",
+    );
+  });
+
+  it("preserves a final newline when inserting into an empty chapter", () => {
+    expect(insertPassage("", splitScenes(""), "New scene.\n", null)).toBe("New scene.\n");
+  });
+
+  it("preserves identity order after normalizing spacing", () => {
+    const text = " Alpha. \r\n\r\n***\r\n\r\n Beta. \r\n";
+    const normalizedSpacing = (value: string) =>
+      normalizeText(value).replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n+/g, "\n").trim();
+    const passages = splitScenes(text);
+    expect(normalizedSpacing(arrangeText(text, passages, passages.map((passage) => passage.index)))).toBe(
+      normalizedSpacing(text),
     );
   });
 

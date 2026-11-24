@@ -130,7 +130,7 @@ describe("draft storage", () => {
       const { selectChapter } = await import("./resume");
       const chapter = (id: string) => ({
         id, project_id: "novel-1", title: id, synopsis: "", position: 0,
-        word_count: 0, version: 1, updated_at: "",
+        word_count: 0, version: 1, updated_at: "", act_id: null,
       });
       await cache.setProject({
         project: {
@@ -138,6 +138,7 @@ describe("draft storage", () => {
           target_words: null, target_date: null, dialect: "american",
         },
         chapters: [chapter("first"), chapter("last")],
+        acts: [],
       });
       await cache.setLastChapter("novel-1", "last");
 

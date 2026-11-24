@@ -3,6 +3,7 @@
 import {
   BIBLE_KINDS,
   DIALECTS,
+  type Act,
   type AiStatus,
   type BibleEntry,
   type BibleEntryDraft,
@@ -15,6 +16,7 @@ import {
   type DeletedChapter,
   type DeletedProject,
   type Dialect,
+  type Outline,
   type ProjectDetail,
   type ProjectSummary,
   type SaveResult,
@@ -54,9 +56,12 @@ const chapterFields = {
   word_count: number,
   version: number,
   updated_at: string,
+  act_id: nullable(string),
 };
 
 export const chapterMeta: Check<ChapterMeta> = object(chapterFields);
+
+export const act: Check<Act> = object({ id: string, project_id: string, title: string, position: number });
 
 export const projectDetail: Check<ProjectDetail> = object({
   project: object({
@@ -69,7 +74,10 @@ export const projectDetail: Check<ProjectDetail> = object({
     dialect,
   }),
   chapters: array(chapterMeta),
+  acts: array(act),
 });
+
+export const outline: Check<Outline> = object({ acts: array(act), chapters: array(chapterMeta) });
 
 export const chapterWithContent: Check<ChapterWithContent> = object({ ...chapterFields, content: string });
 

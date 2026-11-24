@@ -2,6 +2,7 @@ import { DIALECTS } from "../../shared/types";
 import type { ChapterMeta, DeletedProject, ProjectSummary } from "../../shared/types";
 import { CHAPTER_COLS, insertChapter, requireProject } from "../db";
 import { body, cleanTitle, HttpError, isDay, json, newId, now, type Handler } from "../http";
+import { listActs } from "./acts";
 
 const PROJECT_SUMMARY = `
   SELECT p.id, p.title, p.created_at, p.updated_at, p.archived_at, p.deleted_at,
@@ -61,7 +62,7 @@ export const getProject: Handler = async (_req, env, p) => {
   )
     .bind(p.id)
     .all<ChapterMeta>();
-  return json({ project, chapters: results });
+  return json({ project, chapters: results, acts: await listActs(env, p.id) });
 };
 
 export const updateProject: Handler = async (req, env, p) => {
