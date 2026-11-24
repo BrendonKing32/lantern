@@ -3,6 +3,7 @@
 import {
   BIBLE_KINDS,
   DIALECTS,
+  type Act,
   type AiStatus,
   type BibleEntry,
   type BibleEntryDraft,
@@ -15,10 +16,12 @@ import {
   type DeletedChapter,
   type DeletedProject,
   type Dialect,
+  type Outline,
   type ProjectDetail,
   type ProjectSummary,
   type SaveResult,
   type SceneMeta,
+  type SceneListing,
   type ShareComment,
   type SharedProject,
   type Snapshot,
@@ -54,9 +57,12 @@ const chapterFields = {
   word_count: number,
   version: number,
   updated_at: string,
+  act_id: nullable(string),
 };
 
 export const chapterMeta: Check<ChapterMeta> = object(chapterFields);
+
+export const act: Check<Act> = object({ id: string, project_id: string, title: string, position: number });
 
 export const projectDetail: Check<ProjectDetail> = object({
   project: object({
@@ -69,7 +75,10 @@ export const projectDetail: Check<ProjectDetail> = object({
     dialect,
   }),
   chapters: array(chapterMeta),
+  acts: array(act),
 });
+
+export const outline: Check<Outline> = object({ acts: array(act), chapters: array(chapterMeta) });
 
 export const chapterWithContent: Check<ChapterWithContent> = object({ ...chapterFields, content: string });
 
@@ -210,8 +219,20 @@ export const sceneMeta: Check<SceneMeta> = object({
   location: string,
   status: literal("planned", "drafted"),
   position: number,
+  in_text: boolean,
+  word_count: number,
+  excerpt: string,
+  passage_index: nullable(number),
+  unconfirmed: boolean,
+  unlinked_at: nullable(string),
+  merged_into: nullable(string),
   created_at: string,
   updated_at: string,
+});
+
+export const sceneListing: Check<SceneListing> = object({
+  scenes: array(sceneMeta),
+  placeholders: array(object({ chapter_id: string, passage_index: number, words: number, excerpt: string })),
 });
 
 const snapshotFields = {

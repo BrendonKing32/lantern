@@ -10,6 +10,7 @@ import { basicSetup, proseExtensions } from "../editorSetup";
 import { entriesChanged, wikilinks } from "../wikilinkEditor";
 import { grammar, recheckGrammar } from "../grammar";
 import { countWords } from "../../shared/wordcount";
+import { splitScenes } from "../../shared/scenes";
 import { minimalChange } from "../minimalChange";
 import type { BibleEntry, ChapterWithContent, Dialect, SaveResult } from "../../shared/types";
 
@@ -49,6 +50,7 @@ export interface EditorControls {
   text: () => string;
   /** Select and scroll to a quoted passage. False if it isn't in the chapter. */
   reveal: (quote: string) => boolean;
+  revealScene: (index: number) => boolean;
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -175,6 +177,18 @@ export function ChapterEditor({
         v.dispatch({
           selection: EditorSelection.range(at[0], at[1]),
           effects: EditorView.scrollIntoView(at[0], { y: "center" }),
+        });
+        if (!readOnlyRef.current) v.focus();
+        return true;
+      },
+      revealScene: (index) => {
+        const v = view.current;
+        if (!v) return false;
+        const passage = splitScenes(v.state.doc.toString())[index];
+        if (!passage) return false;
+        v.dispatch({
+          selection: EditorSelection.cursor(passage.start),
+          effects: EditorView.scrollIntoView(passage.start, { y: "center" }),
         });
         if (!readOnlyRef.current) v.focus();
         return true;

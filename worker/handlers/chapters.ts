@@ -1,8 +1,9 @@
 import { countWords } from "../../shared/wordcount";
 import type { DeletedChapter, SnapshotReason } from "../../shared/types";
-import { chapterKey, getChapterRow, insertChapter, MARKDOWN, MAX_CHAPTER_BYTES, requireProject } from "../db";
+import { chapterKey, chapterPut, getChapterRow, insertChapter, lastActId, MAX_CHAPTER_BYTES, requireProject } from "../db";
 import { body, cleanTitle, HttpError, isDay, json, now, type Handler } from "../http";
 import { snapshotBeforeSave } from "./history";
+import { afterChapterWrite } from "../sceneSync";
 
 export const listDeletedChapters: Handler = async (_req, env, p) => {
   await requireProject(env, p.id);
@@ -15,7 +16,8 @@ export const listDeletedChapters: Handler = async (_req, env, p) => {
   return json(results);
 };
 
-// A restored chapter goes back at the end of the book; drag it where it belongs.
+// A restored chapter goes back at the end of the book (so into the last act);
+// drag it where it belongs.
 export const restoreChapter: Handler = async (_req, env, p) => {
   const row = await env.DB.prepare(
     `SELECT project_id FROM chapters
@@ -26,13 +28,14 @@ export const restoreChapter: Handler = async (_req, env, p) => {
     .first<{ project_id: string }>();
   if (!row) throw new HttpError(404, "That chapter isn't in Recently deleted");
   const ts = now();
+  const actId = await lastActId(env, row.project_id);
   await env.DB.batch([
     env.DB.prepare(
-      `UPDATE chapters SET deleted_at = NULL,
+      `UPDATE chapters SET deleted_at = NULL, act_id = ?,
               position = (SELECT COALESCE(MAX(position), -1) + 1 FROM chapters
                            WHERE project_id = ? AND deleted_at IS NULL)
         WHERE id = ?`,
-    ).bind(row.project_id, p.id),
+    ).bind(actId, row.project_id, p.id),
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id),
   ]);
   return json(await getChapterRow(env, p.id));
@@ -43,30 +46,6 @@ export const createChapter: Handler = async (req, env, p) => {
   const b = await body<{ title?: string }>(req);
   const chapter = await insertChapter(env, p.id, cleanTitle(b.title, "Untitled chapter"));
   return json(chapter, 201);
-};
-
-export const reorderChapters: Handler = async (req, env, p) => {
-  await requireProject(env, p.id);
-  const b = await body<{ chapterIds?: unknown }>(req);
-  if (!Array.isArray(b.chapterIds) || !b.chapterIds.every((x) => typeof x === "string")) {
-    throw new HttpError(400, "chapterIds must be an array of ids");
-  }
-  const ids = b.chapterIds as string[];
-  const { results } = await env.DB.prepare(
-    "SELECT id FROM chapters WHERE project_id = ? AND deleted_at IS NULL",
-  )
-    .bind(p.id)
-    .all<{ id: string }>();
-  const existing = new Set(results.map((r) => r.id));
-  if (ids.length !== existing.size || !ids.every((id) => existing.has(id))) {
-    throw new HttpError(409, "Chapter list is out of date; reload and try again");
-  }
-  await env.DB.batch(
-    ids.map((id, i) =>
-      env.DB.prepare("UPDATE chapters SET position = ? WHERE id = ? AND project_id = ?").bind(i, id, p.id),
-    ),
-  );
-  return json({ ok: true });
 };
 
 export const getChapter: Handler = async (_req, env, p) => {
@@ -140,7 +119,7 @@ export const saveChapter: Handler = async (req, env, p) => {
   }
 
   try {
-    await env.BUCKET.put(chapterKey(row.project_id, row.id), b.content, MARKDOWN);
+    await chapterPut(env, row, b.content, b.baseVersion + 1);
   } catch (e) {
     // Roll the version back so the client's next attempt still lines up.
     await env.DB.prepare(
@@ -150,6 +129,7 @@ export const saveChapter: Handler = async (req, env, p) => {
       .run();
     throw e;
   }
+  await afterChapterWrite(env, row, b.content, b.baseVersion + 1);
   // Count the words this save added (or removed) toward the writer's day.
   // Putting back an old version from History isn't writing, so it doesn't count.
   const day = isDay(b.day) ? b.day : ts.slice(0, 10);

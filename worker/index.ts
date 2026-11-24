@@ -13,6 +13,7 @@ import {
   lastBookCheck,
   testAi,
 } from "./handlers/claude";
+import { createAct, deleteAct, reorderChapters, updateAct } from "./handlers/acts";
 import { createEntry, deleteEntry, listBible, updateEntry } from "./handlers/bible";
 import { listClaudeChanges } from "./handlers/claudeChanges";
 import {
@@ -20,7 +21,6 @@ import {
   deleteChapter,
   getChapter,
   listDeletedChapters,
-  reorderChapters,
   restoreChapter,
   saveChapter,
   updateChapter,
@@ -88,6 +88,9 @@ const routes: Array<[string, string, Handler]> = [
   ["DELETE", "/api/projects/:id", deleteProject],
   ["POST", "/api/projects/:id/chapters", createChapter],
   ["PUT", "/api/projects/:id/order", reorderChapters],
+  ["POST", "/api/projects/:id/acts", createAct],
+  ["PATCH", "/api/acts/:id", updateAct],
+  ["DELETE", "/api/acts/:id", deleteAct],
   ["GET", "/api/chapters/:id", getChapter],
   ["PUT", "/api/chapters/:id", saveChapter],
   ["PATCH", "/api/chapters/:id", updateChapter],

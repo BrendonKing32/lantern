@@ -271,13 +271,24 @@ app and private API protected.
   The other views, Search and the theme are under **More**, and **Chapters** opens the list.
 - **Rename** a chapter or the novel: double-click its title, or use the pencil button.
 - **Reorder** chapters: drag the handle beside a chapter, or focus the handle and use Space plus the arrow keys.
+- **Acts:** group chapters into acts, parts or any buckets you like. **Add act** puts every
+  chapter into a first act, then adds empty acts at the end; **Start an act here** (in a
+  chapter's ⋯ menu, or its hover tools) begins a new act at that chapter. Drag a chapter under
+  another act's heading to move it there. An act's ⋯ menu renames it, moves it (its chapters go
+  with it) or removes it; removing an act keeps its chapters where they are, in the act before.
+  Chapter numbers run through the whole book. Exports show each act's title on a page of its
+  own before its first chapter (in EPUB's contents too); the Markdown export files chapters in
+  a folder per act.
 - **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
   index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
-  to reorder the book, click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
+  to reorder the book (a card dropped on another joins that card's act), click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
   **Open** a card to write that chapter.
-- **Scenes:** the **Scenes** view keeps planning cards inside each chapter. Add and reorder
-  scenes, then note a summary, POV, location and whether the scene is planned or drafted.
-  Scene cards are planning notes and do not split or change the chapter manuscript.
+- **Scenes:** the **Scenes** view shows planned cards and cards matched to passages between
+  scene breaks. In-text cards show their word counts and excerpts; **Open** takes you to the
+  passage in **Write**. For a passage with no card, use **Add card** or **This is…** to link
+  a planned card. Check suggested matches with **Looks right** or **Not this one**. You can
+  reorder cards and edit their summaries, POV and locations without changing chapter text.
+  Moving an in-text card to another chapter requires moving its text in the editor first.
 - **Search:** the **Search** view finds literal words or phrases across the whole book, including
   drafts saved on this device. Choose whether to match case, then open a result to jump to it
   in the chapter editor. Search shows up to 500 matches at a time. **Replace across the book**
