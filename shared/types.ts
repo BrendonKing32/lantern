@@ -49,11 +49,14 @@ export interface DeletedChapter {
   deleted_at: string;
 }
 
+export type ChapterRevisionStatus = "drafting" | "revising" | "done";
+
 export interface ChapterMeta {
   id: string;
   project_id: string;
   title: string;
   synopsis: string;
+  revision_status: ChapterRevisionStatus;
   position: number;
   word_count: number;
   version: number;
@@ -76,7 +79,7 @@ export interface Outline {
   chapters: ChapterMeta[];
 }
 
-export type SceneStatus = "planned" | "drafted";
+export type SceneStatus = "planned" | "drafted" | "revising" | "done";
 
 export interface SceneMeta {
   id: string;
@@ -156,6 +159,8 @@ export interface DayWords {
 export interface Stats {
   daily_goal: number | null;
   today: number;
+  revised_today: number;
+  streak_counts_revision: boolean;
   /** Consecutive days meeting the goal (or writing anything, with no goal), counting today once it's met. */
   streak: number;
   best_streak: number;
