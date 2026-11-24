@@ -218,12 +218,16 @@ export function splitScenes(markdown: string, chapterTitle?: string): Passage[] 
 
 function usualBreak(passages: Passage[]): string {
   const counts = new Map<string, number>();
+  for (const passage of passages) {
+    if (passage.breakLine) {
+      counts.set(passage.breakLine, (counts.get(passage.breakLine) ?? 0) + 1);
+    }
+  }
   let mostUsed = "***";
   let maximum = 0;
   for (const passage of passages) {
     if (!passage.breakLine) continue;
-    const count = (counts.get(passage.breakLine) ?? 0) + 1;
-    counts.set(passage.breakLine, count);
+    const count = counts.get(passage.breakLine)!;
     if (count > maximum) {
       maximum = count;
       mostUsed = passage.breakLine;
@@ -238,6 +242,10 @@ function passageBodies(text: string, passages: Passage[]): string[] {
   );
 }
 
+function cleanPassageBody(body: string): string {
+  return body.replace(/^(?:[ \t]*\n)+/, "").replace(/\s+$/, "");
+}
+
 function renderPassages(
   bodies: string[],
   breakLines: Array<string | null>,
@@ -247,13 +255,13 @@ function renderPassages(
   if (bodies.length === 0) {
     return prefix ? prefix.trimEnd() + (originalEndedWithNewline ? "\n" : "") : "";
   }
-  const firstBody = bodies[0].trimStart();
+  const firstBody = cleanPassageBody(bodies[0]);
   let text = prefix
     ? `${prefix.trimEnd()}${firstBody ? `\n\n${firstBody}` : ""}`
     : firstBody;
   for (let index = 1; index < bodies.length; index++) {
     const line = breakLines[index] ?? "***";
-    text = `${text.trimEnd()}\n\n${line}\n\n${bodies[index].trimStart()}`;
+    text = `${text.replace(/\s+$/, "")}\n\n${line}\n\n${cleanPassageBody(bodies[index])}`;
   }
   return text.replace(/\n+$/, "") + (originalEndedWithNewline ? "\n" : "");
 }
@@ -307,7 +315,7 @@ export function takePassage(
     ? normalized.slice(0, passages[0].lead)
     : "";
   const bodies = passageBodies(normalized, passages);
-  const removed = bodies[index].trim();
+  const removed = cleanPassageBody(bodies[index]);
   const remaining = passages
     .map((passage, passageIndex) => ({ passage, body: bodies[passageIndex], passageIndex }))
     .filter((entry) => entry.passageIndex !== index);
@@ -331,7 +339,7 @@ export function insertPassage(
 ): string {
   const normalized = normalizeText(text);
   if (beforeIndex !== null) validatePassageIndex(passages, beforeIndex);
-  if (!normalized.trim()) return normalizeText(body);
+  if (!normalized.trim()) return cleanPassageBody(normalizeText(body));
 
   const prefix = passages[0]?.lead > passages[0]?.start
     ? normalized.slice(0, passages[0].lead)

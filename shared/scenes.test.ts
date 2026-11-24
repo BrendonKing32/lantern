@@ -228,6 +228,11 @@ describe("passage text edits", () => {
     const text = "First.\n\n---\n\nSecond.\n\n***\n\nThird.";
     const passages = splitScenes(text);
     expect(arrangeText(text, passages, [2, 0, 1])).toBe("Third.\n\n---\n\nFirst.\n\n---\n\nSecond.");
+
+    const tiedCounts = "Zero.\n\n***\n\nOne.\n\n---\n\nTwo.\n\n---\n\nThree.\n\n***\n\nFour.\n";
+    expect(arrangeText(tiedCounts, splitScenes(tiedCounts), [1, 0, 2, 3, 4])).toBe(
+      "One.\n\n***\n\nZero.\n\n---\n\nTwo.\n\n---\n\nThree.\n\n***\n\nFour.\n",
+    );
   });
 
   it("round-trips an identity order with normalized spacing and final newline", () => {
@@ -254,6 +259,24 @@ describe("passage text edits", () => {
     expect(insertPassage(text, splitScenes(text), "Inserted passage.", 1)).toBe(
       "First passage.\n\n---\n\nInserted passage.\n\n---\n\nLast passage.",
     );
+  });
+
+  it("preserves indentation when arranging, taking, and inserting a passage", () => {
+    const text = "Intro.\n\n***\n\n    indented code line\n\nAfter.\n";
+    const passages = splitScenes(text);
+    const arranged = arrangeText(text, passages, [1, 0]);
+    expect(arranged).toBe("    indented code line\n\nAfter.\n\n***\n\nIntro.\n");
+
+    const taken = takePassage(text, passages, 1);
+    expect(taken.body).toBe("    indented code line\n\nAfter.");
+    expect(taken.body.startsWith("    ")).toBe(true);
+
+    const destination = "Existing.\n\n---\n\nEnd.";
+    const inserted = insertPassage(destination, splitScenes(destination), taken.body, 1);
+    expect(inserted).toBe(
+      "Existing.\n\n---\n\n    indented code line\n\nAfter.\n\n---\n\nEnd.",
+    );
+    expect(inserted).toContain("\n    indented code line");
   });
 
   it("keeps a matching chapter-title heading pinned while rearranging passages", () => {
