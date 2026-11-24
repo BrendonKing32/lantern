@@ -286,6 +286,7 @@ app and private API protected.
 
 ## Using it
 
+- **Write:** opening a chapter leaves the text unfocused. Click where you want to write to place the caret.
 - **Milestones:** use **More → Milestones** to save a named copy of every chapter, with an
   optional note. Lantern saves your unsaved writing first; this needs a connection. Rename or
   delete milestones there without changing your chapters. The novel sidebar shows how many words

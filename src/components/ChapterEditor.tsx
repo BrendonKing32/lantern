@@ -942,7 +942,6 @@ export function ChapterEditor({
           basicSetup={basicSetup}
           theme="none"
           placeholder="Begin here."
-          autoFocus={!readOnly}
         />
       )}
     </article>
