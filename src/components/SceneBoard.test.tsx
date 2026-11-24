@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { pointerWithin } from "@dnd-kit/core";
 import type { ChapterMeta, SceneMeta, ScenePlaceholder } from "../../shared/types";
-import { SceneBoard } from "./SceneBoard";
+import { SceneBoard, sceneDragOrder } from "./SceneBoard";
 
 const chapter: ChapterMeta = {
   id: "c", project_id: "p", title: "Chapter one", synopsis: "", position: 0,
@@ -27,6 +28,24 @@ describe("scene pairing banner", () => {
     const html = render([card]);
     expect(html).not.toContain("Check how your scene cards line up with the text.");
     expect(html).toContain("This is…");
+  });
+
+  describe("scene dragging", () => {
+    it("only reorders an in-text card over another card in its own group", () => {
+      const first = { ...card, id: "first", in_text: true, passage_index: 0 };
+      const second = { ...card, id: "second", position: 1 };
+      expect(sceneDragOrder([first, second], "first", "second")).toEqual(["second", "first"]);
+      expect(sceneDragOrder([first, second], "first", null)).toBeNull();
+      expect(sceneDragOrder([first, second], "first", "other-chapter")).toBeNull();
+      expect(sceneDragOrder([first, second], "second", "first")).toBeNull();
+    });
+
+    it("does not snap an outside drop back to a source card", () => {
+      const rect = { left: 0, right: 100, top: 0, bottom: 100, width: 100, height: 100 };
+      const container = { id: "source", data: { current: {} }, disabled: false, node: { current: null }, rect: { current: rect } };
+      const args = { pointerCoordinates: { x: 200, y: 200 }, droppableRects: new Map([["source", rect]]), droppableContainers: [container] };
+      expect(pointerWithin(args as unknown as Parameters<typeof pointerWithin>[0])).toEqual([]);
+    });
   });
 
   it("shows chapters with unconfirmed cards until dismissed or confirmed", () => {

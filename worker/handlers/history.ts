@@ -9,7 +9,7 @@ const SNAPSHOT_INTERVAL_MS = 10 * 60 * 1000;
 
 /**
  * Copy the chapter's current text into its history before it's overwritten.
- * Automatic snapshots are rate-limited; restores, replacements and conflict
+ * Automatic snapshots are rate-limited; moves, restores, replacements and conflict
  * overwrites always keep a copy. Empty text is never worth keeping.
  */
 export async function snapshotBeforeSave(

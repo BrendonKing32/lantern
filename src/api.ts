@@ -2,6 +2,7 @@ import type { BibleEntry, BibleKind, BookCheckEvent, Dialect, SceneMeta } from "
 import * as schema from "./schemas";
 import { array, type Check, nullable, ShapeError } from "./validate";
 import { localDay } from "./when";
+import { trackChapterActivity } from "./chapterActivity";
 
 export class ApiError extends Error {
   constructor(
@@ -126,7 +127,7 @@ export const api = {
       writtenAt?: number;
     } = {},
   ) =>
-    request(
+    trackChapterActivity(id, request(
       schema.saveResult,
       "PUT",
       `/api/chapters/${id}`,
@@ -139,7 +140,7 @@ export const api = {
         day: localDay(opts.writtenAt),
       },
       { keepalive: opts.keepalive },
-    ),
+    )),
   updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
     request(schema.chapterMeta, "PATCH", `/api/chapters/${id}`, patch),
   scenes: (projectId: string) => request(schema.sceneListing, "GET", `/api/projects/${projectId}/scenes`),
@@ -154,6 +155,8 @@ export const api = {
   deleteScene: (id: string) => request(schema.ok, "DELETE", `/api/scenes/${id}`),
   reorderScenes: (projectId: string, chapterId: string | null, sceneIds: string[]) =>
     request(schema.ok, "PUT", `/api/projects/${projectId}/scenes/order`, { chapterId, sceneIds }),
+  arrangeScenes: (chapterId: string, baseVersion: number, sceneIds: string[]) =>
+    request(schema.saveResult, "PUT", `/api/chapters/${chapterId}/scenes/arrangement`, { baseVersion, sceneIds }),
   deleteChapter: (id: string) => request(schema.ok, "DELETE", `/api/chapters/${id}`),
   listHistory: (chapterId: string) => request(array(schema.snapshot), "GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>

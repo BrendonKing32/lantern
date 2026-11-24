@@ -37,7 +37,7 @@ import {
   setTarget,
   updateProject,
 } from "./handlers/projects";
-import { createProjectScene, createScene, deleteScene, listScenes, reorderScenes, updateScene } from "./handlers/scenes";
+import { arrangeScenes, createProjectScene, createScene, deleteScene, listScenes, reorderScenes, updateScene } from "./handlers/scenes";
 import {
   createShare,
   createShareComment,
@@ -70,6 +70,7 @@ const routes: Array<[string, string, Handler]> = [
   ["POST", "/api/projects/:id/scenes", createProjectScene],
   ["PUT", "/api/projects/:id/scenes/order", reorderScenes],
   ["POST", "/api/chapters/:id/scenes", createScene],
+  ["PUT", "/api/chapters/:id/scenes/arrangement", arrangeScenes],
   ["PATCH", "/api/scenes/:id", updateScene],
   ["DELETE", "/api/scenes/:id", deleteScene],
   ["POST", "/api/projects/:id/bible", createEntry],

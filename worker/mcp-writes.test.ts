@@ -93,6 +93,16 @@ describe("which tools a connection gets", () => {
 });
 
 describe("edit_chapter", () => {
+  it("repairs an interrupted chapter write when editing the current version", async () => {
+    await bucket.put(KEY, OPENING, { customMetadata: { version: "3" } });
+    const r = await call("edit_chapter", {
+      chapter_id: CH, base_version: 4, edits: [{ old_text: "Mara", new_text: "Nell" }],
+    });
+    expect(r.isError).toBeFalsy();
+    expect(bucket.objects.get(KEY)).toBe(OPENING.replace("Mara", "Nell"));
+    expect((await bucket.get(KEY))?.customMetadata).toEqual({ version: "5" });
+  });
+
   it("saves the edit and keeps the old text in History", async () => {
     const r = await call("edit_chapter", {
       chapter_id: CH,

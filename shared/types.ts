@@ -176,7 +176,7 @@ export interface ClaudeChange {
 }
 
 /** Why a copy was kept. "claude": the text as it was before Claude edited it through the connector. */
-export type SnapshotReason = "auto" | "restore" | "conflict" | "replace" | "claude";
+export type SnapshotReason = "auto" | "restore" | "conflict" | "replace" | "claude" | "move";
 
 export interface Snapshot {
   id: string;

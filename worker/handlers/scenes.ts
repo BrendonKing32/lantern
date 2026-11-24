@@ -1,9 +1,10 @@
-import { matchScenes, normalizeAnchor, normalizeText, splitScenes } from "../../shared/scenes";
+import { arrangeText, matchScenes, normalizeAnchor, normalizeText, splitScenes } from "../../shared/scenes";
 import type { SceneMeta, ScenePlaceholder } from "../../shared/types";
-import { chapterKey, chapterTextVersion, getChapterRow, requireProject } from "../db";
+import { chapterKey, chapterTextVersion, getChapterRow, MAX_CHAPTER_BYTES, requireProject } from "../db";
 import type { Env } from "../env";
 import { body, cleanTitle, HttpError, json, newId, now, type Handler } from "../http";
 import { afterChapterWrite, matchCards, type SceneSyncRow } from "../sceneSync";
+import { writeChapter } from "./chapters";
 
 // Scene cards belong to a novel. A chapter is optional: a scene with no
 // chapter is "unassigned" and can be placed in (or taken out of) a chapter
@@ -316,4 +317,106 @@ export const reorderScenes: Handler = async (req, env, p) => {
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(now(), p.id),
   ]);
   return json({ ok: true });
+};
+
+const sceneListError = "Scene list is out of date; reload and try again";
+const sceneSnapshot = (rows: SceneSyncRow[]) => JSON.stringify([...rows]
+  .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  .map((row) => [row.id, row.position, row.in_text, row.anchor_head, row.anchor_tail]));
+
+/** Reorder cards and their passages, leaving uncarded passages with their preceding passage. */
+export const arrangeScenes: Handler = async (req, env, p) => {
+  const b = await body<{ baseVersion?: unknown; sceneIds?: unknown }>(req);
+  if (!Number.isSafeInteger(b.baseVersion) || (b.baseVersion as number) < 0 ||
+      !Array.isArray(b.sceneIds) || !b.sceneIds.every((id) => typeof id === "string")) {
+    throw new HttpError(400, "baseVersion and sceneIds are required");
+  }
+  const baseVersion = b.baseVersion as number;
+  const ids = b.sceneIds as string[];
+  const chapter = await getChapterRow(env, p.id);
+  if (chapter.version !== baseVersion) throw new HttpError(409, "conflict", { version: chapter.version });
+  const object = await env.BUCKET.get(chapterKey(chapter.project_id, chapter.id));
+  if (chapterTextVersion(object, chapter.version) !== baseVersion) {
+    throw new HttpError(409, "Chapter is changing; reload and try again");
+  }
+  const text = object ? await object.text() : "";
+  const { results: rows } = await env.DB.prepare(
+    "SELECT id, chapter_id, position, status, in_text, anchor_head, anchor_tail, word_count, unlinked_at, unconfirmed FROM scenes WHERE chapter_id = ? ORDER BY position",
+  ).bind(chapter.id).all<SceneSyncRow>();
+  const existing = new Set(rows.map((row) => row.id));
+  if (ids.length !== existing.size || new Set(ids).size !== ids.length || ids.some((id) => !existing.has(id))) {
+    throw new HttpError(409, sceneListError);
+  }
+  const passages = splitScenes(text, chapter.title);
+  const match = matchScenes(passages, matchCards(rows));
+  if (match.leftText.length) throw new HttpError(409, sceneListError);
+  const snapshot = sceneSnapshot(rows);
+  const paired = new Set(match.pairs.values());
+  const groups = new Map<number, number[]>();
+  const leading: number[] = [];
+  let group: number[] = leading;
+  for (const passage of passages) {
+    if (paired.has(passage.index)) {
+      group = [passage.index];
+      groups.set(passage.index, group);
+    } else group.push(passage.index);
+  }
+  const order = [...leading, ...ids.flatMap((id) => {
+    const index = match.pairs.get(id);
+    return index === undefined ? [] : groups.get(index)!;
+  })];
+  const changed = order.some((index, i) => index !== i);
+  let result = { version: chapter.version, word_count: chapter.word_count, updated_at: chapter.updated_at };
+  const arranged = changed ? arrangeText(text, passages, order) : text;
+  if (changed) {
+    if (new TextEncoder().encode(arranged).length > MAX_CHAPTER_BYTES) {
+      throw new HttpError(413, "Chapter is too large (5 MB limit)");
+    }
+    result = await writeChapter(env, chapter, arranged, baseVersion, "move", { sceneSnapshot: snapshot });
+  }
+  try {
+    if (changed) {
+      const pairs = new Map([...match.pairs].map(([id, index]) => [id, order.indexOf(index)]));
+      await afterChapterWrite(env, chapter, arranged, result.version, { snapshot, pairs });
+      const sync = await env.DB.prepare("SELECT version, scenes_version FROM chapters WHERE id = ?")
+        .bind(chapter.id).first<{ version: number; scenes_version: number }>();
+      if (!sync || sync.version !== result.version || sync.scenes_version !== result.version) {
+        throw new Error("Scene sync did not finish");
+      }
+    }
+    // One guarded statement makes the list check and every position update atomic.
+    const currentRows = changed
+      ? (await env.DB.prepare(
+        "SELECT id, chapter_id, position, status, in_text, anchor_head, anchor_tail, word_count, unlinked_at, unconfirmed FROM scenes WHERE chapter_id = ? ORDER BY position",
+      ).bind(chapter.id).all<SceneSyncRow>()).results
+      : rows;
+    if (currentRows.length !== ids.length || currentRows.some((row) => !existing.has(row.id))) {
+      throw new HttpError(409, sceneListError);
+    }
+    if (ids.length) {
+      const positions = await env.DB.prepare(
+        `UPDATE scenes SET position = (SELECT CAST(key AS INTEGER) FROM json_each(?) WHERE value = scenes.id)
+         WHERE chapter_id = ? AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND version = ? AND deleted_at IS NULL)
+         AND (SELECT json_group_array(json_array(id, position, in_text, anchor_head, anchor_tail))
+              FROM (SELECT id, position, in_text, anchor_head, anchor_tail FROM scenes WHERE chapter_id = ? ORDER BY id)) = ?`,
+      ).bind(JSON.stringify(ids), chapter.id, chapter.id, result.version, chapter.id, sceneSnapshot(currentRows)).run();
+      if (positions.meta.changes !== ids.length) {
+        const current = await getChapterRow(env, chapter.id);
+        if (current.version !== result.version) throw new HttpError(409, "conflict", { version: current.version });
+        throw new HttpError(409, sceneListError);
+      }
+    } else {
+      const current = await getChapterRow(env, chapter.id);
+      if (current.version !== baseVersion) throw new HttpError(409, "conflict", { version: current.version });
+      const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM scenes WHERE chapter_id = ?")
+        .bind(chapter.id).first<{ n: number }>();
+      if (count?.n) throw new HttpError(409, sceneListError);
+    }
+    await env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(now(), chapter.project_id).run();
+    return json(result);
+  } catch (e) {
+    if (!changed) throw e;
+    console.error("scene arrangement partially completed", e);
+    throw new HttpError(500, "The chapter text was moved, but the scene cards could not be updated. Reload and check the chapter.", { version: result.version });
+  }
 };
