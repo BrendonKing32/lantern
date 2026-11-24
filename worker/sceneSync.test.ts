@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "./index";
-import { saveAsClaude } from "./mcp/writes";
 import { memoryR2, sqliteD1 } from "./testing/d1";
 
 let db: ReturnType<typeof sqliteD1>;
@@ -241,9 +240,14 @@ describe("matching scenes to text", () => {
     log.mockRestore();
   });
 
-  it("matches after Claude saves", async () => {
+  it("matches after the author accepts Claude's draft", async () => {
     const card = await create("c");
-    await saveAsClaude(env, "c", 0, "Claude writes here.");
+    db.raw.prepare(
+      `INSERT INTO claude_drafts (chapter_id, project_id, version, base_version, word_count, created_at, updated_at)
+       VALUES ('c', 'p', 1, 0, 3, ?, ?)`,
+    ).run(ts, ts);
+    bucket.objects.set("projects/p/chapters/c/claude-draft.md", "Claude writes here.");
+    expect((await request("POST", "/api/chapters/c/claude-draft/accept", { baseVersion: 0, draftVersion: 1 })).status).toBe(200);
     expect(row(card.id)).toMatchObject({ in_text: 1, word_count: 3 });
     expect((await bucket.get("projects/p/chapters/c.md"))?.customMetadata).toEqual({ version: "1" });
   });

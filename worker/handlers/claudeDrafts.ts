@@ -1,9 +1,10 @@
 import { countWords } from "../../shared/wordcount";
 import type { ClaudeDraft } from "../../shared/types";
-import { chapterKey, claudeDraftKey, getChapterRow, MARKDOWN } from "../db";
+import { chapterPut, claudeDraftKey, getChapterRow } from "../db";
 import type { Env } from "../env";
 import { body, HttpError, json, now, type Handler } from "../http";
 import { snapshotBeforeSave } from "./history";
+import { afterChapterWrite } from "../sceneSync";
 
 // Claude's draft of a chapter: changes Claude made through the connector, kept
 // beside the chapter until the author accepts or discards them. Accepting puts
@@ -87,11 +88,12 @@ export const acceptClaudeDraft: Handler = async (req, env, p) => {
     throw new HttpError(500, "Lantern couldn't keep a copy of the chapter in History, so the draft wasn't accepted. Try again.");
   }
   try {
-    await env.BUCKET.put(chapterKey(row.project_id, row.id), draft.content, MARKDOWN);
+    await chapterPut(env, row, draft.content, b.baseVersion + 1);
   } catch (e) {
     await rollBack();
     throw e;
   }
+  await afterChapterWrite(env, row, draft.content, b.baseVersion + 1);
   // Claude's words aren't the author's writing, so daily_words is left alone.
   await env.DB.batch([
     env.DB.prepare("DELETE FROM claude_drafts WHERE chapter_id = ? AND version = ?").bind(row.id, draft.version),
