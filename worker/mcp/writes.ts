@@ -13,7 +13,7 @@ import { z } from "zod";
 import { countWords } from "../../shared/wordcount";
 import type { BibleEntry, ChapterMeta, SceneMeta } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
-import { chapterKey, getChapterRow, MARKDOWN, MAX_CHAPTER_BYTES } from "../db";
+import { assertChapterUnlocked, chapterKey, chapterMoveToken, chapterPut, getChapterRow, MAX_CHAPTER_BYTES, reconcileChapter } from "../db";
 import type { Env } from "../env";
 import { createEntry, updateEntry } from "../handlers/bible";
 import { logClaudeChange } from "../handlers/claudeChanges";
@@ -21,6 +21,7 @@ import { createChapter, updateChapter } from "../handlers/chapters";
 import { snapshotBeforeSave } from "../handlers/history";
 import { createProjectScene, updateScene } from "../handlers/scenes";
 import { HttpError, now, type Handler, type Params } from "../http";
+import { afterChapterWrite } from "../sceneSync";
 
 const EDITS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } as const;
 const ADDS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
@@ -42,6 +43,18 @@ async function viaApp<T>(handler: Handler, params: Params, method: string, paylo
 // ---------- chapter text ----------
 
 export class EditError extends Error {}
+
+async function assertEditable(env: Env, chapterId: string): Promise<void> {
+  try {
+    await assertChapterUnlocked(env, chapterId);
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 423) {
+      const seconds = (e.extra as { retryAfter: number }).retryAfter;
+      throw new EditError(`A scene is being moved in this chapter. Try again in ${seconds} seconds.`);
+    }
+    throw e;
+  }
+}
 
 // Curly quotes, dashes and non-breaking spaces, mapped one-for-one so that
 // positions in the normalized text match the original.
@@ -98,16 +111,24 @@ export async function saveAsClaude(env: Env, chapterId: string, baseVersion: num
   if (new TextEncoder().encode(content).length > MAX_CHAPTER_BYTES) {
     throw new EditError("That would make the chapter larger than 5 MB, so nothing was changed.");
   }
-  const row = await getChapterRow(env, chapterId);
+  await assertEditable(env, chapterId);
+  const token = await chapterMoveToken(env, chapterId);
+  const row = await reconcileChapter(env, await getChapterRow(env, chapterId));
+  await assertEditable(env, chapterId);
+  if (row.version !== baseVersion) throw conflict(row.version);
   const words = countWords(content);
   const ts = now();
   const claim = await env.DB.prepare(
     `UPDATE chapters SET version = version + 1, word_count = ?, updated_at = ?
-      WHERE id = ? AND version = ? AND deleted_at IS NULL`,
+      WHERE id = ? AND version = ? AND moving_until IS ? AND deleted_at IS NULL
+        AND (moving_until IS NULL OR moving_until <= ?)`,
   )
-    .bind(words, ts, row.id, baseVersion)
+    .bind(words, ts, row.id, baseVersion, token, ts)
     .run();
-  if (!claim.meta.changes) throw conflict(row.version);
+  if (!claim.meta.changes) {
+    await assertEditable(env, chapterId);
+    throw conflict((await getChapterRow(env, chapterId)).version);
+  }
 
   const rollBack = () =>
     env.DB.prepare("UPDATE chapters SET version = ?, word_count = ?, updated_at = ? WHERE id = ? AND version = ?")
@@ -121,11 +142,12 @@ export async function saveAsClaude(env: Env, chapterId: string, baseVersion: num
     throw new EditError("Lantern couldn't keep a copy of the current text in History, so nothing was changed.");
   }
   try {
-    await env.BUCKET.put(chapterKey(row.project_id, row.id), content, MARKDOWN);
+    await chapterPut(env, row, content, baseVersion + 1);
   } catch (e) {
     await rollBack();
     throw e;
   }
+  await afterChapterWrite(env, row, content, baseVersion + 1);
   await env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id).run();
   return {
     version: baseVersion + 1, word_count: words, previous_word_count: row.word_count,
@@ -140,7 +162,9 @@ const conflict = (current: number) =>
   );
 
 async function readFor(env: Env, chapterId: string, baseVersion: number): Promise<{ row: ChapterMeta; content: string }> {
-  const row = await getChapterRow(env, chapterId);
+  await assertEditable(env, chapterId);
+  const row = await reconcileChapter(env, await getChapterRow(env, chapterId));
+  await assertEditable(env, chapterId);
   if (row.version !== baseVersion) throw conflict(row.version);
   const obj = await env.BUCKET.get(chapterKey(row.project_id, row.id));
   return { row, content: obj ? await obj.text() : "" };

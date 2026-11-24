@@ -58,6 +58,22 @@ export interface ChapterMeta {
   word_count: number;
   version: number;
   updated_at: string;
+  /** The act this chapter is in, or null for none. */
+  act_id: string | null;
+}
+
+/** A named group of chapters: an act, a part, a book within the book. */
+export interface Act {
+  id: string;
+  project_id: string;
+  title: string;
+  position: number;
+}
+
+/** The novel's acts and chapters, in book order. */
+export interface Outline {
+  acts: Act[];
+  chapters: ChapterMeta[];
 }
 
 export type SceneStatus = "planned" | "drafted";
@@ -73,8 +89,28 @@ export interface SceneMeta {
   location: string;
   status: SceneStatus;
   position: number;
+  in_text: boolean;
+  word_count: number;
+  excerpt: string;
+  passage_index: number | null;
+  unconfirmed: boolean;
+  unlinked_at: string | null;
+  /** Title of the card holding this recently merged passage, when known. */
+  merged_into: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ScenePlaceholder {
+  chapter_id: string;
+  passage_index: number;
+  words: number;
+  excerpt: string;
+}
+
+export interface SceneListing {
+  scenes: SceneMeta[];
+  placeholders: ScenePlaceholder[];
 }
 
 /** The English a novel is written in, for grammar and spelling checks. */
@@ -97,6 +133,7 @@ export interface ProjectInfo {
 export interface ProjectDetail {
   project: ProjectInfo;
   chapters: ChapterMeta[];
+  acts: Act[];
 }
 
 export interface ChapterWithContent extends ChapterMeta {
@@ -139,7 +176,7 @@ export interface ClaudeChange {
 }
 
 /** Why a copy was kept. "claude": the text as it was before Claude edited it through the connector. */
-export type SnapshotReason = "auto" | "restore" | "conflict" | "replace" | "claude";
+export type SnapshotReason = "auto" | "restore" | "conflict" | "replace" | "claude" | "move";
 
 export interface Snapshot {
   id: string;

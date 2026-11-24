@@ -74,6 +74,8 @@ export interface Passage {
   breakLine: string | null;
   /** Offset where the passage body starts (just after the break line's newline; 0 for the first). */
   start: number;
+  /** Offset after a matching chapter-title heading and its following blank lines, or `start`. */
+  lead: number;
   /** Offset (exclusive) where the next break line starts, or the text length. */
   end: number;
   /** countWords() of the body. */
@@ -178,6 +180,8 @@ export function arrangeText(text: string, passages: Passage[], order: number[]):
 - The passage that ends up first loses its break line.
 - The passage that *was* first and is no longer first gets a break line: the break style used most
   often in this chapter (ties go to the first one used), or `***` if the chapter had none.
+- A leading chapter-title heading (`passages[0].lead > 0`) stays at the top of the chapter; only the
+  bodies after it are rearranged.
 - Join passages as `body.trimEnd() + "\n\n" + breakLine + "\n\n" + nextBody.trimStart()`. The result
   ends with exactly one `"\n"` if the original ended with a newline.
 - `arrangeText(text, p, identity)` must equal `text` after its spacing is normalized the same way.
@@ -197,7 +201,7 @@ whole text, with no break line.
 
 ## 5. Data model
 
-Migration `migrations/0013_scenes_in_text.sql` only adds columns:
+Migration `migrations/0014_scenes_in_text.sql` only adds columns:
 
 ```sql
 -- Scene cards can be tied to a passage of their chapter's text.
@@ -209,9 +213,11 @@ ALTER TABLE scenes ADD COLUMN unlinked_at TEXT;
 -- 1 while an in-text card was paired by order during the one-time migration and the writer hasn't confirmed it.
 ALTER TABLE scenes ADD COLUMN unconfirmed INTEGER NOT NULL DEFAULT 0;
 
--- The chapter version its scene cards were last matched against. 0 = never.
-ALTER TABLE chapters ADD COLUMN scenes_version INTEGER NOT NULL DEFAULT 0;
+-- The chapter version its scene cards were last matched against. -1 = from before this feature, never matched.
+ALTER TABLE chapters ADD COLUMN scenes_version INTEGER NOT NULL DEFAULT -1;
 ```
+
+New chapters explicitly start with `scenes_version = 0`.
 
 `shared/types.ts`, `SceneMeta` gains:
 
@@ -292,8 +298,10 @@ neighbouring paired passage), the UI shows "Merged into *‹title›*" for a day
 ### 6.3 Self-healing listing
 
 `listScenes`: for every chapter of the novel whose `scenes_version < version`, read its text from R2
-and run `afterChapterWrite` before answering. To fill `excerpt`, `passage_index` and `placeholders`, the
-listing needs the passages of every chapter. Read every chapter of the novel that has at least one
+and run `afterChapterWrite` before answering.
+The match uses the R2 object's version metadata, falling back to the D1 version for older objects without it.
+To fill `excerpt`, `passage_index` and `placeholders`, the listing needs the passages of every chapter.
+Read every chapter of the novel that has at least one
 scene row or one break (one R2 read each, in parallel with `Promise.all`), and split them. Books are at
 most a few dozen chapters, so this is acceptable. Don't add caching in this item.
 
@@ -322,27 +330,47 @@ Refactor the claim/snapshot/put/rollback sequence out of `saveChapter` into a he
 
 ### 6.6 Move a passage to another chapter
 
-`POST /api/scenes/:id/move`, body `{ toChapterId: string, beforeSceneId: string | null, baseVersions: { from: number, to: number } }`.
+`POST /api/scenes/:id/move`, body `{ toChapterId: string, beforePassageIndex: number | null, baseVersions: { from: number, to: number } }`.
 
 - The scene must be in the text (planned cards move with the existing `PATCH /api/scenes/:id`).
-  `toChapterId` must be in the same novel and differ from the scene's chapter. `beforeSceneId`, when
-  given, must be a card in the destination chapter.
-- The insert point is before the passage of `beforeSceneId` if that card is in the text. If it's
-  planned, use the next in-text card after it, or the end when there isn't one.
+  `toChapterId` must be in the same novel and differ from the scene's chapter.
+- The client supplies `expectedFromChapterId` to refuse a move if the card has meanwhile moved
+  to another chapter, whose draft has not been flushed.
+- `beforePassageIndex` identifies a passage of the destination at `baseVersions.to`, or null for the
+  end. The response includes `from_passage_index` for Undo, including before uncarded passages.
 
 Sequence. Each step fails safe:
 
-1. **Claim both versions** in one `env.DB.batch` of two conditional `UPDATE chapters SET version = version + 1 … WHERE id = ? AND version = ?`.
-   If either has `meta.changes === 0`, put the other back and return 409 with both current versions.
-2. **History copies of both** with reason `move`. If either fails, put both versions back and return 500
+1. **Lock both chapters** in one D1 batch, conditionally on their versions and an absent or expired
+   `moving_until`. The lock expires in 60 seconds. If either lock fails, release the other and return
+   409 with both current versions and lock states.
+2. Read both R2 objects and verify their metadata versions match the base versions. If not, release
+   both locks and return 409.
+3. **History copies of both** with reason `move`. If either fails, release both locks and return 500
    `"Could not keep a copy in History, so nothing was moved"`.
-3. **Write the destination first**, then the source.
-4. If the source write fails, write the destination's original text back. If that also fails, return 500
-   `"The scene is now in both chapters. Delete one copy."` and leave the versions claimed. Text is never lost.
-5. Update both chapters' `word_count`, then run `afterChapterWrite` for the destination with the moving card
-   pre-assigned (set its `chapter_id` to the destination and keep `in_text = 1` *before* running sync,
-   so its anchors pair it), then for the source.
-6. Daily words delta 0 for both. Return `{ from: {version, word_count}, to: {version, word_count}, scene }`.
+4. **Write the destination first**, then the source, each with R2 metadata version `base + 1`.
+   Before each forward write, require at least 30 seconds remaining on the lock. Otherwise restore
+   any written text while the lock is still held and return 503
+   `"The move took too long; nothing was changed. Try again."` if the restore succeeds.
+5. If the source write fails, restore the destination at its base version and release both locks.
+   If the restore fails too, advance only the destination version, release both locks and return 500
+   `"The scene is now in both chapters. Delete one copy."` when both copies can be confirmed. If a
+   write's outcome is uncertain, ask the writer to check both chapters without deleting a copy.
+6. On success, update both versions and word counts and release the locks in one D1 batch, guarded by
+   each original version and lock value. Assign the card to the destination with `in_text = 1`, then
+   run `afterChapterWrite` on the destination and source. Daily words delta is zero.
+   Return `{ from: {version, word_count}, to: {version, word_count}, scene, from_passage_index }`.
+
+While locked, chapter saves, Claude edits and arrangements return 423 with `retryAfter`; client
+drafts remain queued and retry. Reads remain available. On a read or write after a lock expires,
+if R2 metadata is ahead of D1, roll D1 forward to that version and the word count of the R2 text.
+An old base version then conflicts. A crash before any R2 write changes nothing; after the destination
+write the scene remains in both chapters; after both writes the chapters roll forward to the move.
+An R2 version behind D1 keeps the existing interrupted-save behavior.
+An expired `moving_until` value is retained as a fencing token, so a save cannot miss a lock that
+was acquired and released between its R2 read and its D1 claim. A null or expired value is unlocked.
+For a nonzero chapter version, moving also requires R2 version metadata; a legacy object without it
+cannot prove that a previously claimed save has finished. Saving that chapter supplies the metadata.
 
 ### 6.7 History reason
 
@@ -394,15 +422,15 @@ Follow the existing look in `src/styles.css`. Use existing tokens only (`--lamp`
 
 ### 7.2 One-time banner for existing cards
 
-The first match of a chapter that has `scenes_version = 0` and existing in-chapter cards:
+The first match of a chapter that has `scenes_version = -1` and existing in-chapter cards:
 
 - if the number of cards in the chapter equals the number of passages, pair them in order with
   `in_text = 1, unconfirmed = 1`;
 - otherwise leave them all planned.
 
-Do this in `afterChapterWrite` when `scenes_version` was 0, before the normal match. The Scenes view
-then shows a banner while any card is unconfirmed or any chapter has both planned cards and
-placeholders from this migration: "Check how your scene cards line up with the text." It lists those
+Do this in `afterChapterWrite` when `scenes_version` was -1, before the normal match. The Scenes view
+then shows a banner while any card is unconfirmed:
+"Check how your scene cards line up with the text." It lists those
 chapters and can be dismissed (dismissal is remembered per novel in `localStorage`).
 
 ### 7.3 Editor labels (`src/components/ChapterEditor.tsx`, new `src/sceneLabels.ts`)
@@ -469,7 +497,7 @@ avoids duplication.
 
 Tracking issue: https://github.com/BrendonKing32/lantern/issues/79
 
-**Scope:** migration 0013; `SceneMeta` and schema changes; `worker/sceneSync.ts`; calls from
+**Scope:** migration 0014; `SceneMeta` and schema changes; `worker/sceneSync.ts`; calls from
 `saveChapter` and `saveAsClaude`; the self-healing `listScenes` and the new listing shape; linking,
 unlinking and confirming (6.8); `in_text`-aware `PATCH` refusals; the one-time pairing and banner (7.2);
 the Scenes view card states, placeholders, **Add card**, **This is…** and **Open** (7.1, minus dragging

@@ -13,6 +13,7 @@ import {
   lastBookCheck,
   testAi,
 } from "./handlers/claude";
+import { createAct, deleteAct, reorderChapters, updateAct } from "./handlers/acts";
 import { createEntry, deleteEntry, listBible, updateEntry } from "./handlers/bible";
 import { listClaudeChanges } from "./handlers/claudeChanges";
 import {
@@ -20,7 +21,6 @@ import {
   deleteChapter,
   getChapter,
   listDeletedChapters,
-  reorderChapters,
   restoreChapter,
   saveChapter,
   updateChapter,
@@ -37,7 +37,7 @@ import {
   setTarget,
   updateProject,
 } from "./handlers/projects";
-import { createProjectScene, createScene, deleteScene, listScenes, reorderScenes, updateScene } from "./handlers/scenes";
+import { arrangeScenes, createProjectScene, createScene, deleteScene, listScenes, moveScene, reorderScenes, updateScene } from "./handlers/scenes";
 import {
   createShare,
   createShareComment,
@@ -70,7 +70,9 @@ const routes: Array<[string, string, Handler]> = [
   ["POST", "/api/projects/:id/scenes", createProjectScene],
   ["PUT", "/api/projects/:id/scenes/order", reorderScenes],
   ["POST", "/api/chapters/:id/scenes", createScene],
+  ["PUT", "/api/chapters/:id/scenes/arrangement", arrangeScenes],
   ["PATCH", "/api/scenes/:id", updateScene],
+  ["POST", "/api/scenes/:id/move", moveScene],
   ["DELETE", "/api/scenes/:id", deleteScene],
   ["POST", "/api/projects/:id/bible", createEntry],
   ["PATCH", "/api/bible/:id", updateEntry],
@@ -88,6 +90,9 @@ const routes: Array<[string, string, Handler]> = [
   ["DELETE", "/api/projects/:id", deleteProject],
   ["POST", "/api/projects/:id/chapters", createChapter],
   ["PUT", "/api/projects/:id/order", reorderChapters],
+  ["POST", "/api/projects/:id/acts", createAct],
+  ["PATCH", "/api/acts/:id", updateAct],
+  ["DELETE", "/api/acts/:id", deleteAct],
   ["GET", "/api/chapters/:id", getChapter],
   ["PUT", "/api/chapters/:id", saveChapter],
   ["PATCH", "/api/chapters/:id", updateChapter],

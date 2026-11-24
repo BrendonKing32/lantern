@@ -3,6 +3,7 @@
 import {
   BIBLE_KINDS,
   DIALECTS,
+  type Act,
   type AiStatus,
   type BibleEntry,
   type BibleEntryDraft,
@@ -15,17 +16,19 @@ import {
   type DeletedChapter,
   type DeletedProject,
   type Dialect,
+  type Outline,
   type ProjectDetail,
   type ProjectSummary,
   type SaveResult,
   type SceneMeta,
+  type SceneListing,
   type ShareComment,
   type SharedProject,
   type Snapshot,
   type SnapshotWithContent,
   type Stats,
 } from "../shared/types";
-import { array, boolean, type Check, literal, nullable, number, object, optional, string, tagged } from "./validate";
+import { array, boolean, type Check, literal, nullable, number, object, optional, ShapeError, string, tagged } from "./validate";
 
 export const ok = object({ ok: literal(true) });
 
@@ -54,9 +57,12 @@ const chapterFields = {
   word_count: number,
   version: number,
   updated_at: string,
+  act_id: nullable(string),
 };
 
 export const chapterMeta: Check<ChapterMeta> = object(chapterFields);
+
+export const act: Check<Act> = object({ id: string, project_id: string, title: string, position: number });
 
 export const projectDetail: Check<ProjectDetail> = object({
   project: object({
@@ -69,7 +75,10 @@ export const projectDetail: Check<ProjectDetail> = object({
     dialect,
   }),
   chapters: array(chapterMeta),
+  acts: array(act),
 });
+
+export const outline: Check<Outline> = object({ acts: array(act), chapters: array(chapterMeta) });
 
 export const chapterWithContent: Check<ChapterWithContent> = object({ ...chapterFields, content: string });
 
@@ -210,15 +219,40 @@ export const sceneMeta: Check<SceneMeta> = object({
   location: string,
   status: literal("planned", "drafted"),
   position: number,
+  in_text: boolean,
+  word_count: number,
+  excerpt: string,
+  passage_index: nullable(number),
+  unconfirmed: boolean,
+  unlinked_at: nullable(string),
+  merged_into: nullable(string),
   created_at: string,
   updated_at: string,
+});
+
+export const sceneListing: Check<SceneListing> = object({
+  scenes: array(sceneMeta),
+  placeholders: array(object({ chapter_id: string, passage_index: number, words: number, excerpt: string })),
+});
+
+const passageIndex: Check<number> = (value, path) => {
+  const index = number(value, path);
+  if (!Number.isInteger(index) || index < 0) throw new ShapeError(path, "a non-negative integer", value);
+  return index;
+};
+
+export const sceneMoveResult = object({
+  from: object({ version: number, word_count: number }),
+  to: object({ version: number, word_count: number }),
+  scene: sceneMeta,
+  from_passage_index: passageIndex,
 });
 
 const snapshotFields = {
   id: string,
   version: number,
   word_count: number,
-  reason: literal("auto", "restore", "conflict", "replace", "claude"),
+  reason: literal("auto", "restore", "conflict", "replace", "claude", "move"),
   created_at: string,
 };
 

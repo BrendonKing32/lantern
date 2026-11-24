@@ -21,8 +21,8 @@ const project = {
 };
 
 const chapterRows = [
-  { id: "ch-1", project_id: "novel-1", title: "Arrival", synopsis: "Mara reaches the harbour.", position: 0, word_count: 7, version: 3, updated_at: "2026-02-01T00:00:00.000Z" },
-  { id: "ch-2", project_id: "novel-1", title: "The Tower", synopsis: "", position: 1, word_count: 6, version: 1, updated_at: "2026-02-01T00:00:00.000Z" },
+  { id: "ch-1", project_id: "novel-1", title: "Arrival", synopsis: "Mara reaches the harbour.", position: 0, word_count: 7, version: 3, updated_at: "2026-02-01T00:00:00.000Z", act_id: null },
+  { id: "ch-2", project_id: "novel-1", title: "The Tower", synopsis: "", position: 1, word_count: 6, version: 1, updated_at: "2026-02-01T00:00:00.000Z", act_id: null },
 ];
 
 const texts: Record<string, string> = {
@@ -55,6 +55,7 @@ function fakeDb() {
     }
     if (q.includes("FROM chapters WHERE project_id = ?")) return chapterRows.filter((c) => c.project_id === args[0]);
     if (q.includes("FROM scenes")) return scenes;
+    if (q.includes("FROM acts")) return [];
     if (q.includes("FROM bible_entries")) {
       return entries.filter((e) => e.project_id === args[0] && (args.length < 2 || e.kind === args[1]));
     }

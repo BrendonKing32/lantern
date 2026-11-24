@@ -79,18 +79,31 @@ export async function chapterText(id: string): Promise<string | null> {
   }
 }
 
-export const loadChapter = (id: string): Promise<Loaded<ChapterWithContent>> =>
-  withFallback(() => api.getChapter(id), chapters.write, () => chapters.read(id));
+export const loadChapter = (id: string): Promise<Loaded<ChapterWithContent>> => {
+  const epoch = chapterCacheEpoch.get(id) ?? 0;
+  return withFallback(() => api.getChapter(id), (chapter) => {
+    if ((chapterCacheEpoch.get(id) ?? 0) === epoch) return chapters.restore(chapter);
+  }, () => chapters.read(id));
+};
 
 /** Update this device's copy of a chapter after a successful save. */
 export async function rememberSaved(chapterId: string, content: string, res: SaveResult) {
+  const epoch = chapterCacheEpoch.get(chapterId) ?? 0;
   const known = await chapters.read(chapterId);
-  if (known) await chapters.write({ ...known, ...res, content });
+  if (known && (chapterCacheEpoch.get(chapterId) ?? 0) === epoch) await chapters.write({ ...known, ...res, content });
 }
 
 // Download every chapter whose text this device doesn't have at the current
 // version, so the whole novel opens offline. One at a time, in the background.
 const prefetching = new Set<string>();
+const chapterCacheEpoch = new Map<string, number>();
+
+/** Discard cached text and prevent an older in-flight prefetch from restoring it. */
+export async function forgetChapter(id: string) {
+  chapterCacheEpoch.set(id, (chapterCacheEpoch.get(id) ?? 0) + 1);
+  await chapters.invalidate(id);
+}
+
 async function prefetchChapters(detail: ProjectDetail) {
   const projectId = detail.project.id;
   if (prefetching.has(projectId)) return;
@@ -100,7 +113,9 @@ async function prefetchChapters(detail: ProjectDetail) {
     for (const c of detail.chapters) {
       if (have.get(c.id) === c.version) continue;
       try {
-        await chapters.write(await api.getChapter(c.id));
+        const epoch = chapterCacheEpoch.get(c.id) ?? 0;
+        const chapter = await api.getChapter(c.id);
+        if ((chapterCacheEpoch.get(c.id) ?? 0) === epoch) await chapters.restore(chapter);
       } catch (e) {
         if (isNetworkError(e)) return;
       }
@@ -125,6 +140,27 @@ export const openEditors = new Set<string>();
 export type SyncOutcome = "done" | "offline" | "storage-error" | "busy";
 
 let syncing = false;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+let retryAt = Infinity;
+
+export function moveRetryDelay(error: ApiError): number {
+  const seconds = error.data?.retryAfter;
+  return typeof seconds === "number" && Number.isFinite(seconds)
+    ? Math.max(1000, Math.min(60_000, Math.ceil(seconds * 1000)))
+    : 5000;
+}
+
+function retryDraftsAfter(delay: number) {
+  const when = Date.now() + delay;
+  if (when >= retryAt) return;
+  clearTimeout(retryTimer);
+  retryAt = when;
+  retryTimer = setTimeout(async () => {
+    retryAt = Infinity;
+    retryTimer = undefined;
+    if (await syncDrafts() === "busy") retryDraftsAfter(1000);
+  }, delay);
+}
 
 // Whether the last sync pass couldn't read this device's drafts, for the
 // notice that tells the writer (see SyncNotice). Clears on the next good read.
@@ -177,6 +213,7 @@ export async function syncDrafts(): Promise<SyncOutcome> {
         await rememberSaved(d.chapterId, d.content, res);
       } catch (e) {
         if (isNetworkError(e)) return "offline"; // still offline; try again later
+        if (e instanceof ApiError && e.status === 423) retryDraftsAfter(moveRetryDelay(e));
         // 409 (saved elsewhere), 404 (chapter deleted) and the like wait for the writer.
       }
     }
