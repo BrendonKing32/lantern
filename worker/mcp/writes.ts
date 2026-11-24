@@ -443,23 +443,25 @@ export function registerWriteTools(server: McpServer, env: Env) {
         "Within a chapter, uncarded passages stay attached to the preceding scene.",
       inputSchema: {
         scene_id: z.string(),
+        from_chapter_id: z.string().describe("The chapter containing the scene when you read it"),
         to_chapter_id: z.string().optional(),
         before_passage_index: z.number().int().min(0).nullable().optional().describe("Destination passage index, or null for the end"),
         base_versions: z.object({ from: baseVersion, to: baseVersion.optional() }),
       },
       annotations: EDITS,
     },
-    async ({ scene_id, to_chapter_id, before_passage_index, base_versions }) =>
+    async ({ scene_id, from_chapter_id, to_chapter_id, before_passage_index, base_versions }) =>
       guarded(async () => {
         try {
           const found = await env.DB.prepare("SELECT project_id FROM scenes WHERE id = ?").bind(scene_id).first<{ project_id: string }>();
           if (!found) throw new HttpError(404, "Scene not found");
           const { listing, chapters: snapshots } = await sceneListing(env, found.project_id);
           const scene = listing.scenes.find((s) => s.id === scene_id);
+          if (scene && scene.chapter_id !== from_chapter_id) throw new HttpError(409, "Scene moved");
           if (!scene?.in_text || !scene.chapter_id || scene.passage_index === null) {
             throw new HttpError(400, "Only scenes in the text can be moved this way");
           }
-          const from = snapshots.find((c) => c.chapter.id === scene.chapter_id);
+          const from = snapshots.find((c) => c.chapter.id === from_chapter_id);
           if (!from) throw new HttpError(404, "Chapter not found");
           if (from.chapter.version !== base_versions.from || from.textVersion !== base_versions.from) {
             throw conflict(from.chapter.version);
@@ -470,7 +472,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
             if (base_versions.to === undefined) throw new HttpError(400, "Give the destination chapter version");
             destination = to_chapter_id;
             result = await viaApp(moveScene, { id: scene_id }, "POST", {
-              toChapterId: destination, expectedFromChapterId: from.chapter.id,
+              toChapterId: destination, expectedFromChapterId: from_chapter_id,
               expectedFromPassageIndex: scene.passage_index,
               beforePassageIndex: before_passage_index ?? null, baseVersions: base_versions,
             }, env);
