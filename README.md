@@ -286,8 +286,10 @@ app and private API protected.
 - **Scenes:** the **Scenes** view shows planned cards and cards matched to passages between
   scene breaks. In-text cards show their word counts and excerpts; **Open** takes you to the
   passage in **Write**. For a passage with no card, use **Add card** or **This is…** to link
-  a planned card. Check suggested matches with **Looks right** or **Not this one**. You can
-  reorder cards and edit their summaries, POV and locations without changing chapter text.
+  a planned card. Check suggested matches with **Looks right** or **Not this one**.
+  Drag an in-text card within its chapter, or use **Up** and **Down**, to move its passage
+  with it. Lantern saves drafts first; moving needs a connection, and **Undo** or **History**
+  can reverse a move. Edit summaries, POV and locations without changing chapter text.
   Moving an in-text card to another chapter requires moving its text in the editor first.
   In **Write**, scene labels show each passage's card; click a label to see its notes beside
   the page. Turn **Scene labels** on or off under **More** on this device. Press

@@ -20,7 +20,10 @@ export function matchCards(rows: SceneSyncRow[]): MatchCard[] {
 }
 
 /** Match a chapter's scene cards to text just written. Never throws. */
-export async function afterChapterWrite(env: Env, chapter: ChapterMeta, text: string, version: number): Promise<void> {
+export async function afterChapterWrite(
+  env: Env, chapter: ChapterMeta, text: string, version: number,
+  arrangement?: { snapshot: string; pairs: Map<string, number> },
+): Promise<void> {
   try {
     const state = await env.DB.prepare("SELECT scenes_version FROM chapters WHERE id = ? AND version = ?")
       .bind(chapter.id, version).first<{ scenes_version: number }>();
@@ -37,7 +40,13 @@ export async function afterChapterWrite(env: Env, chapter: ChapterMeta, text: st
       card.anchor_head = passages[i].head;
       card.anchor_tail = passages[i].tail;
     });
-    const match = initial
+    const snapshot = JSON.stringify([...rows].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      .map((row) => [row.id, row.position, row.in_text, row.anchor_head, row.anchor_tail]));
+    // The supplied mapping is valid only for the exact cards read before the write.
+    if (arrangement && snapshot !== arrangement.snapshot) return;
+    const match = arrangement
+      ? { pairs: arrangement.pairs, placeholders: passages.map((p) => p.index).filter((i) => ![...arrangement.pairs.values()].includes(i)), leftText: [] as string[] }
+      : initial
       ? { pairs: new Map(rows.map((row, i) => [row.id, i])), placeholders: [] as number[], leftText: [] as string[] }
       : matchScenes(passages, cards);
     const followed: SceneSyncRow[] = [];

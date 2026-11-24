@@ -1,4 +1,8 @@
 import { useState } from "react";
+import { DndContext, PointerSensor, pointerWithin, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, rectSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import type { ReactNode } from "react";
 import type { Act, ChapterMeta, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { actRows } from "../acts";
 
@@ -17,17 +21,34 @@ interface Props {
   onAdd: (chapterId: string | null) => Promise<SceneMeta | null>;
   onUpdate: (scene: SceneMeta, patch: ScenePatch) => Promise<void>;
   onDelete: (scene: SceneMeta) => void;
-  onMove: (chapterId: string | null, sceneIds: string[]) => void;
+  onMove: (chapterId: string | null, sceneIds: string[], movedId: string) => void;
   onOpen: (scene: SceneMeta) => void;
+  moving?: boolean;
 }
 
-// Scenes stand on their own. Each one is either unassigned or placed in a
-// chapter, and can be moved between them at any time.
-export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, offline, onAdd, onUpdate, onDelete, onMove, onOpen }: Props) {
+export function sceneDragOrder(group: SceneMeta[], activeId: string, overId: string | null): string[] | null {
+  const from = group.findIndex((scene) => scene.id === activeId);
+  const to = group.findIndex((scene) => scene.id === overId);
+  if (from < 0 || to < 0 || from === to || !group[from].in_text) return null;
+  return arrayMove(group, from, to).map((scene) => scene.id);
+}
+
+function SortableScene({ scene, disabled, children }: { scene: SceneMeta; disabled: boolean; children: (handle: ReactNode) => ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: scene.id, disabled: { draggable: disabled || !scene.in_text, droppable: false },
+  });
+  return <li ref={setNodeRef} className="scene-card" style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : undefined }}>
+    {children(scene.in_text && <button className="btn btn-quiet scene-drag" type="button" disabled={disabled}
+      aria-label={`Drag ${scene.title} within this chapter`} {...attributes} {...listeners}>Drag</button>)}
+  </li>;
+}
+
+export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, offline, onAdd, onUpdate, onDelete, onMove, onOpen, moving = false }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ScenePatch>({});
   const [busy, setBusy] = useState(false);
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(`lantern.scene-check.${projectId}`) === "1");
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const begin = (scene: SceneMeta) => {
     setDraft({
       title: scene.title,
@@ -101,7 +122,7 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
   return (
     <section className="scene-board" aria-label="Scene planning board">
       <p className="board-hint">
-        Cards can be planned or linked to passages in the text. Cards don't change manuscript text.
+        Cards can be planned or linked to passages in the text. Drag an in-text card within its chapter to move its passage.
         {offline && " Reconnect to edit scene plans."}
       </p>
       {!dismissed && needsCheck.length > 0 && (
@@ -129,17 +150,24 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
         const chapter = chapters.find((item) => item.id === g.id);
         const act = chapter && acts.find((item) => item.id === chapter.act_id);
         const firstInAct = act && rows.find((row) => row.kind === "chapter" && row.chapter.act_id === act.id);
+        const dragEnd = ({ active, over }: DragEndEvent) => {
+          if (offline || moving || !over || active.id === over.id) return;
+          const order = sceneDragOrder(group, String(active.id), String(over.id));
+          if (order) onMove(g.id, order, String(active.id));
+        };
         return (
           <section className={g.id === null ? "scene-group scene-group-unassigned" : "scene-group"} key={g.id ?? "unassigned"} aria-label={g.label}>
             {act && firstInAct?.kind === "chapter" && firstInAct.chapter.id === g.id && <h2 className="act-name">{act.title}</h2>}
             <header className="scene-group-head">
               <h2>{g.heading}</h2>
-              <button className="btn btn-quiet" disabled={offline} onClick={async () => {
+              <button className="btn btn-quiet" disabled={offline || moving} onClick={async () => {
                 const scene = await onAdd(g.id);
                 if (scene) begin(scene);
               }}>{g.addLabel}</button>
             </header>
             {items.length === 0 ? <p className="scene-empty">{g.empty}</p> : (
+              <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={dragEnd}>
+              <SortableContext items={group.map((scene) => scene.id)} strategy={rectSortingStrategy}>
               <ol className="scene-cards">
                 {items.map((item) => "placeholder" in item ? (
                   <li className="scene-card scene-placeholder" key={`passage-${item.placeholder.passage_index}`}>
@@ -147,8 +175,8 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
                     <p className="scene-excerpt">{item.placeholder.excerpt || "Empty passage"}</p>
                     <p className="scene-meta">{item.placeholder.words.toLocaleString()} words</p>
                     <div className="scene-actions">
-                      <button className="btn btn-quiet" disabled={offline} onClick={() => void addCard(item.placeholder)}>Add card</button>
-                      <label>This is… <select disabled={offline} value="" onChange={(e) => {
+                      <button className="btn btn-quiet" disabled={offline || moving} onClick={() => void addCard(item.placeholder)}>Add card</button>
+                      <label>This is… <select disabled={offline || moving} value="" onChange={(e) => {
                         const scene = group.find((card) => card.id === e.target.value);
                         if (scene) void onUpdate(scene, { link: { passage_index: item.placeholder.passage_index } }).catch(() => {});
                       }}>
@@ -158,7 +186,7 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
                     </div>
                   </li>
                 ) : (({ scene, index: i }) => (
-                  <li className="scene-card" key={scene.id}>
+                  <SortableScene scene={scene} disabled={offline || moving || editing !== null} key={scene.id}>{(handle) => <>
                     {editing === scene.id ? (
                       <div className="scene-edit">
                         <label>Scene title
@@ -192,6 +220,7 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
                     ) : (
                       <>
                         <div className="scene-card-head">
+                          {handle}
                           <span className={`scene-status ${scene.in_text ? "scene-drafted" : "scene-planned"}`}>{scene.in_text ? "In the text" : "Planned"}</span>
                           <h3>{scene.title}</h3>
                         </div>
@@ -205,21 +234,23 @@ export function SceneBoard({ chapters, acts, scenes, placeholders, projectId, of
                         )}
                         <label className="scene-place">
                           <span>Chapter</span>
-                          {chapterPicker(scene.chapter_id, (chapterId) => void place(scene, chapterId), offline || scene.in_text)}
+                          {chapterPicker(scene.chapter_id, (chapterId) => void place(scene, chapterId), offline || moving || scene.in_text)}
                         </label>
                         <footer className="scene-actions">
                           {scene.in_text && <button className="btn btn-quiet" onClick={() => onOpen(scene)}>Open</button>}
-                          {scene.unconfirmed && <><button className="btn btn-quiet" disabled={offline} onClick={() => void onUpdate(scene, { confirm: true }).catch(() => {})}>Looks right</button><button className="btn btn-quiet" disabled={offline} onClick={() => void onUpdate(scene, { unlink: true }).catch(() => {})}>Not this one</button></>}
-                          <button className="btn btn-quiet" disabled={offline} onClick={() => begin(scene)}>Edit</button>
-                          <button className="btn btn-quiet" disabled={offline || i === 0} aria-label={`Move ${scene.title} up`} onClick={() => onMove(g.id, group.map((s, n) => n === i ? group[i - 1].id : n === i - 1 ? scene.id : s.id))}>Up</button>
-                          <button className="btn btn-quiet" disabled={offline || i === group.length - 1} aria-label={`Move ${scene.title} down`} onClick={() => onMove(g.id, group.map((s, n) => n === i ? group[i + 1].id : n === i + 1 ? scene.id : s.id))}>Down</button>
-                          <button className="btn btn-quiet scene-delete" disabled={offline} onClick={() => onDelete(scene)}>Delete</button>
+                          {scene.unconfirmed && <><button className="btn btn-quiet" disabled={offline || moving} onClick={() => void onUpdate(scene, { confirm: true }).catch(() => {})}>Looks right</button><button className="btn btn-quiet" disabled={offline || moving} onClick={() => void onUpdate(scene, { unlink: true }).catch(() => {})}>Not this one</button></>}
+                          <button className="btn btn-quiet" disabled={offline || moving} onClick={() => begin(scene)}>Edit</button>
+                          <button className="btn btn-quiet" disabled={offline || moving || i === 0} aria-label={`Move ${scene.title} up`} onClick={() => onMove(g.id, group.map((s, n) => n === i ? group[i - 1].id : n === i - 1 ? scene.id : s.id), scene.id)}>Up</button>
+                          <button className="btn btn-quiet" disabled={offline || moving || i === group.length - 1} aria-label={`Move ${scene.title} down`} onClick={() => onMove(g.id, group.map((s, n) => n === i ? group[i + 1].id : n === i + 1 ? scene.id : s.id), scene.id)}>Down</button>
+                          <button className="btn btn-quiet scene-delete" disabled={offline || moving} onClick={() => onDelete(scene)}>Delete</button>
                         </footer>
                       </>
                     )}
-                  </li>
+                  </>}</SortableScene>
                 ))(item))}
               </ol>
+              </SortableContext>
+              </DndContext>
             )}
           </section>
         );

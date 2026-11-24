@@ -100,6 +100,7 @@ export async function saveAsClaude(env: Env, chapterId: string, baseVersion: num
     throw new EditError("That would make the chapter larger than 5 MB, so nothing was changed.");
   }
   const row = await getChapterRow(env, chapterId);
+  if (row.version !== baseVersion) throw conflict(row.version);
   const words = countWords(content);
   const ts = now();
   const claim = await env.DB.prepare(
