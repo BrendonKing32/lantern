@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -285,7 +285,8 @@ interface RowProps {
   onStartAct: (chapterId: string) => void;
 }
 
-function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDelete, onStartAct }: RowProps) {
+// Memoized so typing in one chapter doesn't re-render every row.
+const ChapterRow = memo(function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDelete, onStartAct }: RowProps) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: chapter.id,
   });
@@ -379,4 +380,4 @@ function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDe
       )}
     </li>
   );
-}
+});
