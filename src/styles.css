@@ -1984,6 +1984,18 @@ select {
 .scene-planned {
   color: var(--lamp);
 }
+.scene-revising {
+  color: var(--lamp);
+}
+.scene-done {
+  color: var(--sage);
+}
+.chapter-status {
+  color: var(--text-faint);
+  background: var(--chip);
+  font-size: 0.7rem;
+  max-width: 7rem;
+}
 .scene-placeholder {
   border-style: dashed;
 }

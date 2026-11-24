@@ -21,6 +21,7 @@ export function TodayPanel() {
   const goal = stats.daily_goal;
   const today = Math.max(0, stats.today);
   const done = goal !== null && today >= goal;
+  const streakDone = done || (goal !== null && stats.streak_counts_revision && stats.revised_today >= goal);
 
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -44,9 +45,10 @@ export function TodayPanel() {
             <strong>{today.toLocaleString()}</strong>
             {goal !== null ? ` of ${goal.toLocaleString()} words today` : ` ${today === 1 ? "word" : "words"} today`}
           </p>
+          {stats.revised_today > 0 && <p>{stats.revised_today.toLocaleString()} words revised today</p>}
           <p className="today-streak">
             {stats.streak > 0
-              ? `${stats.streak}-day streak${done || goal === null ? "" : ". Reach today's goal to keep it going"}`
+              ? `${stats.streak}-day streak${streakDone || goal === null ? "" : ". Reach today's goal to keep it going"}`
               : goal !== null
                 ? "Meet today's goal to start a streak"
                 : "Write today to start a streak"}
@@ -59,6 +61,14 @@ export function TodayPanel() {
           </button>
         )}
       </div>
+
+      <label>
+        <input type="checkbox" checked={stats.streak_counts_revision} onChange={(e) => {
+          const enabled = e.currentTarget.checked;
+          void api.setStreakRevision(enabled).then(() => api.stats()).then((value) => { setStats(value); setError(null); }).catch((err) => setError(describeError(err)));
+        }} /> Count revising toward my streak
+      </label>
+      {error && !editing && <p className="shelf-error" role="alert">{error}</p>}
 
       {goal !== null && (
         <div

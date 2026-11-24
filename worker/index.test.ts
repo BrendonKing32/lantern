@@ -282,11 +282,11 @@ function fakeDatabase(state: State) {
         project.deleted_at = String(params[0]);
         changes = 1;
       }
-    } else if (sql.startsWith("UPDATE chapters SET title = ?, synopsis = ?")) {
-      const chapter = state.chapters.find((c) => c.id === params[2]);
+    } else if (sql.startsWith("UPDATE chapters SET title = COALESCE")) {
+      const chapter = state.chapters.find((c) => c.id === params[3]);
       if (chapter) {
-        chapter.title = String(params[0]);
-        chapter.synopsis = String(params[1]);
+        if (params[0] !== null) chapter.title = String(params[0]);
+        if (params[1] !== null) chapter.synopsis = String(params[1]);
         changes = 1;
       }
     } else if (sql.startsWith("UPDATE chapters SET deleted_at = NULL")) {

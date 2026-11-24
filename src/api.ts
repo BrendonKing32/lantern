@@ -98,6 +98,7 @@ export const api = {
   aiTest: () => request(schema.aiTest, "POST", "/api/ai/test"),
   stats: () => request(schema.stats, "GET", `/api/stats?today=${localDay()}`),
   setGoal: (dailyGoal: number | null) => request(schema.goal, "PUT", "/api/goal", { daily_goal: dailyGoal }),
+  setStreakRevision: (enabled: boolean) => request(schema.streakRevision, "PUT", "/api/streak-revision", { streak_counts_revision: enabled }),
   setTarget: (projectId: string, words: number | null, date: string | null) =>
     request(schema.target, "PUT", `/api/projects/${projectId}/target`, { target_words: words, target_date: date }),
   setDialect: (projectId: string, dialect: Dialect) =>
@@ -131,6 +132,7 @@ export const api = {
       snapshot?: "restore" | "conflict" | "replace";
       snapshotContent?: string;
       writtenAt?: number;
+      revised?: number;
     } = {},
   ) =>
     trackChapterActivity(id, request(
@@ -143,11 +145,12 @@ export const api = {
         baseVersion,
         snapshot: opts.snapshot,
         snapshotContent: opts.snapshotContent,
+        revised: opts.revised,
         day: localDay(opts.writtenAt),
       },
       { keepalive: opts.keepalive },
     )),
-  updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
+  updateChapter: (id: string, patch: { title?: string; synopsis?: string; revision_status?: import("../shared/types").ChapterRevisionStatus }) =>
     request(schema.chapterMeta, "PATCH", `/api/chapters/${id}`, patch),
   scenes: (projectId: string) => request(schema.sceneListing, "GET", `/api/projects/${projectId}/scenes`),
   createScene: (projectId: string, chapterId: string | null) =>
