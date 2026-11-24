@@ -50,7 +50,7 @@ import {
   listShareComments,
   revokeShare,
 } from "./handlers/sharing";
-import { getStats, setGoal } from "./handlers/stats";
+import { getStats, setGoal, setStreakRevision } from "./handlers/stats";
 import { handleOAuth, isOAuthPath } from "./mcp/oauth";
 
 export type { Env } from "./env";
@@ -80,6 +80,7 @@ const routes: Array<[string, string, Handler]> = [
   ["PATCH", "/api/bible/:id", updateEntry],
   ["DELETE", "/api/bible/:id", deleteEntry],
   ["PUT", "/api/goal", setGoal],
+  ["PUT", "/api/streak-revision", setStreakRevision],
   ["PUT", "/api/projects/:id/target", setTarget],
   ["PUT", "/api/projects/:id/dialect", setDialect],
   ["GET", "/api/trash/projects", listDeletedProjects],

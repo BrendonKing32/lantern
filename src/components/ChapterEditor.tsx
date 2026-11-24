@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { EditorView } from "@codemirror/view";
+import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { api, ApiError, describeError } from "../api";
-import { drafts } from "../local";
+import { DraftOwnershipError, drafts } from "../local";
 import { isNetworkError, loadChapter, moveRetryDelay, openEditors, rememberSaved } from "../sync";
 import { HistoryPanel } from "./HistoryPanel";
 import { ClaudeDraftPanel } from "./ClaudeDraftPanel";
@@ -19,6 +19,8 @@ import { findAnchor, makeAnchor, type TextAnchor } from "../../shared/anchors";
 import { noteDecorations, notesChanged } from "../noteDecorations";
 import { NoteLoadGate } from "../noteLoad";
 import { NotesPanel } from "./NotesPanel";
+import { revisedWords } from "../revisedWords";
+import { waitForChapterActivity } from "../chapterActivity";
 import type { BibleEntry, ChapterWithContent, Dialect, MarginNote, SaveResult, SceneMeta } from "../../shared/types";
 import type { ClaudeDraft } from "../../shared/types";
 
@@ -142,6 +144,12 @@ export function ChapterEditor({
   const text = useRef("");
   const version = useRef(0);
   const dirty = useRef(false);
+  const pendingRevised = useRef(0);
+  const revisionEpoch = useRef(0);
+  const draftGeneration = useRef(crypto.randomUUID());
+  const revisionToken = useRef<string | undefined>(undefined);
+  const replacementBase = useRef<string | undefined>(undefined);
+  const editSerial = useRef(0);
   const inFlight = useRef(false);
   const saveAgain = useRef(false);
   const draftStorageFailed = useRef(false);
@@ -349,12 +357,17 @@ export function ChapterEditor({
   }, []);
 
   const persistDraft = (content: string, baseVersion: number) => {
-    void drafts.write(chapterId, content, baseVersion).then(
+    void drafts.write(chapterId, content, baseVersion, pendingRevised.current, keepCopy.current, draftGeneration.current, replacementBase.current, revisionToken.current).then(
       () => {
         draftStorageFailed.current = false;
       },
-      () => {
+      (error) => {
         draftStorageFailed.current = true;
+        if (error instanceof DraftOwnershipError) {
+          blocked.current = true;
+          status("error", `${error.message} Keep this page open to protect your unsaved writing.`);
+          return;
+        }
         status(
           "error",
           "This draft isn't saved on this device. Keep this page open while Lantern retries the server save.",
@@ -371,19 +384,36 @@ export function ChapterEditor({
       return;
     }
     inFlight.current = true;
+    await waitForChapterActivity(chapterId);
+    if (blocked.current) {
+      inFlight.current = false;
+      return;
+    }
     status("saving");
-    const content = text.current;
     const replaced = !!keepCopy.current;
+    const content = replaced ? (replacementBase.current ?? text.current) : text.current;
+    const sentRevised = replaced ? 0 : pendingRevised.current;
+    const sentSerial = editSerial.current;
+    const sentEpoch = revisionEpoch.current;
+    const sentReason = keepCopy.current;
+    const sentGeneration = draftGeneration.current;
+    const sentToken = revisionToken.current;
+    const baseVersion = version.current;
     try {
-      const res = await api.saveChapter(chapterId, content, version.current, { snapshot: keepCopy.current });
-      keepCopy.current = undefined;
+      const res = await api.saveChapter(chapterId, content, baseVersion, { snapshot: sentReason, revised: sentRevised, keepalive: !alive.current });
+      if (revisionEpoch.current === sentEpoch) {
+        keepCopy.current = undefined;
+        replacementBase.current = undefined;
+      }
       version.current = res.version;
+      if (revisionEpoch.current === sentEpoch) pendingRevised.current = Math.max(0, pendingRevised.current - sentRevised);
       draftStorageFailed.current = false;
       cb.current.onSaved(chapterId, res, replaced);
       void rememberSaved(chapterId, content, res);
-      if (text.current === content) {
+      if (revisionEpoch.current === sentEpoch) void drafts.acknowledge({ chapterId, content, baseVersion, revised: sentRevised, savedAt: 0, generation: sentGeneration, revisionToken: sentToken }, res.version);
+      if (editSerial.current === sentSerial && revisionEpoch.current === sentEpoch && keepCopy.current === undefined &&
+        text.current === content && pendingRevised.current === 0) {
         dirty.current = false;
-        void drafts.clearIf(chapterId, content);
         status("saved");
       } else {
         persistDraft(text.current, version.current);
@@ -432,7 +462,8 @@ export function ChapterEditor({
       inFlight.current = false;
       if (saveAgain.current && !blocked.current) {
         saveAgain.current = false;
-        schedule(400);
+        if (alive.current) schedule(400);
+        else void saveRef.current();
       }
     }
   };
@@ -448,7 +479,19 @@ export function ChapterEditor({
     void (async () => {
       let draft: Awaited<ReturnType<typeof drafts.read>>;
       try {
+        await waitForChapterActivity(chapterId);
+        if (cancelled) return;
         draft = await drafts.read(chapterId);
+        if (draft) {
+          if (!await drafts.adopt(draft, draftGeneration.current)) {
+            if (!cancelled) {
+              setLoadError("This draft changed in another tab. Close that tab, then reload this chapter.");
+              status("error", "This draft changed in another tab.");
+            }
+            return;
+          }
+          draft = { ...draft, generation: draftGeneration.current };
+        }
       } catch {
         if (!cancelled) {
           setLoadError("Lantern couldn't read local drafts on this device. Enable site storage and reload to protect unsaved writing.");
@@ -466,6 +509,10 @@ export function ChapterEditor({
           // Offline with nothing cached but a draft: write on from the draft.
           version.current = draft.baseVersion;
           text.current = draft.content;
+          pendingRevised.current = draft.revised ?? 0;
+          keepCopy.current = draft.snapshot;
+          replacementBase.current = draft.replacementBase;
+          revisionToken.current = draft.revisionToken;
           dirty.current = true;
           refreshDraftReview((n) => n + 1);
           setInitialDoc(draft.content);
@@ -487,8 +534,12 @@ export function ChapterEditor({
       }
       version.current = ch.version;
       let content = ch.content;
-      if (draft && draft.content !== ch.content) {
+      if (draft && (draft.content !== ch.content || (draft.revised ?? 0) > 0 || draft.snapshot)) {
         content = draft.content;
+        pendingRevised.current = draft.revised ?? 0;
+        keepCopy.current = draft.snapshot;
+        replacementBase.current = draft.replacementBase;
+        revisionToken.current = draft.revisionToken;
         dirty.current = true;
         // Saved elsewhere since this draft was written. Offline we can't be
         // sure, so keep writing; the server will flag it on the next save.
@@ -499,7 +550,7 @@ export function ChapterEditor({
           version.current = draft.baseVersion;
         }
       } else if (draft) {
-        void drafts.clearIf(chapterId, draft.content);
+        void drafts.clearOwned(chapterId, draftGeneration.current);
       }
       text.current = content;
       setInitialDoc(content);
@@ -528,18 +579,7 @@ export function ChapterEditor({
       if (wordCountTimer.current !== undefined) flushWordCount();
       window.removeEventListener("beforeunload", warn);
       // Best-effort flush when switching chapters; the local draft covers failure.
-      if (dirty.current && !blocked.current && !inFlight.current) {
-        const content = text.current;
-        const replaced = !!keepCopy.current;
-        api
-          .saveChapter(chapterId, content, version.current, { keepalive: true, snapshot: keepCopy.current })
-          .then((res) => {
-            void drafts.clearIf(chapterId, content);
-            void rememberSaved(chapterId, content, res);
-            cb.current.onSaved(chapterId, res, replaced);
-          })
-          .catch(() => {});
-      }
+      if (dirty.current && !blocked.current && !inFlight.current) void saveRef.current();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapterId, schedule]);
@@ -614,8 +654,10 @@ export function ChapterEditor({
   }, [chapterId, loaded]);
 
   const handleChange = useCallback(
-    (value: string) => {
+    (value: string, update: ViewUpdate) => {
       if (applyingRemote.current) return; // already saved; not the writer's typing
+      pendingRevised.current += revisedWords(update.changes, update.startState.doc);
+      editSerial.current++;
       text.current = value;
       dirty.current = true;
       persistDraft(value, version.current);
@@ -634,17 +676,28 @@ export function ChapterEditor({
     blocked.current = false;
     dirty.current = true;
     keepCopy.current = "conflict"; // the other device's text goes into history
+    replacementBase.current = text.current;
+    pendingRevised.current = 0;
+    revisionEpoch.current++;
+    revisionToken.current = crypto.randomUUID();
+    persistDraft(text.current, version.current);
     setConflict(null);
     void saveRef.current();
   };
 
   const useTheirs = () => {
     if (!conflict) return;
+    const previousGeneration = draftGeneration.current;
     version.current = conflict.version;
     text.current = conflict.content;
     dirty.current = false;
+    pendingRevised.current = 0;
+    revisionEpoch.current++;
+    revisionToken.current = crypto.randomUUID();
+    keepCopy.current = undefined;
+    replacementBase.current = undefined;
     blocked.current = false;
-    void drafts.clear(chapterId);
+    void drafts.clearOwned(chapterId, previousGeneration);
     setInitialDoc(conflict.content);
     setEditorKey((k) => k + 1);
     flushWordCount();
@@ -663,7 +716,11 @@ export function ChapterEditor({
     if (blocked.current) return;
     text.current = content;
     dirty.current = true;
+    pendingRevised.current = 0;
+    revisionEpoch.current++;
+    revisionToken.current = crypto.randomUUID();
     keepCopy.current = "restore";
+    replacementBase.current = content;
     persistDraft(content, version.current);
     setInitialDoc(content);
     setEditorKey((k) => k + 1);
@@ -706,6 +763,7 @@ export function ChapterEditor({
         return;
       }
       const before = text.current;
+      const beforeSerial = editSerial.current;
       const currentMode = d.base_version === version.current ? "as-drafted" : "replayed";
       if (mode !== currentMode || (mode === "replayed" && replayDraft(before, d.ops).text !== expectedText)) {
         setDraftError("The chapter changed while you were reviewing. Look it over again.");
@@ -728,7 +786,7 @@ export function ChapterEditor({
       setClaudeDraft(null);
       setDraftOpen(false);
       if (!alive.current) return;
-      if (text.current !== before) {
+      if (editSerial.current !== beforeSerial) {
         // Typed while the draft went in: ask which to keep, as for another device.
         status("conflict");
         setConflict(res);
@@ -737,7 +795,7 @@ export function ChapterEditor({
       blocked.current = false;
       text.current = res.content;
       dirty.current = false;
-      void drafts.clear(chapterId);
+      void drafts.clearOwned(chapterId, draftGeneration.current);
       setInitialDoc(res.content);
       setEditorKey((k) => k + 1);
       // Claude's words aren't this session's writing.

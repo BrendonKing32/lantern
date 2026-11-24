@@ -191,6 +191,7 @@ export function registerTools(server: McpServer, env: Env) {
           number: i + 1,
           title: c.title,
           synopsis: c.synopsis,
+          revision_status: c.revision_status,
           word_count: c.word_count,
           updated_at: c.updated_at,
           act: c.act_id ? (actTitle.get(c.act_id) ?? null) : null,

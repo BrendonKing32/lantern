@@ -367,25 +367,26 @@ export function registerWriteTools(server: McpServer, env: Env) {
   server.registerTool(
     "update_chapter_details",
     {
-      title: "Rename a chapter or change its synopsis",
-      description: "Change a chapter's title or synopsis (the text on its corkboard card). Doesn't touch the chapter's text.",
+      title: "Change chapter details",
+      description: "Change a chapter's title, synopsis or revision status. Doesn't touch the chapter's text.",
       inputSchema: {
         chapter_id: z.string(),
         title: z.string().min(1).max(200).optional(),
         synopsis: z.string().max(2000).optional(),
+        revision_status: z.enum(["drafting", "revising", "done"]).optional(),
       },
       annotations: EDITS,
     },
-    async ({ chapter_id, title, synopsis }) =>
+    async ({ chapter_id, title, synopsis, revision_status }) =>
       guarded(async () => {
-        if (title === undefined && synopsis === undefined) throw new EditError("Give a title, a synopsis, or both.");
-        const r = await viaApp<ChapterMeta>(updateChapter, { id: chapter_id }, "PATCH", { title, synopsis }, env);
+        if (title === undefined && synopsis === undefined && revision_status === undefined) throw new EditError("Give a title, synopsis or revision status.");
+        const r = await viaApp<ChapterMeta>(updateChapter, { id: chapter_id }, "PATCH", { title, synopsis, revision_status }, env);
         await logClaudeChange(env, {
           project_id: r.project_id, action: "update_chapter_details", target_kind: "chapter", target_id: r.id,
           chapter_id: r.id, summary: `Changed the details of “${r.title}”`,
-          detail: listed([...(title !== undefined ? ["title"] : []), ...(synopsis !== undefined ? ["synopsis"] : [])]),
+          detail: listed([...(title !== undefined ? ["title"] : []), ...(synopsis !== undefined ? ["synopsis"] : []), ...(revision_status !== undefined ? ["revision status"] : [])]),
         });
-        return data({ chapter_id: r.id, title: r.title, synopsis: r.synopsis });
+        return data({ chapter_id: r.id, title: r.title, synopsis: r.synopsis, revision_status: r.revision_status });
       }),
   );
 
@@ -468,7 +469,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
     summary: z.string().max(2000).optional(),
     pov: z.string().max(120).optional().describe("Whose point of view"),
     location: z.string().max(120).optional(),
-    status: z.enum(["planned", "drafted"]).optional(),
+    status: z.enum(["planned", "drafted", "revising", "done"]).optional(),
   };
 
   server.registerTool(

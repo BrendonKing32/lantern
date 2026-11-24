@@ -69,6 +69,7 @@ const chapterFields = {
   project_id: string,
   title: string,
   synopsis: string,
+  revision_status: literal("drafting", "revising", "done"),
   position: number,
   word_count: number,
   version: number,
@@ -192,12 +193,15 @@ export const aiTest = object({ ok: boolean, reply: string, model: string, ms: nu
 export const stats: Check<Stats> = object({
   daily_goal: nullable(number),
   today: number,
+  revised_today: number,
+  streak_counts_revision: boolean,
   streak: number,
   best_streak: number,
   days: array(object({ day: string, words: number })),
 });
 
 export const goal = object({ daily_goal: nullable(number) });
+export const streakRevision = object({ streak_counts_revision: boolean });
 
 export const target = object({ target_words: nullable(number), target_date: nullable(string) });
 
@@ -233,7 +237,7 @@ export const sceneMeta: Check<SceneMeta> = object({
   summary: string,
   pov: string,
   location: string,
-  status: literal("planned", "drafted"),
+  status: literal("planned", "drafted", "revising", "done"),
   position: number,
   in_text: boolean,
   word_count: number,

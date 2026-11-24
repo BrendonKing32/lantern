@@ -2,9 +2,10 @@
 // that sends unsaved drafts to the server once it's back.
 
 import { api, ApiError } from "./api";
-import { cache, chapters, DraftStorageError, drafts, reopenStorage } from "./local";
+import { cache, chapters, draftToSave, DraftStorageError, drafts, reopenStorage } from "./local";
 import type { Draft } from "./local";
 import type { BibleEntry, ChapterWithContent, ProjectDetail, ProjectSummary, SaveResult } from "../shared/types";
+import { trackChapterActivity } from "./chapterActivity";
 
 export interface Loaded<T> {
   data: T;
@@ -208,9 +209,20 @@ export async function syncDrafts(): Promise<SyncOutcome> {
     for (const d of queue) {
       if (openEditors.has(d.chapterId)) continue;
       try {
-        const res = await api.saveChapter(d.chapterId, d.content, d.baseVersion, { writtenAt: d.savedAt });
-        await drafts.clearIf(d.chapterId, d.content);
-        await rememberSaved(d.chapterId, d.content, res);
+        await trackChapterActivity(d.chapterId, (async () => {
+          let pending: Draft | null = d;
+          // A replacement is saved first; writing made after it is a separate author save.
+          for (let pass = 0; pending && pass < 2; pass++) {
+            if (openEditors.has(pending.chapterId)) break;
+            const sent: Draft = draftToSave(pending);
+            const res = await api.saveChapter(sent.chapterId, sent.content, sent.baseVersion, { writtenAt: sent.savedAt, revised: sent.revised ?? 0, ...(sent.snapshot ? { snapshot: sent.snapshot } : {}) });
+            await drafts.acknowledge(sent, res.version);
+            await rememberSaved(sent.chapterId, sent.content, res);
+            if (!sent.snapshot) break;
+            const next: Draft | null = await drafts.read(sent.chapterId);
+            pending = next && next.generation === sent.generation && next.baseVersion === res.version ? next : null;
+          }
+        })());
       } catch (e) {
         if (isNetworkError(e)) return "offline"; // still offline; try again later
         if (e instanceof ApiError && e.status === 423) retryDraftsAfter(moveRetryDelay(e));

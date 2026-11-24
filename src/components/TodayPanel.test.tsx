@@ -5,6 +5,8 @@ import { Calendar } from "./TodayPanel";
 
 const stats: Stats = {
   daily_goal: 100,
+  revised_today: 0,
+  streak_counts_revision: false,
   today: 50,
   streak: 0,
   best_streak: 0,

@@ -507,6 +507,8 @@ describe("accepting or discarding Claude's draft", () => {
   });
 
   it("puts the draft in the chapter and keeps the chapter's text in History", async () => {
+    db.raw.prepare("INSERT INTO daily_words (day, project_id, words, revised) VALUES ('2026-11-24', ?, 1, 7)").run(NOVEL);
+    const before = db.raw.prepare("SELECT * FROM daily_words").all();
     const res = await app("POST", `/api/chapters/${CH}/claude-draft/accept`, { baseVersion: 4, draftVersion: 1, mode: "as-drafted" });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ id: CH, version: 5, word_count: 10, content: NELL });
@@ -518,6 +520,7 @@ describe("accepting or discarding Claude's draft", () => {
     expect(draft()).toBeUndefined();
     expect(bucket.objects.has(DRAFT_KEY)).toBe(false);
     expect(await (await app("GET", `/api/chapters/${CH}/claude-draft`)).json()).toBeNull();
+    expect(db.raw.prepare("SELECT * FROM daily_words").all()).toEqual(before);
   });
 
   it("replays a stale draft without losing a paragraph the writer added", async () => {
@@ -640,6 +643,12 @@ describe("update_chapter_details", () => {
     expect(chapter()).toMatchObject({ title: "Landfall", synopsis: "Mara arrives.", version: 4 });
     expect(bucket.objects.get(KEY)).toBe(OPENING);
   });
+
+  it("sets revision status without changing other details", async () => {
+    const response = await call("update_chapter_details", { chapter_id: CH, revision_status: "revising" });
+    expect(JSON.parse(textOf(response))).toMatchObject({ revision_status: "revising", title: "Arrival" });
+    expect(db.raw.prepare("SELECT revision_status FROM chapters WHERE id = ?").get(CH)).toEqual({ revision_status: "revising" });
+  });
 });
 
 describe("story guide", () => {
@@ -670,6 +679,8 @@ describe("scene cards", () => {
     expect(scene).toMatchObject({ chapter_id: CH, title: "Landing", pov: "Mara", status: "drafted", position: 0 });
     const updated = JSON.parse(textOf(await call("update_scene", { scene_id: scene.id, summary: "She lands.", status: "planned" })));
     expect(updated).toMatchObject({ title: "Landing", summary: "She lands.", status: "planned" });
+    const done = JSON.parse(textOf(await call("update_scene", { scene_id: scene.id, status: "done" })));
+    expect(done.status).toBe("done");
   });
 
   it("adds an unassigned scene and places it in a chapter later", async () => {

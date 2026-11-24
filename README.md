@@ -301,11 +301,14 @@ app and private API protected.
   a folder per act.
 - **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
   index card with its title, synopsis, word count and up to six in-text scenes with their word counts.
+  Set a chapter's status to **Drafting**, **Revising** or **Done** on its card or in the chapter list.
+  Done scenes have a check mark.
   Drag cards (or Space and the arrow keys)
   to reorder the book (a card dropped on another joins that card's act), click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
   **Open** a card to write that chapter.
 - **Scenes:** the **Scenes** view shows planned cards and cards matched to passages between
-  scene breaks. In-text cards show their word counts and excerpts; **Open** takes you to the
+  scene breaks. Set each card's status to **Planned**, **Drafted**, **Revising** or **Done**.
+  In-text cards show their word counts and excerpts; **Open** takes you to the
   passage in **Write**. For a passage with no card, use **Add card** or **This is…** to link
   a planned card. Check suggested matches with **Looks right** or **Not this one**.
   Drag an in-text card within its chapter or into another chapter to move its passage
@@ -371,7 +374,9 @@ app and private API protected.
   streak and the last 12 weeks. **Set a daily goal** to count only days that meet it toward the
   streak; with no goal, any day with writing counts. Today never breaks a streak before it ends.
   Words are net (deleting counts against the day), credited to your local date, and restoring a
-  version from History doesn't count.
+  version from History doesn't count; your edits after a restore do.
+  The panel also shows words revised (inserted and deleted words). Turn on **Count revising toward my streak**
+  to count a day when either net words or revised words meet the goal; it's off by default.
 - **Export:** the Export button in a novel saves it as a Word manuscript (.docx: standard
   manuscript format with a title page, running header and `#` scene breaks), a typeset PDF
   for reading or printing, an EPUB e-book, or a Markdown .zip (a file per chapter plus the whole

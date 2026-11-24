@@ -7,7 +7,7 @@ import { api, INVALID_RESPONSE } from "../api";
 
 const chapter: ChapterMeta = {
   id: "c", project_id: "p", title: "Chapter one", synopsis: "", position: 0,
-  word_count: 3, version: 1, updated_at: "", act_id: null,
+  word_count: 3, version: 1, updated_at: "", act_id: null, revision_status: "drafting",
 };
 const card: SceneMeta = {
   id: "s", project_id: "p", chapter_id: "c", title: "Planned scene", summary: "", pov: "", location: "",

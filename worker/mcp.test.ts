@@ -21,8 +21,8 @@ const project = {
 };
 
 const chapterRows = [
-  { id: "ch-1", project_id: "novel-1", title: "Arrival", synopsis: "Mara reaches the harbour.", position: 0, word_count: 7, version: 3, updated_at: "2026-02-01T00:00:00.000Z", act_id: null },
-  { id: "ch-2", project_id: "novel-1", title: "The Tower", synopsis: "", position: 1, word_count: 6, version: 1, updated_at: "2026-02-01T00:00:00.000Z", act_id: null },
+  { id: "ch-1", project_id: "novel-1", title: "Arrival", synopsis: "Mara reaches the harbour.", position: 0, word_count: 7, version: 3, updated_at: "2026-02-01T00:00:00.000Z", act_id: null, revision_status: "drafting" as const },
+  { id: "ch-2", project_id: "novel-1", title: "The Tower", synopsis: "", position: 1, word_count: 6, version: 1, updated_at: "2026-02-01T00:00:00.000Z", act_id: null, revision_status: "drafting" as const },
 ];
 
 const texts: Record<string, string> = {

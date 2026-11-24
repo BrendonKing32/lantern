@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   saveChapter: vi.fn(),
   draftsAll: vi.fn(),
   draftsClearIf: vi.fn(),
+  acknowledge: vi.fn(),
   reopenStorage: vi.fn(),
   chapterRead: vi.fn(),
   chapterWrite: vi.fn(),
@@ -20,7 +21,9 @@ vi.mock("./api", () => ({
 
 vi.mock("./local", () => ({
   DraftStorageError: class DraftStorageError extends Error {},
-  drafts: { all: mocks.draftsAll, clearIf: mocks.draftsClearIf },
+  draftToSave: (draft: { snapshot?: string; replacementBase?: string; content: string; revised?: number }) =>
+    draft.snapshot ? { ...draft, content: draft.replacementBase ?? draft.content, revised: 0 } : draft,
+  drafts: { all: mocks.draftsAll, clearIf: mocks.draftsClearIf, acknowledge: mocks.acknowledge },
   chapters: { read: mocks.chapterRead, write: mocks.chapterWrite },
   reopenStorage: mocks.reopenStorage,
 }));
@@ -60,9 +63,9 @@ describe("offline draft sync", () => {
       draft.chapterId,
       draft.content,
       draft.baseVersion,
-      { writtenAt: draft.savedAt },
+      { writtenAt: draft.savedAt, revised: 0 },
     );
-    expect(mocks.draftsClearIf).toHaveBeenCalledWith(draft.chapterId, draft.content);
+    expect(mocks.acknowledge).toHaveBeenCalledWith(draft, 5);
     expect(mocks.chapterWrite).toHaveBeenCalledWith(
       expect.objectContaining({ ...result, content: draft.content }),
     );
@@ -77,6 +80,19 @@ describe("offline draft sync", () => {
     expect(mocks.chapterWrite).not.toHaveBeenCalled();
   });
 
+  it("sends a queued revision count and keeps it on failure", async () => {
+    const queued = { ...draft, revised: 8 };
+    mocks.draftsAll.mockResolvedValue([queued]);
+    mocks.saveChapter.mockRejectedValueOnce(new ApiError(423, "moving", { retryAfter: 60 }))
+      .mockResolvedValueOnce({ version: 5, word_count: 2, updated_at: "now" });
+    await syncDrafts();
+    expect(mocks.acknowledge).not.toHaveBeenCalled();
+    await syncDrafts();
+    expect(mocks.saveChapter).toHaveBeenLastCalledWith(queued.chapterId, queued.content, queued.baseVersion, { writtenAt: queued.savedAt, revised: 8 });
+    expect(mocks.acknowledge).toHaveBeenCalledTimes(1);
+    expect(mocks.acknowledge).toHaveBeenCalledWith(queued, 5);
+  });
+
   it("keeps a locked draft and retries it after the requested delay", async () => {
     vi.useFakeTimers();
     try {
@@ -87,7 +103,7 @@ describe("offline draft sync", () => {
       expect(moveRetryDelay(new ApiError(423, "moving", { retryAfter: 3 }))).toBe(3000);
       await vi.advanceTimersByTimeAsync(3000);
       expect(mocks.saveChapter).toHaveBeenCalledTimes(2);
-      expect(mocks.draftsClearIf).toHaveBeenCalledWith(draft.chapterId, draft.content);
+      expect(mocks.acknowledge).toHaveBeenCalledWith(draft, 5);
     } finally {
       vi.useRealTimers();
     }

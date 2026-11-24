@@ -23,6 +23,8 @@ import {
   shouldCloseChapterActions,
 } from "../chapterActions";
 import { actRows, arrangeFromRows } from "../acts";
+import { ChapterStatus } from "./ChapterStatus";
+import type { ChapterRevisionStatus } from "../../shared/types";
 
 interface Props {
   /** In book order. */
@@ -36,6 +38,8 @@ interface Props {
   onRename: (id: string, title: string) => void;
   onDelete: (c: ChapterMeta) => void;
   onStartAct: (chapterId: string) => void;
+  onStatus: (id: string, status: ChapterRevisionStatus) => void;
+  offline?: boolean;
   onRenameAct: (id: string, title: string) => void;
   onMoveAct: (id: string, by: -1 | 1) => void;
   onDeleteAct: (act: Act) => void;
@@ -100,6 +104,8 @@ export function ChapterList(props: Props) {
                 onRename={onRename}
                 onDelete={onDelete}
                 onStartAct={onStartAct}
+                onStatus={props.onStatus}
+                offline={props.offline}
               />
             );
           })}
@@ -283,10 +289,12 @@ interface RowProps {
   onRename: (id: string, title: string) => void;
   onDelete: (c: ChapterMeta) => void;
   onStartAct: (chapterId: string) => void;
+  onStatus: (id: string, status: ChapterRevisionStatus) => void;
+  offline?: boolean;
 }
 
 // Memoized so typing in one chapter doesn't re-render every row.
-const ChapterRow = memo(function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDelete, onStartAct }: RowProps) {
+const ChapterRow = memo(function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDelete, onStartAct, onStatus, offline }: RowProps) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: chapter.id,
   });
@@ -334,6 +342,7 @@ const ChapterRow = memo(function ChapterRow({ chapter, number, words, selected, 
       )}
       {!renaming && (
         <>
+          <ChapterStatus chapter={chapter} onChange={onStatus} offline={offline} />
           <span className="chapter-tools">
             <button
               className="icon-btn"

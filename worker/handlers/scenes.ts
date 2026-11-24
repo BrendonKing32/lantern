@@ -185,8 +185,8 @@ export const updateScene: Handler = async (req, env, p) => {
       throw new HttpError(400, `${field} must be a string`);
     }
   }
-  if (b.status !== undefined && b.status !== "planned" && b.status !== "drafted") {
-    throw new HttpError(400, "status must be planned or drafted");
+  if (b.status !== undefined && b.status !== "planned" && b.status !== "drafted" && b.status !== "revising" && b.status !== "done") {
+    throw new HttpError(400, "status must be planned, drafted, revising or done");
   }
   const chapterId = b.chapter_id === undefined ? scene.chapter_id : await chapterIn(env, scene.project_id, b.chapter_id);
   await Promise.all([...new Set([scene.chapter_id, chapterId].filter((id): id is string => id !== null))]

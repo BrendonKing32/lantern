@@ -127,11 +127,15 @@ export const saveChapter: Handler = async (req, env, p) => {
     snapshot?: unknown;
     snapshotContent?: unknown;
     day?: unknown;
+    revised?: unknown;
   }>(req);
   if (typeof b.content !== "string") throw new HttpError(400, "content must be a string");
   const reason: SnapshotReason =
     b.snapshot === "restore" || b.snapshot === "conflict" || b.snapshot === "replace" ? b.snapshot : "auto";
   if (typeof b.baseVersion !== "number") throw new HttpError(400, "baseVersion must be a number");
+  if (b.revised !== undefined && (!Number.isSafeInteger(b.revised) || (b.revised as number) < 0)) {
+    throw new HttpError(400, "revised must be a non-negative whole number");
+  }
   if (b.snapshotContent !== undefined && typeof b.snapshotContent !== "string") {
     throw new HttpError(400, "snapshotContent must be text");
   }
@@ -159,9 +163,9 @@ export const saveChapter: Handler = async (req, env, p) => {
   await env.DB.batch([
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, row.project_id),
     env.DB.prepare(
-      `INSERT INTO daily_words (day, project_id, words) VALUES (?, ?, ?)
-         ON CONFLICT (day, project_id) DO UPDATE SET words = words + excluded.words`,
-    ).bind(day, row.project_id, delta),
+      `INSERT INTO daily_words (day, project_id, words, revised) VALUES (?, ?, ?, ?)
+         ON CONFLICT (day, project_id) DO UPDATE SET words = words + excluded.words, revised = revised + excluded.revised`,
+    ).bind(day, row.project_id, delta, reason === "auto" ? Math.min(50_000, (b.revised as number | undefined) ?? 0) : 0),
   ]);
   const today = await env.DB.prepare("SELECT COALESCE(SUM(words), 0) AS w FROM daily_words WHERE day = ?")
     .bind(day)
@@ -173,19 +177,23 @@ export const saveChapter: Handler = async (req, env, p) => {
 export const updateChapter: Handler = async (req, env, p) => {
   const row = await getChapterRow(env, p.id);
   await assertChapterUnlocked(env, row.id);
-  const b = await body<{ title?: string; synopsis?: string }>(req);
-  const title = b.title === undefined ? row.title : cleanTitle(b.title, row.title);
-  const synopsis = typeof b.synopsis === "string" ? b.synopsis.slice(0, 2000) : row.synopsis;
+  const b = await body<{ title?: string; synopsis?: string; revision_status?: unknown }>(req);
+  if (b.revision_status !== undefined && b.revision_status !== "drafting" && b.revision_status !== "revising" && b.revision_status !== "done") {
+    throw new HttpError(400, "revision_status must be drafting, revising or done");
+  }
+  const revisionStatus = b.revision_status ?? null;
+  const title = b.title === undefined ? null : cleanTitle(b.title, row.title);
+  const synopsis = typeof b.synopsis === "string" ? b.synopsis.slice(0, 2000) : null;
   const result = await env.DB.prepare(
-    "UPDATE chapters SET title = ?, synopsis = ? WHERE id = ? AND deleted_at IS NULL AND (moving_until IS NULL OR moving_until <= ?)",
+    "UPDATE chapters SET title = COALESCE(?, title), synopsis = COALESCE(?, synopsis), revision_status = COALESCE(?, revision_status) WHERE id = ? AND deleted_at IS NULL AND (moving_until IS NULL OR moving_until <= ?)",
   )
-    .bind(title, synopsis, row.id, now())
+    .bind(title, synopsis, revisionStatus, row.id, now())
     .run();
   if (!result.meta.changes) {
     await assertChapterUnlocked(env, row.id);
     throw new HttpError(409, "Chapter changed; reload and try again");
   }
-  return json({ ...row, title, synopsis });
+  return json(await getChapterRow(env, row.id));
 };
 
 export const deleteChapter: Handler = async (_req, env, p) => {
