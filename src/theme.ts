@@ -8,6 +8,7 @@ export const THEMES = [
   { id: "tide", name: "Tide", night: "#0f1d24" },
   { id: "shadow", name: "Shadow", night: "#1b1725" },
   { id: "github-dark", name: "GitHub Dark", night: "#0d1117" },
+  { id: "clay", name: "Clay", night: "#262624" },
   { id: "parchment", name: "Parchment", night: "#f4ecdc" },
 ] as const;
 
