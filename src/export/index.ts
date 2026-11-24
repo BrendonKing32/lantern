@@ -6,8 +6,9 @@
 import { strToU8, zipSync, type Zippable } from "fflate";
 import { drafts } from "../local";
 import { loadChapter } from "../sync";
+import { api } from "../api";
 import { countWords } from "../../shared/wordcount";
-import type { ProjectDetail } from "../../shared/types";
+import type { Milestone, ProjectDetail } from "../../shared/types";
 import { buildDocx } from "./docx";
 import { buildEpub } from "./epub";
 import { parseChapter, partTitles, slug, type Book } from "./model";
@@ -21,14 +22,14 @@ export const FORMATS: Record<ExportFormat, { label: string; ext: string; type: s
   md: { label: "Markdown", ext: "zip", type: "application/zip" },
 };
 
-interface ChapterText {
+export interface ChapterText {
   title: string;
   /** The act title, on the first chapter of each act. */
   part?: string;
   content: string;
 }
 
-async function chapterTexts(detail: ProjectDetail): Promise<ChapterText[]> {
+export async function chapterTexts(detail: ProjectDetail): Promise<ChapterText[]> {
   const out: ChapterText[] = [];
   // Novels saved on this device before acts existed have none.
   const parts = partTitles(detail.chapters, detail.acts ?? []);
@@ -44,6 +45,20 @@ async function chapterTexts(detail: ProjectDetail): Promise<ChapterText[]> {
     } catch {
       throw new Error(`“${c.title}” isn't on this device yet. Connect to the internet and try again.`);
     }
+  }
+  return out;
+}
+
+export async function milestoneTexts(milestone: Milestone): Promise<ChapterText[]> {
+  const rows = await api.milestoneChapters(milestone.id);
+  const out: ChapterText[] = [];
+  for (const [i, row] of rows.entries()) {
+    const chapter = await api.milestoneChapter(milestone.id, row.chapter_id);
+    out.push({
+      title: row.title,
+      part: row.act_title && (i === 0 || rows[i - 1].act_title !== row.act_title) ? row.act_title : undefined,
+      content: chapter.content,
+    });
   }
   return out;
 }
@@ -73,8 +88,7 @@ export function markdownZip(title: string, texts: ChapterText[]): Uint8Array {
   return zipSync(files);
 }
 
-export async function exportBook(detail: ProjectDetail, format: ExportFormat, author: string) {
-  const texts = await chapterTexts(detail);
+export async function exportBook(detail: ProjectDetail, format: ExportFormat, author: string, texts: ChapterText[], milestoneName?: string) {
   const title = detail.project.title;
   const { ext, type } = FORMATS[format];
   let blob: Blob;
@@ -96,7 +110,7 @@ export async function exportBook(detail: ProjectDetail, format: ExportFormat, au
       blob = new Blob([bytes as BlobPart], { type });
     }
   }
-  download(blob, `${slug(title)}.${ext}`);
+  download(blob, `${slug(title)}${milestoneName ? ` – ${slug(milestoneName)}` : ""}.${ext}`);
 }
 
 function download(blob: Blob, name: string) {
