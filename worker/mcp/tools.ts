@@ -6,6 +6,7 @@ import type { BibleEntry, ChapterMeta, SceneMeta, Snapshot } from "../../shared/
 import { BIBLE_KINDS } from "../../shared/types";
 import { CHAPTER_COLS, chapterKey, getChapterRow, requireProject, snapshotKey } from "../db";
 import type { Env } from "../env";
+import { listActs } from "../handlers/acts";
 import { BIBLE_COLS, toEntry, type BibleRow } from "../handlers/bible";
 import { HttpError } from "../http";
 
@@ -96,16 +97,19 @@ export function registerTools(server: McpServer, env: Env) {
     {
       title: "Get a novel's outline",
       description:
-        "The novel's chapters in reading order (id, number, title, synopsis, word count) with each " +
-        "chapter's scene cards, the scene cards not yet placed in any chapter (unassigned_scenes), " +
+        "The novel's chapters in reading order (id, number, title, synopsis, word count, and the act " +
+        "it's in, if any) with each chapter's scene cards, the novel's acts in order (the author's " +
+        "groupings of chapters, such as acts or parts), the scene cards not yet placed in any " +
+        "chapter (unassigned_scenes), " +
         "plus the novel's target length and English dialect.",
       inputSchema: { novel_id: z.string().describe("From list_novels") },
       annotations: READ_ONLY,
     },
     async ({ novel_id }) => {
       const project = await requireProject(env, novel_id);
-      const [list, scenesResult] = await Promise.all([
+      const [list, acts, scenesResult] = await Promise.all([
         chapters(env, novel_id),
+        listActs(env, novel_id),
         env.DB.prepare(
           `SELECT id, chapter_id, title, summary, pov, location, status, position
              FROM scenes WHERE project_id = ? ORDER BY position`,
@@ -119,6 +123,7 @@ export function registerTools(server: McpServer, env: Env) {
         list.push(scene);
         scenesByChapter.set(chapter_id, list);
       }
+      const actTitle = new Map(acts.map((a) => [a.id, a.title]));
       return data({
         id: project.id,
         title: project.title,
@@ -133,7 +138,13 @@ export function registerTools(server: McpServer, env: Env) {
           synopsis: c.synopsis,
           word_count: c.word_count,
           updated_at: c.updated_at,
+          act: c.act_id ? (actTitle.get(c.act_id) ?? null) : null,
           scenes: scenesByChapter.get(c.id) ?? [],
+        })),
+        acts: acts.map((a) => ({
+          id: a.id,
+          title: a.title,
+          chapter_ids: list.filter((c) => c.act_id === a.id).map((c) => c.id),
         })),
         unassigned_scenes: scenesByChapter.get(null) ?? [],
       });

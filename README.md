@@ -271,9 +271,15 @@ app and private API protected.
   The other views, Search and the theme are under **More**, and **Chapters** opens the list.
 - **Rename** a chapter or the novel: double-click its title, or use the pencil button.
 - **Reorder** chapters: drag the handle beside a chapter, or focus the handle and use Space plus the arrow keys.
+- **Acts:** group chapters into acts, parts or any buckets you like. **Add act** puts every
+  chapter into a first act, then adds empty acts at the end; **Start an act here** (in a
+  chapter's ⋯ menu, or its hover tools) begins a new act at that chapter. Drag a chapter under
+  another act's heading to move it there. An act's ⋯ menu renames it, moves it (its chapters go
+  with it) or removes it; removing an act keeps its chapters where they are, in the act before.
+  Chapter numbers run through the whole book.
 - **Corkboard:** switch between **Write** and **Corkboard** at the top. Each chapter is an
   index card with its title, synopsis and word count. Drag cards (or Space and the arrow keys)
-  to reorder the book, click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
+  to reorder the book (a card dropped on another joins that card's act), click a synopsis to write one (Esc cancels, ⌘/Ctrl+Enter saves), and
   **Open** a card to write that chapter.
 - **Scenes:** the **Scenes** view keeps planning cards inside each chapter. Add and reorder
   scenes, then note a summary, POV, location and whether the scene is planned or drafted.

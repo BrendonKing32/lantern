@@ -24,7 +24,8 @@ import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEdi
 import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
 import { DIALECTS } from "../../shared/types";
-import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, ProjectDetail, SaveResult, SceneMeta } from "../../shared/types";
+import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Outline, ProjectDetail, SaveResult, SceneMeta } from "../../shared/types";
+import { arrangeChapters } from "../../shared/acts";
 
 type View = "write" | "board" | "scenes" | "search" | "bible";
 const VIEWS: View[] = ["write", "board", "scenes", "search", "bible"];
@@ -260,6 +261,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [projectId]);
 
   const chapters = detail?.chapters ?? [];
+  // Novels saved on this device before acts existed have none.
+  const acts = detail?.acts ?? [];
+  const [renamingActId, setRenamingActId] = useState<string | null>(null);
 
   // Changes by Claude: how many this device hasn't shown yet, checked when the
   // novel opens and whenever the window comes back into focus.
@@ -412,17 +416,96 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
-  const reorder = async (ids: string[]) => {
-    setDetail((d) =>
-      d
-        ? {
-            ...d,
-            chapters: ids.map((id, i) => ({ ...d.chapters.find((c) => c.id === id)!, position: i })),
-          }
-        : d,
+  /**
+   * Put the book in this order, with chapters in these acts and the acts in
+   * this order. Each act's chapters are kept together, as the server does.
+   */
+  const arrange = async (
+    chapterIds: string[],
+    chapterActs: Record<string, string | null>,
+    actIds: string[] = acts.map((a) => a.id),
+  ) => {
+    if (!detail) return;
+    const nextActs = actIds.map((id, i) => ({ ...acts.find((a) => a.id === id)!, position: i }));
+    const next = arrangeChapters(
+      chapterIds.map((id, i) => {
+        const c = chapters.find((x) => x.id === id)!;
+        return { ...c, act_id: id in chapterActs ? chapterActs[id] : (c.act_id ?? null), position: i };
+      }),
+      nextActs,
     );
+    setDetail((d) => (d ? { ...d, chapters: next, acts: nextActs } : d));
     try {
-      await api.reorder(projectId, ids);
+      await api.reorder(
+        projectId,
+        next.map((c) => c.id),
+        acts.length ? { actIds, chapterActs: Object.fromEntries(next.map((c) => [c.id, c.act_id])) } : undefined,
+      );
+    } catch (e) {
+      alert(describeError(e));
+      load();
+    }
+  };
+
+  // On the corkboard a moved card joins the act of the card it was dropped on.
+  const reorderFromBoard = (ids: string[], movedId: string, overId: string) => {
+    const over = chapters.find((c) => c.id === overId);
+    void arrange(ids, { [movedId]: over?.act_id ?? null });
+  };
+
+  // The server's word on acts and chapter order, keeping what this page knows
+  // about each chapter's text.
+  const applyOutline = (o: Outline) =>
+    setDetail((d) => {
+      if (!d) return d;
+      const local = new Map(d.chapters.map((c) => [c.id, c]));
+      return {
+        ...d,
+        acts: o.acts,
+        chapters: o.chapters.map((c) => {
+          const mine = local.get(c.id);
+          return mine ? { ...mine, position: c.position, act_id: c.act_id } : c;
+        }),
+      };
+    });
+
+  const startAct = async (chapterId: string | null) => {
+    try {
+      const o = await api.createAct(projectId, undefined, chapterId);
+      const known = new Set(acts.map((a) => a.id));
+      applyOutline(o);
+      setRenamingActId(o.acts.find((a) => !known.has(a.id))?.id ?? null);
+    } catch (e) {
+      alert(describeError(e));
+    }
+  };
+
+  // The first act takes the whole book; later ones start empty at the end.
+  const addAct = () => void startAct(acts.length === 0 && chapters.length ? chapters[0].id : null);
+
+  const renameAct = async (id: string, title: string) => {
+    setDetail((d) => (d ? { ...d, acts: (d.acts ?? []).map((a) => (a.id === id ? { ...a, title } : a)) } : d));
+    try {
+      await api.renameAct(id, title);
+    } catch (e) {
+      alert(describeError(e));
+      load();
+    }
+  };
+
+  const moveAct = (id: string, by: -1 | 1) => {
+    const ids = acts.map((a) => a.id);
+    const from = ids.indexOf(id);
+    const to = from + by;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    void arrange(chapters.map((c) => c.id), {}, ids);
+  };
+
+  const removeAct = async (act: Act) => {
+    if (!confirm(`Remove the act “${act.title}”? Its chapters stay where they are in the book.`)) return;
+    try {
+      applyOutline(await api.deleteAct(act.id));
     } catch (e) {
       alert(describeError(e));
       load();
@@ -645,17 +728,34 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
         <ChapterList
           chapters={chapters}
+          acts={acts}
           wordsFor={wordsFor}
           selectedId={selected?.id}
           onSelect={select}
-          onReorder={reorder}
+          onArrange={(ids, chapterActs) => void arrange(ids, chapterActs)}
           onRename={rename}
           onDelete={remove}
+          onStartAct={(id) => void startAct(id)}
+          onRenameAct={(id, title) => void renameAct(id, title)}
+          onMoveAct={moveAct}
+          onDeleteAct={(act) => void removeAct(act)}
+          renamingActId={renamingActId}
+          onRenamingActDone={() => setRenamingActId(null)}
         />
 
-        <button className="add-chapter" onClick={addChapter}>
-          Add chapter
-        </button>
+        <div className="add-row">
+          <button className="add-chapter" onClick={addChapter}>
+            Add chapter
+          </button>
+          <button
+            className="add-chapter"
+            onClick={addAct}
+            disabled={offline}
+            title={acts.length ? "Add an empty act at the end" : "Group the chapters into acts"}
+          >
+            Add act
+          </button>
+        </div>
 
         {trash.length > 0 && (
           <details className="trash">
@@ -830,10 +930,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
         ) : board ? (
           <Corkboard
             chapters={chapters}
+            acts={acts}
             wordsFor={wordsFor}
             selectedId={selected?.id}
             onOpen={openFromBoard}
-            onReorder={reorder}
+            onReorder={reorderFromBoard}
             onSynopsis={setSynopsis}
             onAdd={addChapter}
           />

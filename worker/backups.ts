@@ -1,5 +1,6 @@
 const TABLES = [
   "projects",
+  "acts",
   "chapters",
   "chapter_snapshots",
   "daily_words",
@@ -85,6 +86,7 @@ async function exportDatabase(env: BackupEnv): Promise<DatabaseExport> {
     "DELETE FROM \"daily_words\";",
     "DELETE FROM \"chapter_snapshots\";",
     "DELETE FROM \"chapters\";",
+    "DELETE FROM \"acts\";",
     "DELETE FROM \"projects\";",
     "DELETE FROM \"settings\";",
     ...TABLES.flatMap((table) => insertStatements(table, rows.get(table) ?? [])),
