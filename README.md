@@ -289,6 +289,9 @@ app and private API protected.
   a planned card. Check suggested matches with **Looks right** or **Not this one**. You can
   reorder cards and edit their summaries, POV and locations without changing chapter text.
   Moving an in-text card to another chapter requires moving its text in the editor first.
+  In **Write**, scene labels show each passage's card; click a label to see its notes beside
+  the page. Turn **Scene labels** on or off under **More** on this device. Press
+  ⌘/Ctrl+Shift+Enter to insert a scene break in the chapter's usual style.
 - **Search:** the **Search** view finds literal words or phrases across the whole book, including
   drafts saved on this device. Choose whether to match case, then open a result to jump to it
   in the chapter editor. Search shows up to 500 matches at a time. **Replace across the book**
