@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -78,7 +78,7 @@ interface RowProps {
   onDelete: (c: ChapterMeta) => void;
 }
 
-function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDelete }: RowProps) {
+const ChapterRow = memo(function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDelete }: RowProps) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: chapter.id,
   });
@@ -249,4 +249,4 @@ function ChapterRow({ chapter, number, words, selected, onSelect, onRename, onDe
       )}
     </li>
   );
-}
+});

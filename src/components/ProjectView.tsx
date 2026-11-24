@@ -355,6 +355,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [drawerOpen, closeDrawer]);
 
   const wordsFor = useCallback((c: ChapterMeta) => live[c.id] ?? c.word_count, [live]);
+  const wordsForRef = useRef(wordsFor);
+  wordsForRef.current = wordsFor;
   const bookWords = chapters.reduce((sum, c) => sum + wordsFor(c), 0);
   const sessionWords = useMemo(
     () =>
@@ -390,11 +392,11 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const onStatus = useCallback((state: SaveState, detail?: string) => setSave({ state, detail }), []);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
-  const select = (id: string) => {
+  const select = useCallback((id: string) => {
     setEditingChapter(null);
     if (drawerOpen) closeDrawer();
     navigate(projectId, id);
-  };
+  }, [closeDrawer, drawerOpen, projectId]);
 
   const openSearch = () => {
     const text = editorControls.current?.text();
@@ -429,7 +431,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
-  const rename = async (id: string, title: string) => {
+  const rename = useCallback(async (id: string, title: string) => {
     setDetail((d) =>
       d ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, title } : c)) } : d,
     );
@@ -439,7 +441,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
       alert(describeError(e));
       load();
     }
-  };
+  }, [load]);
 
   const setSynopsis = async (id: string, synopsis: string) => {
     setDetail((d) =>
@@ -517,7 +519,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
-  const remove = async (c: ChapterMeta) => {
+  const remove = useCallback(async (c: ChapterMeta) => {
     if (chapters.length === 1) {
       alert("A novel needs at least one chapter.");
       return;
@@ -525,7 +527,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (!confirm(`Delete “${c.title}”? It moves to Recently deleted under the chapter list, where you can restore it.`)) return;
     try {
       await api.deleteChapter(c.id);
-      setTrash((t) => [{ id: c.id, title: c.title, word_count: wordsFor(c), deleted_at: new Date().toISOString() }, ...t]);
+      setTrash((t) => [{ id: c.id, title: c.title, word_count: wordsForRef.current(c), deleted_at: new Date().toISOString() }, ...t]);
       const idx = chapters.findIndex((x) => x.id === c.id);
       const rest = chapters.filter((x) => x.id !== c.id);
       setDetail((d) => (d ? { ...d, chapters: rest } : d));
@@ -534,7 +536,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     } catch (e) {
       alert(describeError(e));
     }
-  };
+  }, [chapters, detail, load, projectId, selected?.id]);
 
   const restoreChapter = async (c: DeletedChapter) => {
     try {
