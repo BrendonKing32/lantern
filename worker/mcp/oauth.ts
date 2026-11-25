@@ -1,4 +1,4 @@
-// OAuth for the Claude connector. The Worker is its own authorization server
+// OAuth for MCP clients. The Worker is its own authorization server
 // (@cloudflare/workers-oauth-provider, state in the OAUTH_KV namespace) and the
 // /mcp endpoint is the only resource it protects.
 //
@@ -16,7 +16,7 @@ import OAuthProvider, {
 import { authorize as accessUser } from "../auth";
 import type { Env } from "../env";
 import { HttpError } from "../http";
-import { mcpApiHandler, READ_SCOPE, type McpProps } from "./server";
+import { mcpApiHandler, READ_SCOPE, WRITE_SCOPE, type McpProps } from "./server";
 
 export const MCP_PATH = "/mcp";
 export const AUTHORIZE_PATH = "/authorize";
@@ -35,9 +35,9 @@ export function isOAuthPath(pathname: string): boolean {
   );
 }
 
-/** Where tokens may be sent. Claude's connector callback lives on these hosts. */
+/** HTTPS callback hosts trusted by the deployment owner. */
 export function allowedRedirectHosts(env: Env): string[] {
-  return (env.MCP_REDIRECT_HOSTS ?? "claude.ai,claude.com")
+  return (env.MCP_REDIRECT_HOSTS ?? "claude.ai,claude.com,chatgpt.com")
     .split(",")
     .map((h) => h.trim().toLowerCase())
     .filter(Boolean);
@@ -50,8 +50,14 @@ export function redirectAllowed(env: Env, redirectUri: string): boolean {
   } catch {
     return false;
   }
-  // Local development only: MCP clients on this machine call back to localhost.
-  if (env.DEV_BYPASS === "true" && LOOPBACK.test(url.hostname)) return true;
+  if (url.username || url.password || url.hash) return false;
+  const loopback = LOOPBACK.test(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return false;
+  // Exact callbacks let desktop clients connect without trusting a whole host.
+  const callbacks = (env.MCP_REDIRECT_URIS ?? "").split(",").map((uri) => uri.trim()).filter(Boolean);
+  if (callbacks.includes(redirectUri)) return true;
+  // Local development also accepts unconfigured loopback ports.
+  if (env.DEV_BYPASS === "true" && loopback) return true;
   return url.protocol === "https:" && allowedRedirectHosts(env).includes(url.hostname.toLowerCase());
 }
 
@@ -59,13 +65,22 @@ type OAuthEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
 const escape = (value: string) => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-const PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+/**
+ * The consent page's CSP. Browsers apply form-action to every redirect a form
+ * submission follows, so the Allow and Deny forms, which post here and are
+ * then redirected back to the client, must name the client's callback origin
+ * as well as 'self'. Only the one origin already checked against
+ * the callback allowlist is added.
+ */
+export function pageCsp(formTarget?: string): string {
+  const formAction = formTarget ? `'self' ${new URL(formTarget).origin}` : "'self'";
+  return `default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`;
+}
 
-function page(title: string, body: string, status = 200, headers = new Headers()): Response {
+function page(title: string, body: string, status = 200, headers = new Headers(), formTarget?: string): Response {
   headers.set("content-type", "text/html; charset=utf-8");
   headers.set("cache-control", "no-store");
-  headers.set("content-security-policy", PAGE_CSP);
+  headers.set("content-security-policy", pageCsp(formTarget));
   headers.set("x-frame-options", "DENY");
   headers.set("referrer-policy", "no-referrer");
   return new Response(
@@ -85,6 +100,13 @@ function page(title: string, body: string, status = 200, headers = new Headers()
   ul { padding-left:20px; margin:0 0 16px; }
   .warn { color:var(--text); border-left:3px solid var(--amber); padding-left:10px; }
   .row { display:flex; gap:10px; margin-top:20px; }
+  fieldset { border:0; padding:0; margin:4px 0 16px; }
+  legend { color:var(--text); font-weight:600; margin-bottom:8px; }
+  .choice { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; margin-bottom:8px; border:1px solid var(--line);
+            border-radius:10px; cursor:pointer; color:var(--muted); }
+  .choice strong { display:block; }
+  .choice input { margin-top:5px; accent-color:var(--amber); }
+  .choice:has(input:checked) { border-color:var(--amber); }
   button { flex:1; font:inherit; font-size:1rem; padding:10px 14px; border-radius:10px; cursor:pointer;
            border:1px solid var(--line); background:transparent; color:var(--text); }
   button.allow { background:var(--amber); border-color:var(--amber); color:#1b140c; font-weight:600; }
@@ -102,17 +124,26 @@ function consentPage(details: ConsentDescription, handle: string, email: string,
     : "This app registered itself, so its name isn't verified.";
   return page(
     `Connect ${details.clientName}`,
-    `<h1>Let ${name} read your novels?</h1>
+    `<h1>Connect ${name} to Lantern?</h1>
 <p>${origin} Access will be sent to <strong>${escape(details.redirectHost)}</strong>.</p>
-<p>Signed in as <strong>${escape(email)}</strong>. If you allow it, it can:</p>
-<ul>
-  <li>List your novels and read their outlines, chapters and scene cards</li>
-  <li>Read the story guide and search the text</li>
-  <li>Read earlier versions in History</li>
-</ul>
-<p>It can't change, add or delete anything. You can disconnect it at any time from the app you're connecting.</p>
+<p>Signed in as <strong>${escape(email)}</strong>.</p>
 <form method="post">
   <input type="hidden" name="handle" value="${escape(handle)}">
+  <fieldset>
+    <legend>What may it do?</legend>
+    <label class="choice">
+      <input type="radio" name="access" value="read" checked>
+      <span><strong>Read only</strong>
+      Read your novels' outlines, chapters, scene cards, story guide and History, and search the text.</span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="access" value="edit">
+      <span><strong>Read and edit</strong>
+      Also draft chapter text, add chapters, and change synopses, scene cards and the story guide.
+      Text changes wait in an AI draft until you accept them. Accepting keeps your previous text in History.</span>
+    </label>
+  </fieldset>
+  <p>It can never delete anything. You can disconnect it at any time from the app you're connecting.</p>
   <div class="row">
     <button type="submit" name="decision" value="deny">Deny</button>
     <button type="submit" name="decision" value="approve" class="allow">Allow</button>
@@ -120,14 +151,17 @@ function consentPage(details: ConsentDescription, handle: string, email: string,
 </form>`,
     200,
     headers,
+    details.redirectUri,
   );
 }
 
 const refused = (message: string, status = 400) =>
   page("Can't connect", `<h1>Can't connect</h1><p>${escape(message)}</p>`, status);
 
-function grantedScopes(requested: string[]): string[] {
-  return requested.includes("offline_access") ? [READ_SCOPE, "offline_access"] : [READ_SCOPE];
+/** What the author chose on the consent page, whatever the client asked for. */
+export function grantedScopes(requested: string[], canEdit: boolean): string[] {
+  const scope = canEdit ? [READ_SCOPE, WRITE_SCOPE] : [READ_SCOPE];
+  return requested.includes("offline_access") ? [...scope, "offline_access"] : scope;
 }
 
 async function handleAuthorize(req: Request, env: OAuthEnv): Promise<Response> {
@@ -145,7 +179,7 @@ async function handleAuthorize(req: Request, env: OAuthEnv): Promise<Response> {
       const request = await oauth.parseAuthRequest(req);
       if (!redirectAllowed(env, request.redirectUri)) {
         return refused(
-          `Lantern only connects to ${allowedRedirectHosts(env).join(" or ")}. This request would send access somewhere else.`,
+          "This callback isn't allowed. Add the client's HTTPS host to MCP_REDIRECT_HOSTS or its exact callback URL to MCP_REDIRECT_URIS, then connect again.",
           403,
         );
       }
@@ -163,7 +197,7 @@ async function handleAuthorize(req: Request, env: OAuthEnv): Promise<Response> {
     const approved = await oauth.approveConsent(req, handle);
     // Checked again on the stored request, never on anything the form sent.
     if (!redirectAllowed(env, approved.request.redirectUri)) return refused("That app isn't allowed to connect.", 403);
-    const scope = grantedScopes(approved.request.scope);
+    const scope = grantedScopes(approved.request.scope, form.get("access") === "edit");
     const props: McpProps = { email };
     const { redirectTo } = await oauth.completeAuthorization({
       request: { ...approved.request, scope },
@@ -185,7 +219,7 @@ async function handleAuthorize(req: Request, env: OAuthEnv): Promise<Response> {
       return refused(error.description);
     }
     if (error instanceof AuthorizationError) {
-      return refused(`${error.description}. Start connecting again from Claude.`);
+      return refused(`${error.description}. Start connecting again from your MCP client.`);
     }
     if (error instanceof CimdFetchError) return refused("This app couldn't be verified.");
     throw error;
@@ -211,14 +245,14 @@ function providerFor(origin: string): OAuthProvider<Env> {
       authorizeEndpoint: AUTHORIZE_PATH,
       tokenEndpoint: TOKEN_PATH,
       clientRegistrationEndpoint: REGISTER_PATH,
-      scopesSupported: [READ_SCOPE, "offline_access"],
+      scopesSupported: [READ_SCOPE, WRITE_SCOPE, "offline_access"],
       resourceMetadata: {
         resource: `${origin}${MCP_PATH}`,
         authorization_servers: [origin],
         resource_name: "Lantern",
       },
       requiredScopes: [READ_SCOPE],
-      // Access tokens last an hour; Claude refreshes them. A connection that
+      // Access tokens last an hour; clients refresh them. A connection that
       // goes unused for 30 days has to be approved again.
       accessTokenTTL: 3600,
       refreshTokenTTL: 30 * 24 * 3600,
@@ -240,7 +274,7 @@ export function publicOrigin(url: URL): string {
 export async function handleOAuth(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   // Pull request Previews have no bindings, so there is nothing to connect to.
   if (!env.OAUTH_KV || !env.DB || !env.BUCKET) {
-    return new Response(JSON.stringify({ error: "The Claude connector isn't set up on this deployment" }), {
+    return new Response(JSON.stringify({ error: "The MCP connector isn't set up on this deployment" }), {
       status: 503,
       headers: { "content-type": "application/json" },
     });

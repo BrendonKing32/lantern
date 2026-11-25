@@ -1,7 +1,9 @@
 import type { BibleEntry, BibleKind, BookCheckEvent, Dialect, SceneMeta } from "../shared/types";
+import type { TextAnchor } from "../shared/anchors";
 import * as schema from "./schemas";
 import { array, type Check, nullable, ShapeError } from "./validate";
 import { localDay } from "./when";
+import { trackChapterActivity } from "./chapterActivity";
 
 export class ApiError extends Error {
   constructor(
@@ -72,6 +74,15 @@ export const api = {
   changelog: () => request(array(schema.changelogEntry), "GET", "/api/changelog"),
   createProject: (title: string) => request(schema.projectRef, "POST", "/api/projects", { title }),
   getProject: (id: string) => request(schema.projectDetail, "GET", `/api/projects/${id}`),
+  milestones: (id: string) => request(array(schema.milestone), "GET", `/api/projects/${id}/milestones`),
+  milestoneChapters: (id: string) => request(array(schema.milestoneChapter), "GET", `/api/milestones/${id}/chapters`),
+  milestoneChapter: (id: string, chapterId: string) =>
+    request(schema.milestoneChapterWithContent, "GET", `/api/milestones/${id}/chapters/${chapterId}`),
+  createMilestone: (id: string, name: string, note: string) =>
+    request(schema.milestone, "POST", `/api/projects/${id}/milestones`, { name, note }),
+  updateMilestone: (id: string, patch: { name?: string; note?: string }) =>
+    request(schema.milestone, "PATCH", `/api/milestones/${id}`, patch),
+  deleteMilestone: (id: string) => request(schema.ok, "DELETE", `/api/milestones/${id}`),
   renameProject: (id: string, title: string) => request(schema.projectRef, "PATCH", `/api/projects/${id}`, { title }),
   setArchived: (id: string, archived: boolean) =>
     request(schema.projectArchived, "PATCH", `/api/projects/${id}`, { archived }),
@@ -92,6 +103,7 @@ export const api = {
   aiTest: () => request(schema.aiTest, "POST", "/api/ai/test"),
   stats: () => request(schema.stats, "GET", `/api/stats?today=${localDay()}`),
   setGoal: (dailyGoal: number | null) => request(schema.goal, "PUT", "/api/goal", { daily_goal: dailyGoal }),
+  setStreakRevision: (enabled: boolean) => request(schema.streakRevision, "PUT", "/api/streak-revision", { streak_counts_revision: enabled }),
   setTarget: (projectId: string, words: number | null, date: string | null) =>
     request(schema.target, "PUT", `/api/projects/${projectId}/target`, { target_words: words, target_date: date }),
   setDialect: (projectId: string, dialect: Dialect) =>
@@ -103,8 +115,17 @@ export const api = {
   restoreChapter: (id: string) => request(schema.chapterMeta, "POST", `/api/chapters/${id}/restore`),
   createChapter: (projectId: string, title: string) =>
     request(schema.chapterMeta, "POST", `/api/projects/${projectId}/chapters`, { title }),
-  reorder: (projectId: string, chapterIds: string[]) =>
-    request(schema.ok, "PUT", `/api/projects/${projectId}/order`, { chapterIds }),
+  /** The whole book in order; with `acts`, also every act in order and each chapter's act. */
+  reorder: (
+    projectId: string,
+    chapterIds: string[],
+    acts?: { actIds: string[]; chapterActs: Record<string, string | null> },
+  ) => request(schema.ok, "PUT", `/api/projects/${projectId}/order`, { chapterIds, ...acts }),
+  /** A new act; from `startChapterId` to the end of that chapter's act, or empty at the end. */
+  createAct: (projectId: string, title: string | undefined, startChapterId: string | null) =>
+    request(schema.outline, "POST", `/api/projects/${projectId}/acts`, { title, startChapterId }),
+  renameAct: (id: string, title: string) => request(schema.act, "PATCH", `/api/acts/${id}`, { title }),
+  deleteAct: (id: string) => request(schema.outline, "DELETE", `/api/acts/${id}`),
   getChapter: (id: string) => request(schema.chapterWithContent, "GET", `/api/chapters/${id}`),
   /** `snapshot` asks the server to keep the text being replaced in history. */
   saveChapter: (
@@ -116,9 +137,10 @@ export const api = {
       snapshot?: "restore" | "conflict" | "replace";
       snapshotContent?: string;
       writtenAt?: number;
+      revised?: number;
     } = {},
   ) =>
-    request(
+    trackChapterActivity(id, request(
       schema.saveResult,
       "PUT",
       `/api/chapters/${id}`,
@@ -128,25 +150,53 @@ export const api = {
         baseVersion,
         snapshot: opts.snapshot,
         snapshotContent: opts.snapshotContent,
+        revised: opts.revised,
         day: localDay(opts.writtenAt),
       },
       { keepalive: opts.keepalive },
-    ),
-  updateChapter: (id: string, patch: { title?: string; synopsis?: string }) =>
+    )),
+  updateChapter: (id: string, patch: { title?: string; synopsis?: string; revision_status?: import("../shared/types").ChapterRevisionStatus }) =>
     request(schema.chapterMeta, "PATCH", `/api/chapters/${id}`, patch),
-  scenes: (projectId: string) => request(array(schema.sceneMeta), "GET", `/api/projects/${projectId}/scenes`),
-  createScene: (chapterId: string) => request(schema.sceneMeta, "POST", `/api/chapters/${chapterId}/scenes`),
+  scenes: (projectId: string) => request(schema.sceneListing, "GET", `/api/projects/${projectId}/scenes`),
+  createScene: (projectId: string, chapterId: string | null) =>
+    request(schema.sceneMeta, "POST", `/api/projects/${projectId}/scenes`, { chapterId }),
   updateScene: (
     id: string,
-    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status">>,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">> & {
+      link?: { passage_index: number }; unlink?: true; confirm?: true;
+    },
   ) => request(schema.sceneMeta, "PATCH", `/api/scenes/${id}`, patch),
   deleteScene: (id: string) => request(schema.ok, "DELETE", `/api/scenes/${id}`),
-  reorderScenes: (projectId: string, chapterId: string, sceneIds: string[]) =>
+  reorderScenes: (projectId: string, chapterId: string | null, sceneIds: string[]) =>
     request(schema.ok, "PUT", `/api/projects/${projectId}/scenes/order`, { chapterId, sceneIds }),
+  arrangeScenes: (chapterId: string, baseVersion: number, sceneIds: string[]) =>
+    request(schema.saveResult, "PUT", `/api/chapters/${chapterId}/scenes/arrangement`, { baseVersion, sceneIds }),
+  moveScene: (id: string, toChapterId: string, beforePassageIndex: number | null, baseVersions: { from: number; to: number }, expectedFromChapterId?: string) =>
+    request(schema.sceneMoveResult, "POST", `/api/scenes/${id}/move`, { toChapterId, beforePassageIndex, baseVersions, expectedFromChapterId }),
   deleteChapter: (id: string) => request(schema.ok, "DELETE", `/api/chapters/${id}`),
+  notes: (chapterId: string, resolved: boolean) =>
+    request(array(schema.marginNote), "GET", `/api/chapters/${chapterId}/notes?resolved=${resolved ? 1 : 0}`),
+  createNote: (chapterId: string, note: TextAnchor & { body: string }) =>
+    request(schema.marginNote, "POST", `/api/chapters/${chapterId}/notes`, note),
+  updateNote: (id: string, patch: { body?: string; resolved?: boolean }) =>
+    request(schema.marginNote, "PATCH", `/api/notes/${id}`, patch),
+  deleteNote: (id: string) => request(schema.ok, "DELETE", `/api/notes/${id}`),
   listHistory: (chapterId: string) => request(array(schema.snapshot), "GET", `/api/chapters/${chapterId}/history`),
   getSnapshot: (chapterId: string, snapshotId: string) =>
     request(schema.snapshotWithContent, "GET", `/api/chapters/${chapterId}/history/${snapshotId}`),
+  claudeDraft: (chapterId: string) =>
+    request(nullable(schema.claudeDraft), "GET", `/api/chapters/${chapterId}/claude-draft`),
+  /** Put Claude's draft in the chapter; both versions must still be the ones on screen. */
+  acceptClaudeDraft: (chapterId: string, baseVersion: number, draftVersion: number, mode: "as-drafted" | "replayed", expectedText?: string) =>
+    request(schema.chapterWithContent, "POST", `/api/chapters/${chapterId}/claude-draft/accept`, {
+      baseVersion,
+      draftVersion,
+      mode,
+      expectedText,
+    }),
+  discardClaudeDraft: (chapterId: string) => request(schema.ok, "DELETE", `/api/chapters/${chapterId}/claude-draft`),
+  claudeChanges: (projectId: string) =>
+    request(array(schema.claudeChange), "GET", `/api/projects/${projectId}/claude-changes`),
   shareStatus: (projectId: string) => request(schema.shareStatus, "GET", `/api/projects/${projectId}/share`),
   createShare: (projectId: string) => request(schema.shareCreated, "POST", `/api/projects/${projectId}/share`),
   revokeShare: (projectId: string) => request(schema.ok, "DELETE", `/api/projects/${projectId}/share`),

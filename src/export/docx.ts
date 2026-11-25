@@ -1,6 +1,7 @@
 // Word (.docx) in standard manuscript format: Times New Roman 12pt, double
 // spaced, half-inch paragraph indents, one-inch margins, each chapter on a new
-// page a third of the way down, "#" for scene breaks, and a running header of
+// page a third of the way down (an act's title on a page of its own before
+// its first chapter), "#" for scene breaks, and a running header of
 // "Author / TITLE / page" from the second page on.
 
 import { strToU8, zipSync, type Zippable } from "fflate";
@@ -48,6 +49,7 @@ function documentXml(book: Book): string {
     book.author ? para("Byline", `by ${book.author}`) : "",
   ];
   for (const ch of book.chapters) {
+    if (ch.part) body.push(para("PartTitle", ch.part));
     body.push(para("ChapterTitle", ch.title));
     body.push(...ch.blocks.map(block));
   }
@@ -83,6 +85,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 ${style("Title", "Title", `${CENTER}<w:spacing w:before="4320"/>`, '<w:sz w:val="32"/><w:szCs w:val="32"/>')}
 ${style("Byline", "Byline", CENTER)}
 ${style("TitleLength", "Word Count", '<w:jc w:val="right"/><w:ind w:firstLine="0"/>')}
+${style("PartTitle", "Part Title", `<w:pageBreakBefore/>${CENTER}<w:spacing w:before="4320"/><w:outlineLvl w:val="0"/>`, '<w:sz w:val="32"/><w:szCs w:val="32"/>')}
 ${style("ChapterTitle", "Chapter Title", `<w:pageBreakBefore/><w:keepNext/>${CENTER}<w:spacing w:before="2880" w:after="480"/><w:outlineLvl w:val="0"/>`)}
 ${style("Subheading", "Subheading", `<w:keepNext/>${CENTER}<w:outlineLvl w:val="1"/>`, "<w:b/>")}
 ${style("Subheading2", "Subheading 2", `<w:keepNext/>${CENTER}<w:outlineLvl w:val="2"/>`, "<w:i/>")}

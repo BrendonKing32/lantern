@@ -14,19 +14,23 @@ import {
   lastBookCheck,
   testAi,
 } from "./handlers/claude";
+import { createAct, deleteAct, reorderChapters, updateAct } from "./handlers/acts";
 import { createEntry, deleteEntry, listBible, updateEntry } from "./handlers/bible";
+import { listClaudeChanges } from "./handlers/claudeChanges";
+import { acceptClaudeDraft, discardClaudeDraft, getClaudeDraft } from "./handlers/claudeDrafts";
 import {
   createChapter,
   deleteChapter,
   getChapter,
   listDeletedChapters,
-  reorderChapters,
   restoreChapter,
   saveChapter,
   updateChapter,
 } from "./handlers/chapters";
 import { getChangelog } from "./handlers/changelog";
 import { getSnapshot, listHistory } from "./handlers/history";
+import { cleanupIncompleteMilestones, createMilestone, deleteMilestone, getMilestoneChapter, listMilestoneChapters, listMilestones, updateMilestone } from "./handlers/milestones";
+import { createNote, deleteNote, listNotes, updateNote } from "./handlers/notes";
 import {
   createProject,
   deleteProject,
@@ -38,7 +42,7 @@ import {
   setTarget,
   updateProject,
 } from "./handlers/projects";
-import { createScene, deleteScene, listScenes, reorderScenes, updateScene } from "./handlers/scenes";
+import { arrangeScenes, createProjectScene, createScene, deleteScene, listScenes, moveScene, reorderScenes, updateScene } from "./handlers/scenes";
 import {
   createShare,
   createShareComment,
@@ -49,7 +53,7 @@ import {
   listShareComments,
   revokeShare,
 } from "./handlers/sharing";
-import { getStats, setGoal } from "./handlers/stats";
+import { getStats, setGoal, setStreakRevision } from "./handlers/stats";
 import { handleOAuth, isOAuthPath } from "./mcp/oauth";
 
 export type { Env } from "./env";
@@ -59,6 +63,12 @@ export type { Env } from "./env";
 const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/projects", listProjects],
   ["GET", "/api/changelog", getChangelog],
+  ["GET", "/api/projects/:id/milestones", listMilestones],
+  ["POST", "/api/projects/:id/milestones", createMilestone],
+  ["GET", "/api/milestones/:id/chapters", listMilestoneChapters],
+  ["GET", "/api/milestones/:id/chapters/:chapterId", getMilestoneChapter],
+  ["PATCH", "/api/milestones/:id", updateMilestone],
+  ["DELETE", "/api/milestones/:id", deleteMilestone],
   ["GET", "/api/stats", getStats],
   ["GET", "/api/ai/status", getAiStatus],
   ["POST", "/api/ai/test", testAi],
@@ -67,15 +77,20 @@ const routes: Array<[string, string, Handler]> = [
   ["POST", "/api/projects/:id/check-book", checkBook],
   ["GET", "/api/projects/:id/check-book", lastBookCheck],
   ["GET", "/api/projects/:id/bible", listBible],
+  ["GET", "/api/projects/:id/claude-changes", listClaudeChanges],
   ["GET", "/api/projects/:id/scenes", listScenes],
+  ["POST", "/api/projects/:id/scenes", createProjectScene],
   ["PUT", "/api/projects/:id/scenes/order", reorderScenes],
   ["POST", "/api/chapters/:id/scenes", createScene],
+  ["PUT", "/api/chapters/:id/scenes/arrangement", arrangeScenes],
   ["PATCH", "/api/scenes/:id", updateScene],
+  ["POST", "/api/scenes/:id/move", moveScene],
   ["DELETE", "/api/scenes/:id", deleteScene],
   ["POST", "/api/projects/:id/bible", createEntry],
   ["PATCH", "/api/bible/:id", updateEntry],
   ["DELETE", "/api/bible/:id", deleteEntry],
   ["PUT", "/api/goal", setGoal],
+  ["PUT", "/api/streak-revision", setStreakRevision],
   ["PUT", "/api/projects/:id/target", setTarget],
   ["PUT", "/api/projects/:id/dialect", setDialect],
   ["GET", "/api/trash/projects", listDeletedProjects],
@@ -88,12 +103,22 @@ const routes: Array<[string, string, Handler]> = [
   ["DELETE", "/api/projects/:id", deleteProject],
   ["POST", "/api/projects/:id/chapters", createChapter],
   ["PUT", "/api/projects/:id/order", reorderChapters],
+  ["POST", "/api/projects/:id/acts", createAct],
+  ["PATCH", "/api/acts/:id", updateAct],
+  ["DELETE", "/api/acts/:id", deleteAct],
   ["GET", "/api/chapters/:id", getChapter],
   ["PUT", "/api/chapters/:id", saveChapter],
   ["PATCH", "/api/chapters/:id", updateChapter],
   ["DELETE", "/api/chapters/:id", deleteChapter],
+  ["GET", "/api/chapters/:id/claude-draft", getClaudeDraft],
+  ["POST", "/api/chapters/:id/claude-draft/accept", acceptClaudeDraft],
+  ["DELETE", "/api/chapters/:id/claude-draft", discardClaudeDraft],
   ["GET", "/api/chapters/:id/history", listHistory],
   ["GET", "/api/chapters/:id/history/:snapshotId", getSnapshot],
+  ["GET", "/api/chapters/:id/notes", listNotes],
+  ["POST", "/api/chapters/:id/notes", createNote],
+  ["PATCH", "/api/notes/:id", updateNote],
+  ["DELETE", "/api/notes/:id", deleteNote],
   ["GET", "/api/projects/:id/share", getShareStatus],
   ["POST", "/api/projects/:id/share", createShare],
   ["DELETE", "/api/projects/:id/share", revokeShare],
@@ -140,7 +165,7 @@ function matchRoute(
 export default {
   async fetch(req: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
-    // The Claude connector: /mcp, /authorize and the OAuth endpoints.
+    // The MCP connector: /mcp, /authorize and the OAuth endpoints.
     if (isOAuthPath(url.pathname) && ctx) return handleOAuth(req, env, ctx);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
 
@@ -161,7 +186,9 @@ export default {
   },
   scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
-      createBackup(env).catch((e) => {
+      cleanupIncompleteMilestones(env).catch((e) => {
+        console.error("scheduled milestone cleanup failed", e);
+      }).then(() => createBackup(env)).catch((e) => {
         console.error("scheduled backup failed", e);
         throw e;
       }),

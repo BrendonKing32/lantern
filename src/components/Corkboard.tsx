@@ -16,7 +16,9 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ChapterMeta } from "../../shared/types";
+import type { Act, ChapterMeta, SceneMeta } from "../../shared/types";
+import type { ChapterRevisionStatus } from "../../shared/types";
+import { ChapterStatus } from "./ChapterStatus";
 
 const MAX_SYNOPSIS = 2000;
 
@@ -59,16 +61,22 @@ function gridKeys(order: () => string[]): KeyboardCoordinateGetter {
 
 interface Props {
   chapters: ChapterMeta[];
+  acts: Act[];
+  scenes: SceneMeta[];
   wordsFor: (c: ChapterMeta) => number;
   selectedId: string | undefined;
   onOpen: (id: string) => void;
-  onReorder: (ids: string[]) => void;
+  /** The new order, the card moved and the card it was dropped on. */
+  onReorder: (ids: string[], movedId: string, overId: string) => void;
   onSynopsis: (id: string, synopsis: string) => void;
   onAdd: () => void;
+  onStatus: (id: string, status: ChapterRevisionStatus) => void;
+  offline?: boolean;
 }
 
 /** Every chapter as an index card: drag to reorder, write a synopsis, open to write. */
-export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, onSynopsis, onAdd }: Props) {
+export function Corkboard({ chapters, acts, scenes, wordsFor, selectedId, onOpen, onReorder, onSynopsis, onAdd, onStatus, offline }: Props) {
+  const actTitle = new Map(acts.map((a) => [a.id, a.title]));
   const ids = useRef<string[]>([]);
   ids.current = chapters.map((c) => c.id);
   const [coordinateGetter] = useState(() => gridKeys(() => ids.current));
@@ -81,13 +89,13 @@ export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, o
     if (!over || active.id === over.id) return;
     const from = chapters.findIndex((c) => c.id === active.id);
     const to = chapters.findIndex((c) => c.id === over.id);
-    onReorder(arrayMove(chapters, from, to).map((c) => c.id));
+    onReorder(arrayMove(chapters, from, to).map((c) => c.id), String(active.id), String(over.id));
   };
 
   return (
     <section className="board" aria-label="Corkboard">
       <p className="board-hint">
-        Drag cards to reorder chapters. Click a synopsis to write one; open a card to write the chapter.
+        Drag cards to reorder chapters; a card dropped on another joins that card's act. Click a synopsis to write one; open a card to write the chapter.
       </p>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={chapters.map((c) => c.id)} strategy={rectSortingStrategy}>
@@ -97,10 +105,15 @@ export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, o
                 key={c.id}
                 chapter={c}
                 number={i + 1}
+                act={c.act_id ? actTitle.get(c.act_id) : undefined}
+                scenes={scenes.filter((s) => s.chapter_id === c.id && s.in_text && s.passage_index !== null)
+                  .sort((a, b) => a.passage_index! - b.passage_index!)}
                 words={wordsFor(c)}
                 selected={c.id === selectedId}
                 onOpen={onOpen}
                 onSynopsis={onSynopsis}
+                onStatus={onStatus}
+                offline={offline}
               />
             ))}
             <li className="card-add-slot">
@@ -118,13 +131,18 @@ export function Corkboard({ chapters, wordsFor, selectedId, onOpen, onReorder, o
 interface CardProps {
   chapter: ChapterMeta;
   number: number;
+  /** The act's title, shown on the card. */
+  act?: string;
+  scenes: SceneMeta[];
   words: number;
   selected: boolean;
   onOpen: (id: string) => void;
   onSynopsis: (id: string, synopsis: string) => void;
+  onStatus: (id: string, status: ChapterRevisionStatus) => void;
+  offline?: boolean;
 }
 
-function Card({ chapter, number, words, selected, onOpen, onSynopsis }: CardProps) {
+function Card({ chapter, number, act, scenes, words, selected, onOpen, onSynopsis, onStatus, offline }: CardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: chapter.id });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(chapter.synopsis);
@@ -171,6 +189,7 @@ function Card({ chapter, number, words, selected, onOpen, onSynopsis }: CardProp
           {chapter.title}
         </button>
       </header>
+      <ChapterStatus chapter={chapter} onChange={onStatus} offline={offline} />
 
       {editing ? (
         <textarea
@@ -204,8 +223,23 @@ function Card({ chapter, number, words, selected, onOpen, onSynopsis }: CardProp
         </button>
       )}
 
+      {scenes.length > 0 && (
+        <ul className="card-scenes" aria-label={`Scenes in ${chapter.title}`}>
+          {scenes.slice(0, 6).map((scene) => (
+            <li key={scene.id}>
+              <span>{scene.status === "done" && "✓ "}{scene.title}</span>
+              <span>{scene.word_count.toLocaleString()} {scene.word_count === 1 ? "word" : "words"}</span>
+            </li>
+          ))}
+          {scenes.length > 6 && <li>+{scenes.length - 6} more</li>}
+        </ul>
+      )}
+
       <footer className="card-foot">
-        <span>{words.toLocaleString()} {words === 1 ? "word" : "words"}</span>
+        <span>
+          {act && <span className="card-act">{act} · </span>}
+          {words.toLocaleString()} {words === 1 ? "word" : "words"}
+        </span>
         <button className="card-open" onClick={() => onOpen(chapter.id)} {...stop}>
           Open
         </button>

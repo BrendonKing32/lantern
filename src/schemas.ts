@@ -3,6 +3,7 @@
 import {
   BIBLE_KINDS,
   DIALECTS,
+  type Act,
   type AiStatus,
   type BibleEntry,
   type BibleEntryDraft,
@@ -11,21 +12,28 @@ import {
   type ChangelogEntry,
   type ChapterMeta,
   type ChapterWithContent,
+  type ClaudeChange,
+  type ClaudeDraft,
   type CheckResult,
   type DeletedChapter,
   type DeletedProject,
   type Dialect,
+  type MarginNote,
+  type Outline,
+  type Milestone,
+  type MilestoneChapter,
   type ProjectDetail,
   type ProjectSummary,
   type SaveResult,
   type SceneMeta,
+  type SceneListing,
   type ShareComment,
   type SharedProject,
   type Snapshot,
   type SnapshotWithContent,
   type Stats,
 } from "../shared/types";
-import { array, boolean, type Check, literal, nullable, number, object, optional, string, tagged } from "./validate";
+import { array, boolean, type Check, literal, nullable, number, object, optional, ShapeError, string, tagged } from "./validate";
 
 export const ok = object({ ok: literal(true) });
 
@@ -34,6 +42,20 @@ export const changelogEntry: Check<ChangelogEntry> = object({
   title: string,
   merged_at: string,
   url: string,
+});
+
+export const marginNote: Check<MarginNote> = object({
+  id: string,
+  project_id: string,
+  chapter_id: string,
+  quote: string,
+  prefix: string,
+  suffix: string,
+  body: string,
+  author: literal("writer", "claude"),
+  resolved_at: nullable(string),
+  created_at: string,
+  updated_at: string,
 });
 
 export const projectSummary: Check<ProjectSummary> = object({
@@ -48,6 +70,18 @@ export const projectSummary: Check<ProjectSummary> = object({
 
 export const projectRef = object({ id: string, title: string });
 
+export const milestone: Check<Milestone> = object({
+  id: string, project_id: string, name: string, note: string,
+  word_count: number, chapter_count: number, created_at: string,
+});
+
+const milestoneChapterFields = {
+  milestone_id: string, chapter_id: string, position: number, title: string,
+  act_title: nullable(string), version: number, word_count: number,
+};
+export const milestoneChapter: Check<MilestoneChapter> = object(milestoneChapterFields);
+export const milestoneChapterWithContent = object({ ...milestoneChapterFields, content: string });
+
 export const projectArchived = object({ id: string, archived_at: nullable(string) });
 
 export const dialect: Check<Dialect> = literal(...DIALECTS.map((d) => d.id));
@@ -57,13 +91,17 @@ const chapterFields = {
   project_id: string,
   title: string,
   synopsis: string,
+  revision_status: literal("drafting", "revising", "done"),
   position: number,
   word_count: number,
   version: number,
   updated_at: string,
+  act_id: nullable(string),
 };
 
 export const chapterMeta: Check<ChapterMeta> = object(chapterFields);
+
+export const act: Check<Act> = object({ id: string, project_id: string, title: string, position: number });
 
 export const projectDetail: Check<ProjectDetail> = object({
   project: object({
@@ -76,7 +114,10 @@ export const projectDetail: Check<ProjectDetail> = object({
     dialect,
   }),
   chapters: array(chapterMeta),
+  acts: array(act),
 });
+
+export const outline: Check<Outline> = object({ acts: array(act), chapters: array(chapterMeta) });
 
 export const chapterWithContent: Check<ChapterWithContent> = object({ ...chapterFields, content: string });
 
@@ -174,12 +215,15 @@ export const aiTest = object({ ok: boolean, reply: string, model: string, ms: nu
 export const stats: Check<Stats> = object({
   daily_goal: nullable(number),
   today: number,
+  revised_today: number,
+  streak_counts_revision: boolean,
   streak: number,
   best_streak: number,
   days: array(object({ day: string, words: number })),
 });
 
 export const goal = object({ daily_goal: nullable(number) });
+export const streakRevision = object({ streak_counts_revision: boolean });
 
 export const target = object({ target_words: nullable(number), target_date: nullable(string) });
 
@@ -210,22 +254,47 @@ export const saveResult: Check<SaveResult> = object({
 export const sceneMeta: Check<SceneMeta> = object({
   id: string,
   project_id: string,
-  chapter_id: string,
+  chapter_id: nullable(string),
   title: string,
   summary: string,
   pov: string,
   location: string,
-  status: literal("planned", "drafted"),
+  status: literal("planned", "drafted", "revising", "done"),
   position: number,
+  in_text: boolean,
+  word_count: number,
+  excerpt: string,
+  passage_index: nullable(number),
+  unconfirmed: boolean,
+  unlinked_at: nullable(string),
+  merged_into: nullable(string),
   created_at: string,
   updated_at: string,
+});
+
+export const sceneListing: Check<SceneListing> = object({
+  scenes: array(sceneMeta),
+  placeholders: array(object({ chapter_id: string, passage_index: number, words: number, excerpt: string })),
+});
+
+const passageIndex: Check<number> = (value, path) => {
+  const index = number(value, path);
+  if (!Number.isInteger(index) || index < 0) throw new ShapeError(path, "a non-negative integer", value);
+  return index;
+};
+
+export const sceneMoveResult = object({
+  from: object({ version: number, word_count: number }),
+  to: object({ version: number, word_count: number }),
+  scene: sceneMeta,
+  from_passage_index: passageIndex,
 });
 
 const snapshotFields = {
   id: string,
   version: number,
   word_count: number,
-  reason: literal("auto", "restore", "conflict", "replace"),
+  reason: literal("auto", "restore", "conflict", "replace", "claude", "move"),
   created_at: string,
 };
 
@@ -236,6 +305,32 @@ export const snapshotWithContent: Check<SnapshotWithContent> = object({ ...snaps
 export const shareStatus = object({ active: boolean, created_at: nullable(string) });
 
 export const shareCreated = object({ active: literal(true), token: string, created_at: string });
+
+export const claudeChange: Check<ClaudeChange> = object({
+  id: string,
+  created_at: string,
+  action: string,
+  target_kind: literal("chapter", "entry", "scene"),
+  target_id: string,
+  chapter_id: nullable(string),
+  summary: string,
+  detail: string,
+});
+
+export const claudeDraft: Check<ClaudeDraft> = object({
+  chapter_id: string,
+  version: number,
+  base_version: number,
+  word_count: number,
+  ops: array(tagged("kind", {
+    replace: object({ kind: literal("replace"), old_text: string, new_text: string }),
+    append: object({ kind: literal("append"), text: string }),
+    set: object({ kind: literal("set"), text: string }),
+  })),
+  created_at: string,
+  updated_at: string,
+  content: string,
+});
 
 export const shareComment: Check<ShareComment> = object({
   id: string,

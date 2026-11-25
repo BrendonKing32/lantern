@@ -3,8 +3,8 @@ import type { ChapterMeta } from "../shared/types";
 import { findBookMatches, replaceBookText } from "./search";
 
 const chapters: ChapterMeta[] = [
-  { id: "one", project_id: "book", title: "First", synopsis: "", position: 0, word_count: 0, version: 0, updated_at: "" },
-  { id: "two", project_id: "book", title: "Second", synopsis: "", position: 1, word_count: 0, version: 0, updated_at: "" },
+  { id: "one", project_id: "book", title: "First", synopsis: "", position: 0, word_count: 0, version: 0, updated_at: "", act_id: null, revision_status: "drafting" },
+  { id: "two", project_id: "book", title: "Second", synopsis: "", position: 1, word_count: 0, version: 0, updated_at: "", act_id: null, revision_status: "drafting" },
 ];
 
 describe("whole-book search", () => {

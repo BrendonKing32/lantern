@@ -56,31 +56,71 @@ export interface DeletedChapter {
   deleted_at: string;
 }
 
+export type ChapterRevisionStatus = "drafting" | "revising" | "done";
+
 export interface ChapterMeta {
   id: string;
   project_id: string;
   title: string;
   synopsis: string;
+  revision_status: ChapterRevisionStatus;
   position: number;
   word_count: number;
   version: number;
   updated_at: string;
+  /** The act this chapter is in, or null for none. */
+  act_id: string | null;
 }
 
-export type SceneStatus = "planned" | "drafted";
+/** A named group of chapters: an act, a part, a book within the book. */
+export interface Act {
+  id: string;
+  project_id: string;
+  title: string;
+  position: number;
+}
+
+/** The novel's acts and chapters, in book order. */
+export interface Outline {
+  acts: Act[];
+  chapters: ChapterMeta[];
+}
+
+export type SceneStatus = "planned" | "drafted" | "revising" | "done";
 
 export interface SceneMeta {
   id: string;
   project_id: string;
-  chapter_id: string;
+  /** The chapter this scene is placed in, or null while it's unassigned. */
+  chapter_id: string | null;
   title: string;
   summary: string;
   pov: string;
   location: string;
   status: SceneStatus;
   position: number;
+  in_text: boolean;
+  word_count: number;
+  excerpt: string;
+  passage_index: number | null;
+  unconfirmed: boolean;
+  unlinked_at: string | null;
+  /** Title of the card holding this recently merged passage, when known. */
+  merged_into: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ScenePlaceholder {
+  chapter_id: string;
+  passage_index: number;
+  words: number;
+  excerpt: string;
+}
+
+export interface SceneListing {
+  scenes: SceneMeta[];
+  placeholders: ScenePlaceholder[];
 }
 
 /** The English a novel is written in, for grammar and spelling checks. */
@@ -103,10 +143,45 @@ export interface ProjectInfo {
 export interface ProjectDetail {
   project: ProjectInfo;
   chapters: ChapterMeta[];
+  acts: Act[];
+}
+
+export interface Milestone {
+  id: string;
+  project_id: string;
+  name: string;
+  note: string;
+  word_count: number;
+  chapter_count: number;
+  created_at: string;
+}
+
+export interface MilestoneChapter {
+  milestone_id: string;
+  chapter_id: string;
+  position: number;
+  title: string;
+  act_title: string | null;
+  version: number;
+  word_count: number;
 }
 
 export interface ChapterWithContent extends ChapterMeta {
   content: string;
+}
+
+export interface MarginNote {
+  id: string;
+  project_id: string;
+  chapter_id: string;
+  quote: string;
+  prefix: string;
+  suffix: string;
+  body: string;
+  author: "writer" | "claude";
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface SaveResult {
@@ -125,6 +200,8 @@ export interface DayWords {
 export interface Stats {
   daily_goal: number | null;
   today: number;
+  revised_today: number;
+  streak_counts_revision: boolean;
   /** Consecutive days meeting the goal (or writing anything, with no goal), counting today once it's met. */
   streak: number;
   best_streak: number;
@@ -132,7 +209,45 @@ export interface Stats {
   days: DayWords[];
 }
 
-export type SnapshotReason = "auto" | "restore" | "conflict" | "replace";
+/** One change Claude made through the connector, for More → Changes by Claude. */
+export interface ClaudeChange {
+  id: string;
+  created_at: string;
+  action: string;
+  target_kind: "chapter" | "entry" | "scene";
+  target_id: string;
+  chapter_id: string | null;
+  summary: string;
+  detail: string;
+}
+
+/**
+ * Changes Claude made to a chapter's text through the connector. They stay
+ * here, outside the chapter, until the author accepts or discards them.
+ */
+export type DraftOp =
+  | { kind: "replace"; old_text: string; new_text: string }
+  | { kind: "append"; text: string }
+  | { kind: "set"; text: string };
+
+export interface ClaudeDraft {
+  chapter_id: string;
+  /** The draft's own version; each edit by Claude adds one. */
+  version: number;
+  /** The chapter version the draft began from. */
+  base_version: number;
+  word_count: number;
+  ops: DraftOp[];
+  created_at: string;
+  updated_at: string;
+  content: string;
+}
+
+/**
+ * Why a copy was kept. "claude": the text as it was before Claude edited it through the connector,
+ * or before the author accepted Claude's draft.
+ */
+export type SnapshotReason = "auto" | "restore" | "conflict" | "replace" | "claude" | "move";
 
 export interface Snapshot {
   id: string;

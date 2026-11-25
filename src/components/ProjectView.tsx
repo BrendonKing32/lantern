@@ -3,12 +3,16 @@ import { flushSync } from "react-dom";
 import { ThemePicker } from "./ThemePicker";
 import { api, describeError } from "../api";
 import { navigate } from "../router";
-import { loadProject } from "../sync";
+import { forgetChapter, loadProject } from "../sync";
 import { ago } from "../when";
 import { RestoreIcon } from "./ProjectList";
 import { TargetMeter } from "./TargetMeter";
 import { ExportDialog } from "./ExportDialog";
+import { MilestonesDialog } from "./MilestonesDialog";
+import { MilestoneComparison } from "./MilestoneComparison";
+import { createMilestone } from "../milestones";
 import { ShareDialog } from "./ShareDialog";
+import { ClaudeChangesDialog } from "./ClaudeChangesDialog";
 import { Corkboard } from "./Corkboard";
 import { SceneBoard } from "./SceneBoard";
 import { SearchPanel } from "./SearchPanel";
@@ -22,8 +26,12 @@ import { ChapterList } from "./ChapterList";
 import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEditor";
 import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
+import { sceneLabelsEnabled, setSceneLabelsEnabled } from "../sceneLabels";
 import { DIALECTS } from "../../shared/types";
-import type { BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, ProjectDetail, SaveResult, SceneMeta } from "../../shared/types";
+import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Milestone, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
+import { arrangeChapters } from "../../shared/acts";
+import { splitScenes } from "../../shared/scenes";
+import { arrangeChapterScenes, flushForSceneMove, moveSceneBetweenChapters, SceneMoveError } from "../sceneArrangement";
 
 type View = "write" | "board" | "scenes" | "search" | "bible";
 const VIEWS: View[] = ["write", "board", "scenes", "search", "bible"];
@@ -36,6 +44,86 @@ const VIEW_LABELS = [
 
 // With no daily goal, session words at which the lamp reaches full brightness.
 const FULL_GLOW_WORDS = 1000;
+
+type LabelSnapshot = { chapterId: string; baseline: string; scenes: SceneMeta[] };
+
+export function useLabelSnapshot(
+  projectId: string,
+  view: View,
+  chapterId: string | undefined,
+  title: string | undefined,
+  controls: { current: EditorControls | null },
+  setScenes: (scenes: SceneMeta[]) => void,
+) {
+  const [snapshot, setSnapshot] = useState<LabelSnapshot | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const lastRefresh = useRef(0);
+  const lastRequest = useRef<{ projectId: string; chapterId: string; refresh: number } | null>(null);
+  const visitedScenes = useRef(false);
+
+  useEffect(() => {
+    if (view === "scenes") visitedScenes.current = true;
+    if (view !== "write" || !chapterId) return;
+    const returningFromScenes = visitedScenes.current;
+    visitedScenes.current = false;
+    const previous = lastRequest.current;
+    if (!returningFromScenes && previous?.projectId === projectId && previous.chapterId === chapterId && previous.refresh === refresh) return;
+    const request = { projectId, chapterId, refresh };
+    lastRequest.current = request;
+    lastRefresh.current = Date.now();
+    let active = true;
+    let finished = false;
+    let retryTimer: number | undefined;
+    const loadLabels = async () => {
+      for (let attempt = 0; attempt < 3 && active; attempt++) {
+        const before = await api.getChapter(chapterId);
+        if (!active) return;
+        const listing = await api.scenes(projectId);
+        if (!active) return;
+        const after = await api.getChapter(chapterId);
+        if (!active) return;
+        if (before.version !== after.version || before.content !== after.content) continue;
+        setScenes(listing.scenes);
+        setSnapshot({ chapterId, baseline: after.content, scenes: listing.scenes });
+        return true;
+      }
+      return false;
+    };
+    void loadLabels().catch(() => false).then((success) => {
+      finished = true;
+      if (active && !success) retryTimer = window.setTimeout(() => setRefresh((n) => n + 1), 30_000);
+    });
+    return () => {
+      active = false;
+      window.clearTimeout(retryTimer);
+      if (!finished && lastRequest.current === request) lastRequest.current = null;
+    };
+  }, [projectId, view, chapterId, refresh, setScenes]);
+
+  useEffect(() => {
+    if (view !== "write" || !chapterId || snapshot?.chapterId !== chapterId) return;
+    const baselineCount = splitScenes(snapshot.baseline, title).length;
+    let lastText: string | undefined;
+    let passageCount = baselineCount;
+    const timer = window.setInterval(() => {
+      const text = controls.current?.text();
+      if (text === undefined || Date.now() - lastRefresh.current < 30_000) return;
+      if (text !== lastText) {
+        lastText = text;
+        passageCount = splitScenes(text, title).length;
+      }
+      if (passageCount !== baselineCount) {
+        setRefresh((n) => n + 1);
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [view, chapterId, title, snapshot, controls]);
+
+  const chapterSaved = useCallback((id: string, replaced?: boolean) => {
+    if (replaced && id === chapterId) setRefresh((n) => n + 1);
+  }, [chapterId]);
+  return { snapshot, chapterSaved };
+}
 
 const STATUS_TEXT: Record<SaveState, string> = {
   loading: "Opening",
@@ -85,8 +173,27 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const moreMenuRef = useRef<HTMLDetailsElement>(null);
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [milestonesOpen, setMilestonesOpen] = useState(false);
+  const [milestoneExport, setMilestoneExport] = useState<Milestone | null>(null);
+  const [comparison, setComparison] = useState<{ milestone: Milestone; activeText: { id: string; text: string } | null } | null>(null);
+  const addedMilestoneChapters = useRef(new Map<string, ChapterMeta>());
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [milestonesError, setMilestonesError] = useState<string | null>(null);
+  const refreshMilestones = useCallback(async () => {
+    try {
+      setMilestones(await api.milestones(projectId));
+      setMilestonesError(null);
+    } catch (e) {
+      setMilestonesError(describeError(e));
+      throw e;
+    }
+  }, [projectId]);
+  useEffect(() => { void refreshMilestones().catch(() => {}); }, [refreshMilestones]);
   const [shareOpen, setShareOpen] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [unseenChanges, setUnseenChanges] = useState(0);
   const closeDrawer = useCallback(() => {
     // Commit first so the desk is no longer inert when focus returns to it.
     flushSync(() => setDrawerOpen(false));
@@ -160,14 +267,17 @@ export function ProjectView({ projectId, chapterId }: Props) {
   };
   const setView = (v: View) => {
     closeMoreMenu();
+    if (v === "scenes" && v !== view) setScenes(null);
     // The footer's save state belongs to the chapter editor, which unmounts
     // outside Write. Start fresh so a return never shows a stale state.
     if (v !== view) setSave({ state: "loading" });
     setViewState(v);
     setEditingChapter(null);
     setHistoryOpen(false);
+    setNotesOpen(false);
     setCheckOpen(false);
     setPeek(null);
+    setScenePeek(null);
     try {
       sessionStorage.setItem(viewKey, v);
     } catch {
@@ -180,6 +290,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [entries, setEntriesState] = useState<BibleEntry[]>([]);
   const [entryId, setEntryId] = useState<string | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
+  const [scenePeek, setScenePeek] = useState<string | null>(null);
   const setEntries = useCallback(
     (update: (list: BibleEntry[]) => BibleEntry[]) =>
       setEntriesState((list) => {
@@ -197,18 +308,28 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const index = useMemo(() => entryIndex(entries), [entries]);
   const openLink = useCallback((name: string) => {
     setHistoryOpen(false);
+    setNotesOpen(false);
     setCheckOpen(false);
+    setScenePeek(null);
     setPeek(name);
   }, []);
   // The continuity check panel reads the editor's text and points into it.
   const [checkOpen, setCheckOpen] = useState(false);
   const [grammarOn, setGrammarOn] = useState(grammarEnabled);
   useEffect(() => setGrammarEnabled(grammarOn), [grammarOn]);
+  const [sceneLabelsOn, setSceneLabelsOn] = useState(sceneLabelsEnabled);
+  useEffect(() => setSceneLabelsEnabled(sceneLabelsOn), [sceneLabelsOn]);
 
   const [checkTab, setCheckTab] = useState<CheckTab>("chapter");
   const editorControls = useRef<EditorControls | null>(null);
   const closeCheck = useCallback(() => setCheckOpen(false), []);
   const closePeek = useCallback(() => setPeek(null), []);
+  useEffect(() => {
+    if (scenePeek === null) return;
+    const close = (e: KeyboardEvent) => { if (e.key === "Escape") setScenePeek(null); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [scenePeek]);
   const createFromLink = async (name: string, kind: BibleKind) => {
     try {
       const e = await api.createEntry(projectId, { name, kind });
@@ -220,10 +341,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
   const [offline, setOffline] = useState(false);
+  const [disconnected, setDisconnected] = useState(() => !navigator.onLine);
+  useEffect(() => {
+    const update = () => setDisconnected(!navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
   const [lastChapterId, setLastChapterId] = useState<string | null>(null);
   const [trash, setTrash] = useState<DeletedChapter[]>([]);
   const [scenes, setScenes] = useState<SceneMeta[] | null>(null);
+  const [placeholders, setPlaceholders] = useState<ScenePlaceholder[]>([]);
   const [scenesError, setScenesError] = useState<string | null>(null);
+  const [sceneMove, setSceneMove] = useState<
+    | { kind: "arrange"; chapter: ChapterMeta; sceneIds: string[]; expectedIds: string[]; title: string }
+    | { kind: "across"; from: ChapterMeta; to: ChapterMeta; sceneId: string; passageIndex: number; sourceVersion: number; title: string }
+    | null
+  >(null);
+  const [movingScene, setMovingScene] = useState(false);
+  const sceneMoveBusy = useRef(false);
   const [searchText, setSearchText] = useState<{ id: string; content: string; version: number } | null>(null);
   // Words written today across all novels, and the daily goal (null: none).
   const [today, setToday] = useState<{ words: number; goal: number | null } | null>(null);
@@ -257,7 +393,58 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [projectId]);
 
   const chapters = detail?.chapters ?? [];
+  // Novels saved on this device before acts existed have none.
+  const acts = detail?.acts ?? [];
+  const [renamingActId, setRenamingActId] = useState<string | null>(null);
+
+  // AI changes: how many this device hasn't shown yet, checked when the
+  // novel opens and whenever the window comes back into focus.
+  const seenKey = `lantern:claude-seen:${projectId}`;
+  const lastSeen = () => {
+    try {
+      return localStorage.getItem(seenKey) ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const markSeen = useCallback(
+    (newest: string | null) => {
+      setUnseenChanges(0);
+      if (!newest) return;
+      try {
+        localStorage.setItem(seenKey, newest);
+      } catch {
+        /* only a convenience */
+      }
+    },
+    [seenKey],
+  );
+  useEffect(() => {
+    if (offline) return;
+    let live = true;
+    const check = () => {
+      if (document.visibilityState !== "visible") return;
+      api
+        .claudeChanges(projectId)
+        .then((list) => {
+          if (!live) return;
+          const seen = lastSeen();
+          setUnseenChanges(list.filter((c) => c.created_at > seen).length);
+        })
+        .catch(() => {});
+    };
+    check();
+    window.addEventListener("focus", check);
+    return () => {
+      live = false;
+      window.removeEventListener("focus", check);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, offline]);
   const selected = selectChapter(chapters, chapterId, lastChapterId);
+  const { snapshot: labelSnapshot, chapterSaved } = useLabelSnapshot(
+    projectId, view, selected?.id, selected?.title, editorControls, setScenes,
+  );
   useEffect(() => {
     if (!selected) return;
     setLastChapterId(selected.id);
@@ -267,15 +454,29 @@ export function ProjectView({ projectId, chapterId }: Props) {
   useEffect(() => setEditingChapter(null), [selected?.id]);
   useEffect(() => {
     if (view !== "scenes") return;
+    let active = true;
     setScenes(null);
     setScenesError(null);
-    api.scenes(projectId).then(setScenes).catch((e) => setScenesError(describeError(e)));
+    api.scenes(projectId).then(({ scenes, placeholders }) => {
+      if (active) { setScenes(scenes); setPlaceholders(placeholders); }
+    }).catch((e) => { if (active) setScenesError(describeError(e)); });
+    return () => { active = false; };
+  }, [projectId, view]);
+  useEffect(() => {
+    if (view !== "board") return;
+    let active = true;
+    api.scenes(projectId).then(({ scenes, placeholders }) => {
+      if (active) { setScenes(scenes); setPlaceholders(placeholders); }
+    }).catch(() => {});
+    return () => { active = false; };
   }, [projectId, view]);
   // Novels saved on this device before dialects existed have none: US English.
   const dialect: Dialect = detail?.project.dialect ?? "american";
 
   // History belongs to one chapter; the check panel follows you between chapters.
   useEffect(() => setHistoryOpen(false), [selected?.id]);
+  useEffect(() => setNotesOpen(false), [selected?.id]);
+  useEffect(() => setScenePeek(null), [selected?.id]);
 
   // Open a chapter and select a passage in it, waiting for the editor to load.
   const openQuote = (chapterId: string, quote: string): Promise<boolean> => {
@@ -307,6 +508,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
   }, [drawerOpen, closeDrawer]);
 
   const wordsFor = useCallback((c: ChapterMeta) => live[c.id] ?? c.word_count, [live]);
+  const wordsForRef = useRef(wordsFor);
+  wordsForRef.current = wordsFor;
   const bookWords = chapters.reduce((sum, c) => sum + wordsFor(c), 0);
   const sessionWords = useMemo(
     () =>
@@ -324,29 +527,31 @@ export function ProjectView({ projectId, chapterId }: Props) {
     document.documentElement.style.setProperty("--glow", glow.toFixed(3));
   }, [sessionWords, today]);
 
-  const onWords = useCallback((id: string, words: number, initial: boolean) => {
+  const onWords = useCallback((id: string, words: number, initial: boolean, notWritten = 0) => {
     if (initial && sessionStart.current[id] === undefined) sessionStart.current[id] = words;
+    if (notWritten && sessionStart.current[id] !== undefined) sessionStart.current[id] += notWritten;
     setLive((prev) => (prev[id] === words ? prev : { ...prev, [id]: words }));
   }, []);
 
-  const onSaved = useCallback((id: string, info: SaveResult) => {
+  const onSaved = useCallback((id: string, info: SaveResult, replaced?: boolean) => {
+    chapterSaved(id, replaced);
     const { today_words, ...meta } = info;
     if (today_words !== undefined) setToday((t) => (t ? { ...t, words: today_words } : t));
     setDetail((d) =>
       d
-        ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, ...meta } : c)) }
+        ? { ...d, chapters: d.chapters.map((c) => (c.id === id && c.version <= meta.version ? { ...c, ...meta } : c)) }
         : d,
     );
-  }, []);
+  }, [chapterSaved]);
 
   const onStatus = useCallback((state: SaveState, detail?: string) => setSave({ state, detail }), []);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
-  const select = (id: string) => {
+  const select = useCallback((id: string) => {
     setEditingChapter(null);
     if (drawerOpen) closeDrawer();
     navigate(projectId, id);
-  };
+  }, [closeDrawer, drawerOpen, projectId]);
 
   const openSearch = () => {
     const text = editorControls.current?.text();
@@ -364,24 +569,108 @@ export function ProjectView({ projectId, chapterId }: Props) {
     }
   };
 
-  const reorder = async (ids: string[]) => {
-    setDetail((d) =>
-      d
-        ? {
-            ...d,
-            chapters: ids.map((id, i) => ({ ...d.chapters.find((c) => c.id === id)!, position: i })),
-          }
-        : d,
+  /**
+   * Put the book in this order, with chapters in these acts and the acts in
+   * this order. Each act's chapters are kept together, as the server does.
+   */
+  const arrange = async (
+    chapterIds: string[],
+    chapterActs: Record<string, string | null>,
+    actIds: string[] = acts.map((a) => a.id),
+  ) => {
+    if (!detail) return;
+    const nextActs = actIds.map((id, i) => ({ ...acts.find((a) => a.id === id)!, position: i }));
+    const next = arrangeChapters(
+      chapterIds.map((id, i) => {
+        const c = chapters.find((x) => x.id === id)!;
+        return { ...c, act_id: id in chapterActs ? chapterActs[id] : (c.act_id ?? null), position: i };
+      }),
+      nextActs,
     );
+    setDetail((d) => (d ? { ...d, chapters: next, acts: nextActs } : d));
     try {
-      await api.reorder(projectId, ids);
+      await api.reorder(
+        projectId,
+        next.map((c) => c.id),
+        acts.length ? { actIds, chapterActs: Object.fromEntries(next.map((c) => [c.id, c.act_id])) } : undefined,
+      );
     } catch (e) {
       alert(describeError(e));
       load();
     }
   };
 
-  const rename = async (id: string, title: string) => {
+  // On the corkboard a moved card joins the act of the card it was dropped on.
+  const reorderFromBoard = (ids: string[], movedId: string, overId: string) => {
+    const over = chapters.find((c) => c.id === overId);
+    void arrange(ids, { [movedId]: over?.act_id ?? null });
+  };
+
+  // The server's word on acts and chapter order, keeping what this page knows
+  // about each chapter's text.
+  const applyOutline = (o: Outline) =>
+    setDetail((d) => {
+      if (!d) return d;
+      const local = new Map(d.chapters.map((c) => [c.id, c]));
+      return {
+        ...d,
+        acts: o.acts,
+        chapters: o.chapters.map((c) => {
+          const mine = local.get(c.id);
+          return mine ? { ...mine, position: c.position, act_id: c.act_id } : c;
+        }),
+      };
+    });
+
+  const startAct = async (chapterId: string | null) => {
+    try {
+      const o = await api.createAct(projectId, undefined, chapterId);
+      const known = new Set(acts.map((a) => a.id));
+      applyOutline(o);
+      setRenamingActId(o.acts.find((a) => !known.has(a.id))?.id ?? null);
+    } catch (e) {
+      alert(describeError(e));
+    }
+  };
+
+  // Stable for the memoized chapter rows, while always calling the latest startAct.
+  const startActRef = useRef(startAct);
+  startActRef.current = startAct;
+  const onStartAct = useCallback((id: string) => void startActRef.current(id), []);
+
+  // The first act takes the whole book; later ones start empty at the end.
+  const addAct = () => void startAct(acts.length === 0 && chapters.length ? chapters[0].id : null);
+
+  const renameAct = async (id: string, title: string) => {
+    setDetail((d) => (d ? { ...d, acts: (d.acts ?? []).map((a) => (a.id === id ? { ...a, title } : a)) } : d));
+    try {
+      await api.renameAct(id, title);
+    } catch (e) {
+      alert(describeError(e));
+      load();
+    }
+  };
+
+  const moveAct = (id: string, by: -1 | 1) => {
+    const ids = acts.map((a) => a.id);
+    const from = ids.indexOf(id);
+    const to = from + by;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    void arrange(chapters.map((c) => c.id), {}, ids);
+  };
+
+  const removeAct = async (act: Act) => {
+    if (!confirm(`Remove the act “${act.title}”? Its chapters stay where they are in the book.`)) return;
+    try {
+      applyOutline(await api.deleteAct(act.id));
+    } catch (e) {
+      alert(describeError(e));
+      load();
+    }
+  };
+
+  const rename = useCallback(async (id: string, title: string) => {
     setDetail((d) =>
       d ? { ...d, chapters: d.chapters.map((c) => (c.id === id ? { ...c, title } : c)) } : d,
     );
@@ -390,6 +679,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
     } catch (e) {
       alert(describeError(e));
       load();
+    }
+  }, [load]);
+
+  const setChapterStatus = async (id: string, revision_status: import("../../shared/types").ChapterRevisionStatus) => {
+    try {
+      const updated = await api.updateChapter(id, { revision_status });
+      setDetail((d) => d ? { ...d, chapters: d.chapters.map((c) => c.id === id ? { ...c, revision_status: updated.revision_status } : c) } : d);
+      await cache.setChapterStatus(projectId, id, updated.revision_status);
+    } catch (e) {
+      alert(describeError(e));
     }
   };
 
@@ -422,9 +721,29 @@ export function ProjectView({ projectId, chapterId }: Props) {
     select(id);
   };
 
-  const addScene = async (chapterId: string): Promise<SceneMeta | null> => {
+  const reloadScenes = async () => {
+    const listing = await api.scenes(projectId);
+    setScenes(listing.scenes);
+    setPlaceholders(listing.placeholders);
+  };
+
+  const openScene = (scene: SceneMeta) => {
+    if (!scene.chapter_id || scene.passage_index === null) return;
+    const chapter = scene.chapter_id;
+    const index = scene.passage_index;
+    setView("write");
+    select(chapter);
+    const start = Date.now();
+    const attempt = () => {
+      if (editorControls.current?.revealScene(index)) return;
+      if (Date.now() - start < 4000) window.setTimeout(attempt, 120);
+    };
+    window.setTimeout(attempt, 150);
+  };
+
+  const addScene = async (chapterId: string | null): Promise<SceneMeta | null> => {
     try {
-      const scene = await api.createScene(chapterId);
+      const scene = await api.createScene(projectId, chapterId);
       setScenes((list) => [...(list ?? []), scene]);
       return scene;
     } catch (e) {
@@ -435,11 +754,13 @@ export function ProjectView({ projectId, chapterId }: Props) {
 
   const updateScene = async (
     scene: SceneMeta,
-    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status">>,
+    patch: Partial<Pick<SceneMeta, "title" | "summary" | "pov" | "location" | "status" | "chapter_id">> & {
+      link?: { passage_index: number }; unlink?: true; confirm?: true;
+    },
   ) => {
     try {
-      const updated = await api.updateScene(scene.id, patch);
-      setScenes((list) => list?.map((item) => item.id === scene.id ? updated : item) ?? []);
+      await api.updateScene(scene.id, patch);
+      await reloadScenes();
     } catch (e) {
       alert(describeError(e));
       throw e;
@@ -450,26 +771,105 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (!confirm(`Delete the scene plan “${scene.title}”?`)) return;
     try {
       await api.deleteScene(scene.id);
-      setScenes((list) => list?.filter((item) => item.id !== scene.id) ?? []);
+      await reloadScenes();
     } catch (e) {
       alert(describeError(e));
     }
   };
 
-  const reorderScenes = async (chapterId: string, sceneIds: string[]) => {
-    setScenes((list) => list?.map((scene) => {
-      if (scene.chapter_id !== chapterId) return scene;
-      return { ...scene, position: sceneIds.indexOf(scene.id) };
-    }) ?? []);
+  const reorderScenes = async (chapterId: string | null, sceneIds: string[], movedId: string) => {
+    if (sceneMoveBusy.current) return;
+    const group = (scenes ?? []).filter((scene) => scene.chapter_id === chapterId).sort((a, b) => a.position - b.position);
+    const chapter = chapters.find((c) => c.id === chapterId);
+    const moved = group.find((scene) => scene.id === movedId);
+    if (offline || disconnected || !moved) return;
+    sceneMoveBusy.current = true;
+    setMovingScene(true);
     try {
-      await api.reorderScenes(projectId, chapterId, sceneIds);
+      if (chapter && group.some((scene) => scene.in_text)) {
+        const result = await arrangeChapterScenes(chapter, sceneIds, { projectId, sceneIds: group.map((scene) => scene.id) });
+        onSaved(chapter.id, result);
+        setLive((current) => ({ ...current, [chapter.id]: result.word_count }));
+        const cached = await cache.project(projectId);
+        if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === chapter.id ? { ...c, ...result } : c) });
+        setSceneMove({ kind: "arrange", chapter, sceneIds: group.map((scene) => scene.id), expectedIds: sceneIds, title: moved.title });
+      } else {
+        await api.reorderScenes(projectId, chapterId, sceneIds);
+        setSceneMove(null);
+      }
+      await reloadScenes();
     } catch (e) {
-      alert(describeError(e));
-      api.scenes(projectId).then(setScenes).catch((error) => setScenesError(describeError(error)));
+      alert(e instanceof SceneMoveError ? e.message : describeError(e));
+      await reloadScenes().catch((error) => setScenesError(describeError(error)));
+    } finally {
+      sceneMoveBusy.current = false;
+      setMovingScene(false);
     }
   };
 
-  const remove = async (c: ChapterMeta) => {
+  const updateMovedChapters = async (from: ChapterMeta, to: ChapterMeta, result: Awaited<ReturnType<typeof moveSceneBetweenChapters>>) => {
+    const updates = new Map([[from.id, result.from], [to.id, result.to]]);
+    const apply = (chapter: ChapterMeta) => {
+      const update = updates.get(chapter.id);
+      return update && chapter.version <= update.version ? { ...chapter, ...update } : chapter;
+    };
+    setDetail((current) => current ? { ...current, chapters: current.chapters.map(apply) } : current);
+    setLive((current) => ({ ...current, [from.id]: result.from.word_count, [to.id]: result.to.word_count }));
+    const cached = await cache.project(projectId);
+    if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map(apply) });
+  };
+
+  const moveAcrossChapters = async (scene: SceneMeta, chapterId: string, beforePassageIndex: number | null) => {
+    const from = chapters.find((chapter) => chapter.id === scene.chapter_id);
+    const to = chapters.find((chapter) => chapter.id === chapterId);
+    if (sceneMoveBusy.current || offline || disconnected || !from || !to) return;
+    sceneMoveBusy.current = true;
+    setMovingScene(true);
+    setSceneMove(null);
+    try {
+      const result = await moveSceneBetweenChapters(scene.id, from, to, beforePassageIndex);
+      setSceneMove({ kind: "across", from, to, sceneId: scene.id, passageIndex: result.from_passage_index, sourceVersion: result.from.version, title: scene.title });
+      await updateMovedChapters(from, to, result);
+      await reloadScenes();
+    } catch (e) {
+      alert(e instanceof SceneMoveError ? e.message : describeError(e));
+      load();
+      await reloadScenes().catch((error) => setScenesError(describeError(error)));
+    } finally {
+      sceneMoveBusy.current = false;
+      setMovingScene(false);
+    }
+  };
+
+  const undoSceneMove = async () => {
+    if (!sceneMove || sceneMoveBusy.current || offline || disconnected) return;
+    sceneMoveBusy.current = true;
+    setMovingScene(true);
+    try {
+      if (sceneMove.kind === "across") {
+        const result = await moveSceneBetweenChapters(sceneMove.sceneId, sceneMove.to, sceneMove.from, sceneMove.passageIndex, {
+          projectId, destinationVersion: sceneMove.sourceVersion,
+        });
+        await updateMovedChapters(sceneMove.to, sceneMove.from, result);
+      } else {
+        const result = await arrangeChapterScenes(sceneMove.chapter, sceneMove.sceneIds, { projectId, sceneIds: sceneMove.expectedIds });
+        onSaved(sceneMove.chapter.id, result);
+        setLive((current) => ({ ...current, [sceneMove.chapter.id]: result.word_count }));
+        const cached = await cache.project(projectId);
+        if (cached) await cache.setProject({ ...cached, chapters: cached.chapters.map((c) => c.id === sceneMove.chapter.id ? { ...c, ...result } : c) });
+      }
+      setSceneMove(null);
+      await reloadScenes();
+    } catch (e) {
+      alert(e instanceof SceneMoveError ? e.message : describeError(e));
+      load();
+      await reloadScenes().catch((error) => setScenesError(describeError(error)));
+    } finally {
+      sceneMoveBusy.current = false;
+      setMovingScene(false);
+    }
+  };
+  const remove = useCallback(async (c: ChapterMeta) => {
     if (chapters.length === 1) {
       alert("A novel needs at least one chapter.");
       return;
@@ -477,7 +877,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     if (!confirm(`Delete “${c.title}”? It moves to Recently deleted under the chapter list, where you can restore it.`)) return;
     try {
       await api.deleteChapter(c.id);
-      setTrash((t) => [{ id: c.id, title: c.title, word_count: wordsFor(c), deleted_at: new Date().toISOString() }, ...t]);
+      setTrash((t) => [{ id: c.id, title: c.title, word_count: wordsForRef.current(c), deleted_at: new Date().toISOString() }, ...t]);
       const idx = chapters.findIndex((x) => x.id === c.id);
       const rest = chapters.filter((x) => x.id !== c.id);
       setDetail((d) => (d ? { ...d, chapters: rest } : d));
@@ -486,7 +886,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
     } catch (e) {
       alert(describeError(e));
     }
-  };
+  }, [chapters, detail, load, projectId, selected?.id]);
 
   const restoreChapter = async (c: DeletedChapter) => {
     try {
@@ -594,20 +994,43 @@ export function ProjectView({ projectId, chapterId }: Props) {
           words={bookWords}
           onChange={(t) => setDetail((d) => (d ? { ...d, project: { ...d.project, ...t } } : d))}
         />
+        {milestones[0] && <p className="book-count">
+          Since {milestones[0].name}: {bookWords - milestones[0].word_count >= 0 ? "+" : ""}
+          {(bookWords - milestones[0].word_count).toLocaleString()} words
+        </p>}
 
         <ChapterList
           chapters={chapters}
+          acts={acts}
           wordsFor={wordsFor}
           selectedId={selected?.id}
           onSelect={select}
-          onReorder={reorder}
+          onArrange={(ids, chapterActs) => void arrange(ids, chapterActs)}
           onRename={rename}
           onDelete={remove}
+          onStartAct={onStartAct}
+          onStatus={(id, value) => void setChapterStatus(id, value)}
+          offline={offline || disconnected}
+          onRenameAct={(id, title) => void renameAct(id, title)}
+          onMoveAct={moveAct}
+          onDeleteAct={(act) => void removeAct(act)}
+          renamingActId={renamingActId}
+          onRenamingActDone={() => setRenamingActId(null)}
         />
 
-        <button className="add-chapter" onClick={addChapter}>
-          Add chapter
-        </button>
+        <div className="add-row">
+          <button className="add-chapter" onClick={addChapter}>
+            Add chapter
+          </button>
+          <button
+            className="add-chapter"
+            onClick={addAct}
+            disabled={offline}
+            title={acts.length ? "Add an empty act at the end" : "Group the chapters into acts"}
+          >
+            Add act
+          </button>
+        </div>
 
         {trash.length > 0 && (
           <details className="trash">
@@ -658,8 +1081,9 @@ export function ProjectView({ projectId, chapterId }: Props) {
           <div className="desk-actions">
             {!phone && searchButton}
             <details className="desk-more" ref={moreMenuRef}>
-              <summary className={`btn btn-quiet${historyOpen || checkOpen || grammarOn ? " is-on" : ""}`}>
+              <summary className={`btn btn-quiet${historyOpen || checkOpen || grammarOn ? " is-on" : ""}${unseenChanges > 0 ? " has-news" : ""}`}>
                 More
+                {unseenChanges > 0 && <span className="visually-hidden"> ({unseenChanges} new AI changes)</span>}
               </summary>
               <div className="desk-more-menu">
                 {phone && (
@@ -680,6 +1104,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
                   className="btn btn-quiet"
                   onClick={() => {
                     closeMoreMenu();
+                    setMilestonesOpen(true);
+                    void refreshMilestones().catch(() => {});
+                  }}
+                >
+                  Milestones
+                </button>
+                <button
+                  className="btn btn-quiet"
+                  onClick={() => {
+                    closeMoreMenu();
                     setExportOpen(true);
                   }}
                 >
@@ -696,6 +1130,20 @@ export function ProjectView({ projectId, chapterId }: Props) {
                     Share
                   </button>
                 )}
+                {!offline && (
+                  <button
+                    className="btn btn-quiet"
+                    onClick={() => {
+                      closeMoreMenu();
+                      setChangesOpen(true);
+                    }}
+                  >
+                    AI changes
+                    {unseenChanges > 0 && (
+                      <span className="news-count" aria-label={`${unseenChanges} new`}>{unseenChanges}</span>
+                    )}
+                  </button>
+                )}
                 {view === "write" && (
                   <>
                     <span className="desk-more-divider" />
@@ -705,11 +1153,34 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       onClick={() => {
                         closeMoreMenu();
                         setPeek(null);
+                        setScenePeek(null);
                         setCheckOpen(false);
+                        setNotesOpen(false);
                         setHistoryOpen((h) => !h);
                       }}
                     >
                       History
+                    </button>
+                    <button
+                      className={`btn btn-quiet${notesOpen ? " is-on" : ""}`}
+                      aria-pressed={notesOpen}
+                      disabled={!selected}
+                      onClick={() => {
+                        closeMoreMenu();
+                        setPeek(null);
+                        setScenePeek(null);
+                        setCheckOpen(false);
+                        setHistoryOpen(false);
+                        setNotesOpen((open) => !open);
+                      }}
+                    >
+                      Notes
+                    </button>
+                    <button className="btn btn-quiet" disabled={!selected} onClick={() => {
+                      closeMoreMenu();
+                      editorControls.current?.addNote?.();
+                    }}>
+                      Add note
                     </button>
                     <button
                       className={`btn btn-quiet${checkOpen ? " is-on" : ""}`}
@@ -718,13 +1189,25 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       onClick={() => {
                         closeMoreMenu();
                         setPeek(null);
+                        setScenePeek(null);
                         setHistoryOpen(false);
+                        setNotesOpen(false);
                         setCheckOpen((c) => !c);
                       }}
                     >
                       Check
                     </button>
                     <span className="desk-more-divider" />
+                    <button
+                      className={`btn btn-quiet${sceneLabelsOn ? " is-on" : ""}`}
+                      aria-pressed={sceneLabelsOn}
+                      onClick={() => {
+                        closeMoreMenu();
+                        setSceneLabelsOn((on) => !on);
+                      }}
+                    >
+                      Scene labels
+                    </button>
                     <select
                       className={`theme-picker grammar-picker desk-more-select${grammarOn ? " is-on" : ""}`}
                       aria-label="Grammar checking"
@@ -767,11 +1250,15 @@ export function ProjectView({ projectId, chapterId }: Props) {
         ) : board ? (
           <Corkboard
             chapters={chapters}
+            acts={acts}
+            scenes={scenes ?? []}
             wordsFor={wordsFor}
             selectedId={selected?.id}
             onOpen={openFromBoard}
-            onReorder={reorder}
+            onReorder={reorderFromBoard}
             onSynopsis={setSynopsis}
+            onStatus={(id, value) => void setChapterStatus(id, value)}
+            offline={offline || disconnected}
             onAdd={addChapter}
           />
         ) : view === "scenes" ? (
@@ -781,22 +1268,33 @@ export function ProjectView({ projectId, chapterId }: Props) {
               <p className="screen-message-detail">{scenesError}</p>
             </div>
           ) : scenes ? (
+            <>
+            {sceneMove && <p className="check-notice" role="status">Moved {sceneMove.title}{sceneMove.kind === "across" ? ` to ${sceneMove.to.title}` : ""}.{" "}
+              <button className="btn btn-quiet" disabled={movingScene || offline || disconnected} onClick={() => void undoSceneMove()}>Undo</button>
+            </p>}
             <SceneBoard
               chapters={chapters}
+              acts={acts}
               scenes={scenes}
-              offline={offline}
+              placeholders={placeholders}
+              projectId={projectId}
+              offline={offline || disconnected}
+              moving={movingScene}
               onAdd={addScene}
               onUpdate={updateScene}
               onDelete={(scene) => void deleteScene(scene)}
-              onMove={(chapterId, sceneIds) => void reorderScenes(chapterId, sceneIds)}
+              onMove={(chapterId, sceneIds, movedId) => void reorderScenes(chapterId, sceneIds, movedId)}
+              onMoveAcross={(scene, chapterId, beforePassageIndex) => void moveAcrossChapters(scene, chapterId, beforePassageIndex)}
+              onOpen={openScene}
             />
+            </>
           ) : <div className="screen-message">Loading scene plans…</div>
         ) : view === "search" ? (
           <SearchPanel
             chapters={chapters}
             currentChapter={searchText}
             onReplaced={(id, info, content) => {
-              onSaved(id, info);
+              onSaved(id, info, true);
               setLive((current) => ({ ...current, [id]: info.word_count }));
               setSearchText((current) => current?.id === id ? { ...current, content, version: info.version } : current);
             }}
@@ -810,13 +1308,34 @@ export function ProjectView({ projectId, chapterId }: Props) {
             key={selected.id}
             chapterId={selected.id}
             title={selected.title}
+            knownVersion={selected.version}
             onWords={onWords}
             onSaved={onSaved}
             onStatus={onStatus}
             historyOpen={historyOpen}
             onCloseHistory={closeHistory}
+            notesOpen={notesOpen}
+            offline={offline || disconnected}
+            onOpenNotes={() => {
+              setHistoryOpen(false);
+              setCheckOpen(false);
+              setPeek(null);
+              setScenePeek(null);
+              setNotesOpen(true);
+            }}
+            onCloseNotes={() => setNotesOpen(false)}
             entries={entries}
             onOpenLink={openLink}
+            scenes={labelSnapshot?.chapterId === selected.id ? labelSnapshot.scenes : null}
+            sceneBaseline={labelSnapshot?.chapterId === selected.id ? labelSnapshot.baseline : null}
+            sceneLabelsOn={sceneLabelsOn}
+            onOpenScene={(scene) => {
+              setHistoryOpen(false);
+              setNotesOpen(false);
+              setCheckOpen(false);
+              setPeek(null);
+              setScenePeek(scene.id);
+            }}
             grammarOn={grammarOn}
             dialect={dialect}
             readOnly={readOnly}
@@ -855,7 +1374,121 @@ export function ProjectView({ projectId, chapterId }: Props) {
           />
         )}
 
+        {view === "write" && scenePeek !== null && (() => {
+          const scene = scenes?.find((item) => item.id === scenePeek);
+          if (!scene) return null;
+          return (
+            <aside className="history peek" aria-label={`Scene: ${scene.title}`}>
+              <header className="history-head">
+                <h2 className="history-title">Scene</h2>
+                <span className="desk-spacer" />
+                <button className="icon-btn" aria-label="Close" title="Close" onClick={() => setScenePeek(null)}>
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+                </button>
+              </header>
+              <div className="history-body">
+                <h3 className="peek-name">{scene.title}</h3>
+                {(scene.pov || scene.location) && <p className="peek-aka">{[scene.pov, scene.location].filter(Boolean).join(" · ")}</p>}
+                <div className="peek-body">{scene.summary.trim() || <span className="peek-empty">No notes yet.</span>}</div>
+                <button className="btn btn-lamp" onClick={() => setView("scenes")}>Open Scenes</button>
+              </div>
+            </aside>
+          );
+        })()}
+
         {exportOpen && <ExportDialog detail={detail} onClose={() => setExportOpen(false)} />}
+        {milestonesOpen && <MilestonesDialog
+          milestones={milestones}
+          loadError={milestonesError}
+          onCreate={async (name, note) => {
+            const active = view === "write" && selected ? {
+              id: selected.id,
+              save: async () => {
+                if (!editorControls.current?.saveForMilestone || save.state === "loading") {
+                  throw new Error("Wait for this chapter to finish opening, then try again.");
+                }
+                await editorControls.current.saveForMilestone();
+              },
+            } : null;
+            await createMilestone(projectId, name, note, active);
+            await refreshMilestones();
+          }}
+          onChanged={refreshMilestones}
+          onCompare={(milestone) => {
+            const text = view === "write" && selected && save.state !== "loading" && save.state !== "error"
+              ? editorControls.current?.text() : undefined;
+            setComparison({ milestone, activeText: text !== undefined && selected ? { id: selected.id, text } : null });
+            setMilestonesOpen(false);
+          }}
+          onExport={(milestone) => { setMilestonesOpen(false); setMilestoneExport(milestone); }}
+          onClose={() => setMilestonesOpen(false)}
+        />}
+        {milestoneExport && <ExportDialog detail={detail} milestone={milestoneExport} onClose={() => setMilestoneExport(null)} />}
+        {comparison && <MilestoneComparison
+          milestone={comparison.milestone}
+          detail={detail}
+          activeText={comparison.activeText}
+          onClose={() => setComparison(null)}
+          onRestore={async (chapter, oldId, title, text, expected) => {
+            if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Restoring a chapter needs a connection. Reconnect and try again.");
+            if (chapter && comparison.activeText?.id === chapter.id) {
+              const controls = editorControls.current;
+              if (!controls?.saveForMilestone || !controls.restore) throw new Error("Open this chapter and save it first.");
+              await controls.saveForMilestone();
+              if (controls.text() !== expected) throw new Error("This chapter changed while you were comparing. Close and compare again.");
+              await controls.restore(text);
+              await controls.saveForMilestone();
+              return;
+            }
+            const key = `${comparison.milestone.id}:${oldId}`;
+            let target = chapter ?? addedMilestoneChapters.current.get(key);
+            if (!target) {
+              target = await api.createChapter(projectId, title);
+              addedMilestoneChapters.current.set(key, target);
+            }
+            try {
+              const current = await flushForSceneMove(target);
+              if (chapter && current.content !== expected) throw new Error("This chapter changed while you were comparing. Close and compare again.");
+              if (!chapter && current.content === text) {
+                addedMilestoneChapters.current.delete(key);
+                return;
+              }
+              if (!chapter && current.content !== "") throw new Error(`The new chapter “${title}” has changed. Open it before trying again.`);
+              await forgetChapter(target.id);
+              await api.saveChapter(target.id, text, current.version, { snapshot: "restore" });
+              addedMilestoneChapters.current.delete(key);
+            } catch (error) {
+              if (!chapter) throw new Error(`The new chapter “${title}” was created but couldn't be filled. Try again or open it in your novel. ${error instanceof Error ? error.message : ""}`);
+              throw error;
+            } finally {
+              await forgetChapter(target.id);
+              load();
+            }
+          }}
+        />}
+        {changesOpen && (
+          <ClaudeChangesDialog
+            projectId={projectId}
+            chapterIds={new Set(chapters.map((c) => c.id))}
+            entryIds={new Set(entries.map((e) => e.id))}
+            onOpenChapter={(id, withHistory) => {
+              setChangesOpen(false);
+              openFromBoard(id);
+              if (withHistory) setHistoryOpen(true);
+            }}
+            onOpenEntry={(id) => {
+              setChangesOpen(false);
+              setEntryId(id);
+              setView("bible");
+            }}
+            onOpenScenes={() => {
+              setChangesOpen(false);
+              setView("scenes");
+            }}
+            onSeen={markSeen}
+            onClose={() => setChangesOpen(false)}
+          />
+        )}
         {shareOpen && (
           <ShareDialog
             projectId={projectId}
