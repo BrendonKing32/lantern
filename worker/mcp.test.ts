@@ -123,7 +123,6 @@ function env(overrides: Partial<Env> = {}): Env {
     ACCESS_TEAM_DOMAIN: "",
     ACCESS_AUD: "",
     DEV_BYPASS: "true",
-    MCP_REDIRECT_HOSTS: "claude.ai,claude.com",
     ...overrides,
   } as unknown as Env;
 }
@@ -158,16 +157,54 @@ describe("connector routing", () => {
     const e = env();
     expect(redirectAllowed(e, "https://claude.ai/api/mcp/auth_callback")).toBe(true);
     expect(redirectAllowed(e, "https://claude.com/api/mcp/auth_callback")).toBe(true);
+    expect(redirectAllowed(e, "https://chatgpt.com/connector_platform_oauth_redirect")).toBe(true);
     expect(redirectAllowed(e, "http://claude.ai/api/mcp/auth_callback")).toBe(false);
     expect(redirectAllowed(e, "https://claude.ai.evil.example/cb")).toBe(false);
     expect(redirectAllowed(e, "https://evil.example/cb")).toBe(false);
     expect(redirectAllowed(e, "not a url")).toBe(false);
+    expect(redirectAllowed(e, "https://chatgpt.com.evil.example/cb")).toBe(false);
+    expect(redirectAllowed(e, "https://user:pass@chatgpt.com/cb")).toBe(false);
+    expect(redirectAllowed(e, "https://chatgpt.com/cb#fragment")).toBe(false);
+    expect(redirectAllowed(env({ MCP_REDIRECT_HOSTS: "trusted.example" }), "https://chatgpt.com/cb")).toBe(false);
   });
 
-  it("accepts local callbacks only in local development", () => {
+  it("accepts unconfigured local callbacks only in local development", () => {
     expect(redirectAllowed(env({ DEV_BYPASS: undefined }), "http://localhost:6274/oauth/callback")).toBe(false);
     expect(redirectAllowed(env(), "http://localhost:6274/oauth/callback")).toBe(true);
     expect(redirectAllowed(env(), "http://127.0.0.1:6274/cb")).toBe(true);
+    expect(redirectAllowed(env(), "ftp://localhost:6274/cb")).toBe(false);
+  });
+
+  it("allows exact callbacks for other hosted and desktop clients in production", () => {
+    const e = env({
+      DEV_BYPASS: undefined,
+      MCP_REDIRECT_URIS: " https://client.example/oauth/callback , http://127.0.0.1:33418/ ",
+    });
+    expect(redirectAllowed(e, "https://client.example/oauth/callback")).toBe(true);
+    expect(redirectAllowed(e, "http://127.0.0.1:33418/")).toBe(true);
+    for (const uri of [
+      "https://client.example/other", "https://client.example/oauth/callback?other=1",
+      "http://127.0.0.1:33419/", "http://127.0.0.1:33418/other",
+      "http://127.0.0.1.evil.example:33418/", "http://localhost:33418/",
+    ]) expect(redirectAllowed(e, uri)).toBe(false);
+  });
+
+  it("compares configured callbacks exactly without URL normalization", () => {
+    for (const [configured, different] of [
+      ["http://127.0.0.1:33418", "http://127.0.0.1:33418/"],
+      ["https://client.example:443/cb", "https://client.example/cb"],
+      ["https://client.example/cb", "https://client.example:443/cb"],
+    ]) {
+      const e = env({ DEV_BYPASS: undefined, MCP_REDIRECT_HOSTS: "", MCP_REDIRECT_URIS: configured });
+      expect(redirectAllowed(e, configured)).toBe(true);
+      expect(redirectAllowed(e, different)).toBe(false);
+    }
+  });
+
+  it("never enables unsafe callback schemes through configuration", () => {
+    for (const uri of ["http://client.example/cb", "ftp://localhost/cb", "javascript:alert(1)", "https://user:pass@client.example/cb", "https://client.example/cb#fragment"]) {
+      expect(redirectAllowed(env({ MCP_REDIRECT_URIS: uri }), uri)).toBe(false);
+    }
   });
 
   it("treats every host but loopback as https", async () => {
@@ -328,12 +365,12 @@ async function pkce() {
 
 const send = (e: Env, path: string, init: RequestInit = {}) => worker.fetch(new Request(`${ORIGIN}${path}`, init), e, ctx());
 
-async function register(e: Env, redirect = REDIRECT) {
+async function register(e: Env, redirect = REDIRECT, name = "Claude") {
   const res = await send(e, "/oauth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      client_name: "Claude",
+      client_name: name,
       redirect_uris: [redirect],
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
@@ -361,10 +398,10 @@ function authorizeUrl(clientId: string, challenge: string, redirect = REDIRECT) 
 const cookiesFrom = (res: Response) =>
   res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
 
-async function signIn(e: Env, access?: "read" | "edit") {
-  const { client_id } = await register(e);
+async function signIn(e: Env, access?: "read" | "edit", redirect = REDIRECT, name = "Claude") {
+  const { client_id } = await register(e, redirect, name);
   const { verifier, challenge } = await pkce();
-  const consent = await send(e, authorizeUrl(client_id, challenge));
+  const consent = await send(e, authorizeUrl(client_id, challenge, redirect));
   expect(consent.status).toBe(200);
   const html = await consent.text();
   const handle = html.match(/name="handle" value="([^"]+)"/)?.[1] ?? "";
@@ -375,7 +412,7 @@ async function signIn(e: Env, access?: "read" | "edit") {
   });
   expect(approve.status).toBe(302);
   const back = new URL(approve.headers.get("location") ?? "");
-  expect(`${back.origin}${back.pathname}`).toBe(REDIRECT);
+  expect(`${back.origin}${back.pathname}`).toBe(redirect);
   expect(back.searchParams.get("state")).toBe("xyz");
   const token = await send(e, "/oauth/token", {
     method: "POST",
@@ -383,14 +420,19 @@ async function signIn(e: Env, access?: "read" | "edit") {
     body: new URLSearchParams({
       grant_type: "authorization_code",
       code: back.searchParams.get("code") ?? "",
-      redirect_uri: REDIRECT,
+      redirect_uri: redirect,
       client_id,
       code_verifier: verifier,
       resource: `${ORIGIN}/mcp`,
     }),
   });
   expect(token.status).toBe(200);
-  return { html, token: (await token.json()) as { access_token: string; refresh_token?: string; scope: string } };
+  return {
+    html,
+    csp: consent.headers.get("content-security-policy"),
+    clientId: client_id,
+    token: (await token.json()) as { access_token: string; refresh_token?: string; scope: string },
+  };
 }
 
 const rpc = (e: Env, token: string, body: object) =>
@@ -406,6 +448,41 @@ const rpc = (e: Env, token: string, body: object) =>
   });
 
 describe("connector sign-in", () => {
+  it.each([
+    ["Claude", REDIRECT],
+    ["ChatGPT", "https://chatgpt.com/connector_platform_oauth_redirect"],
+    ["Grok CLI", "http://127.0.0.1:4567/oauth/callback"],
+    ["Copilot in VS Code", "http://127.0.0.1:33418/"],
+    ["Another MCP client", "https://client.example/callback"],
+  ])("connects %s with the same permissions, refresh and MCP transport", async (name, redirect) => {
+    const e = env({ MCP_REDIRECT_URIS: redirect });
+    const { html, csp, clientId, token } = await signIn(e, "edit", redirect, name);
+    expect(html).toContain(`Connect ${name} to Lantern?`);
+    expect(csp).toContain(`form-action 'self' ${new URL(redirect).origin};`);
+    expect(token.scope.split(" ")).toEqual(expect.arrayContaining(["lantern:read", "lantern:write"]));
+    const init = await rpc(e, token.access_token, {
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name, version: "1" } },
+    });
+    expect(init.status).toBe(200);
+    const body = await init.json() as { result: { instructions: string } };
+    expect(body.result.instructions).toContain("AI draft");
+    expect(body.result.instructions).not.toContain("Claude");
+    const refresh = await send(e, "/oauth/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token", refresh_token: token.refresh_token!, client_id: clientId, resource: `${ORIGIN}/mcp`,
+      }),
+    });
+    expect(refresh.status).toBe(200);
+    const refreshed = await refresh.json() as { access_token: string };
+    const tools = await rpc(e, refreshed.access_token, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const list = await tools.json() as { result: { tools: { name: string; description?: string }[] } };
+    expect(list.result.tools.map((tool) => tool.name)).toContain("edit_chapter");
+    expect(list.result.tools.some((tool) => tool.description?.includes("Claude"))).toBe(false);
+  });
+
   it("publishes discovery documents", async () => {
     const e = env();
     const resource = await send(e, "/.well-known/oauth-protected-resource/mcp");
@@ -490,7 +567,7 @@ describe("connector sign-in", () => {
     expect(forged.headers.get("location")).toBeNull();
   });
 
-  it("refuses to send access anywhere but Claude", async () => {
+  it("refuses to send access to an unconfigured client", async () => {
     const e = env();
     const evil = "https://evil.example/callback";
     const { client_id } = await register(e, evil);

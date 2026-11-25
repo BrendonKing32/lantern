@@ -329,7 +329,7 @@ describe("scene connector", () => {
       base_versions: { from: 5, to: 0 },
     });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toBe("This chapter has a draft by Claude waiting for the author. Ask them to accept or discard it first.");
+    expect(textOf(result)).toBe("This chapter has an AI draft waiting for the author. Ask them to accept or discard it first.");
     expect(bucket.objects.get(KEY)).toBe(source);
     expect(bucket.objects.get(destKey)).toBe("Destination.\n\n***\n\nNo card.");
   });
@@ -512,7 +512,7 @@ describe("edit_chapter", () => {
 
   it("shows Claude the draft, and says so when reading the chapter", async () => {
     await call("append_to_chapter", { chapter_id: CH, base_version: 4, text: "Morning came." });
-    expect(textOf(await call("read_chapter", { chapter_id: CH }))).toContain("Claude's draft of this chapter is waiting");
+    expect(textOf(await call("read_chapter", { chapter_id: CH }))).toContain("An AI draft of this chapter is waiting");
     const read = textOf(await call("read_draft", { chapter_id: CH }));
     expect(read).toContain("draft version 1");
     expect(read).toContain("Morning came.");
@@ -606,7 +606,7 @@ describe("accepting or discarding Claude's draft", () => {
     })).status).toBe(200);
     expect(bucket.objects.get(KEY)).toBe(expectedText);
     expect(db.raw.prepare("SELECT summary FROM claude_changes WHERE action = 'accept_draft'").get())
-      .toEqual({ summary: "Accepted Claude's draft of “Arrival” (1 of 2 edits applied)" });
+      .toEqual({ summary: "Accepted the AI draft of “Arrival” (1 of 2 edits applied)" });
   });
 
   it("refuses a replay that differs from the reviewed text", async () => {
