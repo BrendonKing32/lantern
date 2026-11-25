@@ -189,6 +189,18 @@ describe("connector routing", () => {
     ]) expect(redirectAllowed(e, uri)).toBe(false);
   });
 
+  it("compares configured callbacks exactly without URL normalization", () => {
+    for (const [configured, different] of [
+      ["http://127.0.0.1:33418", "http://127.0.0.1:33418/"],
+      ["https://client.example:443/cb", "https://client.example/cb"],
+      ["https://client.example/cb", "https://client.example:443/cb"],
+    ]) {
+      const e = env({ DEV_BYPASS: undefined, MCP_REDIRECT_HOSTS: "", MCP_REDIRECT_URIS: configured });
+      expect(redirectAllowed(e, configured)).toBe(true);
+      expect(redirectAllowed(e, different)).toBe(false);
+    }
+  });
+
   it("never enables unsafe callback schemes through configuration", () => {
     for (const uri of ["http://client.example/cb", "ftp://localhost/cb", "javascript:alert(1)", "https://user:pass@client.example/cb", "https://client.example/cb#fragment"]) {
       expect(redirectAllowed(env({ MCP_REDIRECT_URIS: uri }), uri)).toBe(false);

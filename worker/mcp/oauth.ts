@@ -55,7 +55,7 @@ export function redirectAllowed(env: Env, redirectUri: string): boolean {
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return false;
   // Exact callbacks let desktop clients connect without trusting a whole host.
   const callbacks = (env.MCP_REDIRECT_URIS ?? "").split(",").map((uri) => uri.trim()).filter(Boolean);
-  if (callbacks.includes(url.href)) return true;
+  if (callbacks.includes(redirectUri)) return true;
   // Local development also accepts unconfigured loopback ports.
   if (env.DEV_BYPASS === "true" && loopback) return true;
   return url.protocol === "https:" && allowedRedirectHosts(env).includes(url.hostname.toLowerCase());
