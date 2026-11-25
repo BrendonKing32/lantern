@@ -224,7 +224,7 @@ The Worker is its own OAuth server (`worker/mcp/oauth.ts`, built on
 `/authorize`, which stays **behind Cloudflare Access** like the rest of the app, so you
 sign in exactly as you do now. Lantern then asks whether to allow the connection and
 names where access will be sent. It only ever sends tokens to the hosts in
-`MCP_REDIRECT_HOSTS` (`claude.ai`, `claude.com` and `chatgpt.com` by default), or to
+`MCP_REDIRECT_HOSTS` (`claude.ai`, `claude.com`, `chatgpt.com` and `grok.com` in `wrangler.toml`), or to
 exact callback URLs in `MCP_REDIRECT_URIS`. Other destinations are refused.
 Host entries allow HTTPS only. Exact URLs allow HTTPS, or HTTP on loopback for
 desktop clients; they don't allow wildcards, credentials or fragments.
@@ -246,8 +246,8 @@ unused for 30 days has to be approved again. Grants and tokens are kept in the
    Do **not** bypass `/authorize`: Access is what makes it yours. `/mcp` refuses any
    request without a valid token, and the other paths only issue tokens to a sign-in
    that went through `/authorize`.
-3. **Allow the client's callback.** Claude and ChatGPT's HTTPS hosts are already
-   allowed. For another hosted client, add its verified callback host to
+3. **Allow the client's callback.** Claude, ChatGPT and grok.com's HTTPS hosts are
+   already allowed. For another hosted client, add its verified callback host to
    `MCP_REDIRECT_HOSTS` in `wrangler.toml`, keeping the existing hosts you use.
    For a desktop client such as Grok CLI or VS Code, copy its exact `redirect_uri`
    from the browser's `/authorize` URL into `MCP_REDIRECT_URIS`, then redeploy.
@@ -263,7 +263,9 @@ unused for 30 days has to be approved again. Grants and tokens are kept in the
      Custom MCP access may need developer mode or workspace permission.
    - **Grok CLI:** run
      `grok mcp add --transport http lantern https://lantern.bkbuilds.dev/mcp`.
-     This is a Grok CLI connection, not a promise of custom connectors in grok.com.
+     This is a Grok CLI connection.
+   - **grok.com:** add a custom connector with that URL. Its callback,
+     `https://grok.com/connectors-oauth-exchange-code/`, is already allowed.
    - **Copilot in VS Code:** add an HTTP server in your user MCP configuration:
 
      ```json
