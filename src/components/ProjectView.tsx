@@ -397,7 +397,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const acts = detail?.acts ?? [];
   const [renamingActId, setRenamingActId] = useState<string | null>(null);
 
-  // Changes by Claude: how many this device hasn't shown yet, checked when the
+  // AI changes: how many this device hasn't shown yet, checked when the
   // novel opens and whenever the window comes back into focus.
   const seenKey = `lantern:claude-seen:${projectId}`;
   const lastSeen = () => {
@@ -1083,7 +1083,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             <details className="desk-more" ref={moreMenuRef}>
               <summary className={`btn btn-quiet${historyOpen || checkOpen || grammarOn ? " is-on" : ""}${unseenChanges > 0 ? " has-news" : ""}`}>
                 More
-                {unseenChanges > 0 && <span className="visually-hidden"> ({unseenChanges} new changes by Claude)</span>}
+                {unseenChanges > 0 && <span className="visually-hidden"> ({unseenChanges} new AI changes)</span>}
               </summary>
               <div className="desk-more-menu">
                 {phone && (
@@ -1138,7 +1138,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                       setChangesOpen(true);
                     }}
                   >
-                    Changes by Claude
+                    AI changes
                     {unseenChanges > 0 && (
                       <span className="news-count" aria-label={`${unseenChanges} new`}>{unseenChanges}</span>
                     )}

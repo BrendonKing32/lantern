@@ -24,7 +24,7 @@ export const WRITE_INSTRUCTIONS = `${ABOUT} ${MILESTONE_INSTRUCTIONS}
 
 This connection can also make changes. The manuscript is the author's own work, so:
 - Change only what the author asked for, and keep their voice. Don't tidy, restyle or "improve" anything else.
-- Your changes to chapter text never go straight into the chapter. They collect in Claude's draft of that \
+- Your changes to chapter text never go straight into the chapter. They collect in an AI draft of that \
 chapter, kept beside it until the author accepts or discards it in Lantern. Tell the author which chapters \
 have a draft waiting and what you changed.
 - Read a chapter before editing it, and pass the version read_chapter gives as base_version. Once a chapter \

@@ -152,72 +152,83 @@ The model and both limits are in `wrangler.toml` under `[vars]`. Costs shown are
 estimates from published prices; the Anthropic Console has the actual bill, and its
 spend limit is a second, independent cap.
 
-## Connect Claude chat (optional)
+## Connect an AI client (optional)
 
-Lantern can be added to claude.ai as a **custom connector**, so you can talk about the
-book in any Claude chat (web, desktop or phone) and Claude reads the real manuscript.
-When you connect, you choose what Claude may do:
+Lantern offers a remote MCP connector at `https://lantern.bkbuilds.dev/mcp`.
+Use Claude, ChatGPT, Grok CLI, Copilot in VS Code, or another client that supports
+**Streamable HTTP** and **OAuth**. The client reads your real manuscript; Lantern
+doesn't choose its model. Availability depends on your client's plan and settings.
+When you connect, you choose what it may do:
 
 - **Read only:** list novels, read outlines, chapters, scene cards, the story guide,
-  **History**, **Milestones** and margin notes, and search the text. Claude can read a
+  **History**, **Milestones** and margin notes, and search the text. The client can read a
   milestone's saved chapters and compare them with your current chapters. Milestones
   cannot be changed through the connector.
 - **Read and edit:** also draft changes to chapter text (exact passages, or adding to the
   end), add chapters, rename chapters and change synopses, and add or change story guide
-  and scene cards, and add margin notes to passages in the saved chapter. Claude can also
+  and scene cards, and add margin notes to passages in the saved chapter. The client can also
   use `move_scene` to move in-text scenes with their passages, keeping a copy in
-  **History**. Claude can't resolve or delete margin notes, and nothing can be deleted
+  **History**. It can't resolve or delete margin notes, and nothing can be deleted
   through the connector.
 
-Connector calls are part of your claude.ai plan and don't use the API key or the limits above.
+Connector calls use your AI client's plan or billing, not Lantern's Anthropic API key
+or the limits above. The built-in **Claude** panel and **Continuity check** still use
+Anthropic; this connector doesn't change them.
 
-### How Claude's edits are kept safe
+### How AI edits are kept safe
 
-- **Claude's writing stays separate from yours.** Claude never changes a chapter's text
+- **AI writing stays separate from yours.** A client never changes a chapter's text
   directly. Its edits, additions and the opening text of chapters it adds collect in
-  **Claude's draft** of that chapter, kept beside the chapter until you decide. Until
+  an **AI draft** of that chapter, kept beside the chapter until you decide. Until
   you accept it, your chapter, word counts, search and export show only your own text.
 - **You review, then accept or discard.** When a chapter you open has a draft waiting, a
   notice above the title says so. **Review draft** opens it beside the chapter: **Compare
-  with your chapter** shows the lines Claude added and removed, **Read draft** shows the
+  with your chapter** shows the lines the client added and removed, **Read draft** shows the
   whole text. **Accept draft** puts it in the chapter; **Discard draft** throws it away and
   leaves the chapter as it is. Both need a connection.
 - **Accepting can be undone.** The chapter's text goes into its History first, marked
-  **Before Claude's changes**; if that copy can't be kept, nothing is changed. Restore it
+  **Before AI changes**; if that copy can't be kept, nothing is changed. Restore it
   from History to undo. Unsaved writing is saved before the draft goes in. If the chapter
-  changed after Claude began the draft, Lantern applies the edits that still fit to your
+  changed after the AI draft began, Lantern applies the edits that still fit to your
   current text and shows the comparison. Edits that no longer fit are listed, not forced.
   Your newer writing stays in the chapter.
-- **Scene moves:** Claude can't move a scene while either chapter has a draft waiting.
+- **Scene moves:** clients can't move a scene while either chapter has a draft waiting.
   Accept or discard the draft first. You can still move scenes yourself.
-- **Nothing changes unseen.** Every edit names the version Claude read: the chapter's, or
+- **Nothing changes unseen.** Every edit names the version the client read: the chapter's, or
   the draft's once there is one. If that has changed since, the edit is refused and
-  Claude reads it again. If Claude edits the draft while you're reviewing it, accepting
+  the client reads it again. If a client edits the draft while you're reviewing it, accepting
   is refused until you've looked again.
-- **Small, exact changes.** Claude replaces passages it quotes exactly, and each must
+- **Small, exact changes.** Clients replace passages they quote exactly, and each must
   appear exactly once, so an edit can't land in the wrong place.
-- **Your streak is yours.** Claude's words don't count toward your daily words, even
+- **Your streak is yours.** AI words don't count toward your daily words, even
   once you accept them.
 - **An open chapter notices a new draft** within about 30 seconds, or at once when you
   come back to the window.
 - Story guide, scene and chapter-detail changes follow the same rules as edits in the app.
-- **See everything Claude changed** under **More → Changes by Claude**: one line per change,
+- **See every AI change** under **More → AI changes**: one line per change,
   newest first, with links to the chapter (where its draft waits) or its History, the story guide entry or the
   scenes. A dot on **More** and a count show changes this device hasn't shown you yet.
   The list keeps 180 days.
 
-To change what an existing connection may do, disconnect it in claude.ai and connect
+All clients share one pending **AI draft** per chapter and the same change log.
+Another client's edits must use the latest draft version too. Existing drafts and
+connections still work; older log entries may still name Claude.
+
+To change what an existing connection may do, disconnect it in your client and connect
 again, choosing the other option.
 
 ### How sign-in works
 
 The Worker is its own OAuth server (`worker/mcp/oauth.ts`, built on
-`@cloudflare/workers-oauth-provider`). When you connect, claude.ai opens
+`@cloudflare/workers-oauth-provider`). When you connect, your client opens
 `/authorize`, which stays **behind Cloudflare Access** like the rest of the app, so you
 sign in exactly as you do now. Lantern then asks whether to allow the connection and
 names where access will be sent. It only ever sends tokens to the hosts in
-`MCP_REDIRECT_HOSTS` (`claude.ai` and `claude.com`), so a link someone else crafts
-can't get a token. Tokens last an hour and Claude refreshes them; a connection
+`MCP_REDIRECT_HOSTS` (`claude.ai`, `claude.com` and `chatgpt.com` by default), or to
+exact callback URLs in `MCP_REDIRECT_URIS`. Other destinations are refused.
+Host entries allow HTTPS only. Exact URLs allow HTTPS, or HTTP on loopback for
+desktop clients; they don't allow wildcards, credentials or fragments.
+Tokens last an hour and clients refresh them; a connection
 unused for 30 days has to be approved again. Grants and tokens are kept in the
 `OAUTH_KV` namespace, hashed or encrypted.
 
@@ -226,7 +237,7 @@ unused for 30 days has to be approved again. Grants and tokens are kept in the
 1. **Deploy.** The first `npm run deploy` after this change creates the KV namespace
    `lantern-oauth-kv` by itself. If you deploy from GitHub, add **Workers KV Storage →
    Edit** to the API token first (see above).
-2. **Let Claude's servers reach the connector.** In **Zero Trust → Access → Applications**,
+2. **Let MCP clients reach the connector.** In **Zero Trust → Access → Applications**,
    add **Bypass** applications, each with an **Everyone** policy, for:
    - `lantern.bkbuilds.dev/mcp`
    - `lantern.bkbuilds.dev/oauth/*`
@@ -235,15 +246,45 @@ unused for 30 days has to be approved again. Grants and tokens are kept in the
    Do **not** bypass `/authorize`: Access is what makes it yours. `/mcp` refuses any
    request without a valid token, and the other paths only issue tokens to a sign-in
    that went through `/authorize`.
-3. **Add the connector.** In claude.ai, open **Settings → Connectors → Add custom
-   connector**, name it Lantern, and enter `https://lantern.bkbuilds.dev/mcp`.
-   Select **Connect**, sign in through Access, and choose **Allow**.
-4. In a chat, turn Lantern on from the tools menu and ask something like
+3. **Allow the client's callback.** Claude and ChatGPT's HTTPS hosts are already
+   allowed. For another hosted client, add its verified callback host to
+   `MCP_REDIRECT_HOSTS` in `wrangler.toml`, keeping the existing hosts you use.
+   For a desktop client such as Grok CLI or VS Code, copy its exact `redirect_uri`
+   from the browser's `/authorize` URL into `MCP_REDIRECT_URIS`, then redeploy.
+   Decode the query parameter first; for example, `http://127.0.0.1:33418/`.
+   Multiple URLs are comma-separated. The port, path and query must match; if the
+   client changes its callback port, update the URL and redeploy. Only allow
+   callbacks from clients you trust with your manuscript. If Lantern refuses the
+   callback, keep that browser tab open while you update the configuration, then
+   reload it after deploying.
+4. **Add Lantern in your client**, sign in through Access, and choose **Allow**:
+   - **Claude:** add a custom connector with `https://lantern.bkbuilds.dev/mcp`.
+   - **ChatGPT:** add a custom MCP app with that URL and OAuth authentication.
+     Custom MCP access may need developer mode or workspace permission.
+   - **Grok CLI:** run
+     `grok mcp add --transport http lantern https://lantern.bkbuilds.dev/mcp`.
+     This is a Grok CLI connection, not a promise of custom connectors in grok.com.
+   - **Copilot in VS Code:** add an HTTP server in your user MCP configuration:
+
+     ```json
+     {
+       "servers": {
+         "lantern": {
+           "type": "http",
+           "url": "https://lantern.bkbuilds.dev/mcp"
+         }
+       }
+     }
+     ```
+
+     Start the server and complete its OAuth prompt. This is separate from
+     configuring MCP for GitHub's cloud coding agent.
+5. In a chat, enable Lantern's tools and ask something like
    "Read chapter 3 of my novel and tell me where the pacing drags."
 
-To disconnect, remove the connector in claude.ai. To cut off every connection from
+To disconnect, remove Lantern in your client. To cut off every connection from
 the server side immediately, delete the keys in the `lantern-oauth-kv` namespace in
-the Cloudflare dashboard; claude.ai will ask you to connect again.
+the Cloudflare dashboard; clients will ask you to connect again.
 
 ### Trying it locally
 
@@ -255,7 +296,8 @@ npx wrangler dev --local-upstream 127.0.0.1:8787
 
 Point any MCP client that supports OAuth at `http://127.0.0.1:8787/mcp`. With
 `DEV_BYPASS` the consent page appears without an Access sign-in, and clients may call
-back to `localhost`, which production never allows. (Use `127.0.0.1`
+back to unconfigured loopback ports. Production requires exact desktop callbacks
+in `MCP_REDIRECT_URIS`. (Use `127.0.0.1`
 with `--local-upstream`: without it, the Worker sees the production hostname and
 sends you to https.)
 
@@ -293,11 +335,11 @@ app and private API protected.
   you've gained or removed since the latest milestone. **Compare with now** shows chapter changes,
   including unsaved writing on this device. Open a chapter to compare its text, restore it, or add a
   deleted chapter back. **Export** saves the milestone in any of the usual formats.
-  A Claude chat connection can read milestones but can't change them.
-- **Claude's draft:** **Review draft** compares pending connector edits with your chapter.
+  An MCP connection can read milestones but can't change them.
+- **AI draft:** **Review draft** compares pending connector edits from any AI client with your chapter.
   If you wrote more since the draft began, the comparison shows the edits that still fit
   your current text and lists the ones that don't. Save your writing, then accept the
-  fitting edits or discard the draft.
+  fitting edits or discard the draft. **More → AI changes** lists changes from all clients.
 - **On phones** (600px wide or less), chapters open for reading so the keyboard stays away.
   Tap **Edit** for a quick change and **Done** to go back to reading; saving works as usual.
   The other views, Search and the theme are under **More**, and **Chapters** opens the list.
@@ -335,7 +377,7 @@ app and private API protected.
 - **Notes:** select a passage and choose **More → Add note**, or press ⌘/Ctrl+Alt+M.
   Open **More → Notes** to jump to, edit, resolve or delete notes; resolved notes and notes
   whose passage is no longer found are listed separately. Highlights and margin markers open
-  notes beside the page, and Claude's notes are labelled. A Claude chat connection can read notes;
+  notes beside the page, and AI notes are labelled. An MCP connection can read notes;
   a read-and-edit connection can also add them. Notes need a connection and stay
   private: they are not part of the chapter, its word count, search, exports or review links.
 - **Search:** the **Search** view finds literal words or phrases across the whole book, including
@@ -405,7 +447,7 @@ app and private API protected.
   safely check for an unsaved draft.
 - **History:** the History button shows earlier versions of the open chapter. Lantern keeps a
   copy at most every 10 minutes while you write, plus one before every restore, whole-book
-  replacement and accepted draft by Claude, and before you replace another device's version. Pick one to read it, or switch to
+  replacement and accepted AI draft, and before you replace another device's version. Pick one to read it, or switch to
   **Compare with current draft** to see added and removed lines, including unsaved edits.
   Refresh the comparison to include newer edits. To revert the chapter, use **Restore this version**
   at the bottom of the panel; it asks before changing anything. Restoring

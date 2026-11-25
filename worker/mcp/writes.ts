@@ -1,11 +1,11 @@
 // Tools that change the novel. Registered only for connections the author
 // allowed to edit (the lantern:write scope).
 //
-// Chapter text: Claude never changes a chapter directly. Its edits go into
-// Claude's draft of the chapter, kept beside it until the author accepts or
-// discards it in the app. Every edit needs the version Claude read (the
+// Chapter text: MCP clients never change a chapter directly. Edits go into
+// an AI draft of the chapter, kept beside it until the author accepts or
+// discards it in the app. Every edit needs the version the client read (the
 // chapter's, or the draft's once there is one), so nothing changes unseen.
-// Claude's words don't count toward the author's daily words.
+// AI words don't count toward the author's daily words.
 //
 // Story guide, scenes and chapter details go through the app's own handlers,
 // so they follow exactly the same rules as edits made in the app.
@@ -112,7 +112,7 @@ export function applyEdits(
 }
 
 /**
- * Change Claude's draft of a chapter, starting one from the chapter's text if
+ * Change the AI draft of a chapter, starting one from the chapter's text if
  * there isn't one. The chapter itself is left alone. With a draft, baseVersion
  * is the draft's version; without one, the chapter's.
  */
@@ -188,7 +188,7 @@ const conflict = (current: number) =>
 
 const draftConflict = (current: number) =>
   new EditError(
-    `This chapter has a draft by Claude waiting for the author (draft version ${current}), and edits go into ` +
+    `This chapter has an AI draft waiting for the author (draft version ${current}), and edits go into ` +
       `that draft. Nothing was changed. Read it with read_draft and redo the edit against its text, with base_version ${current}.`,
   );
 
@@ -202,14 +202,14 @@ const listed = (parts: string[]) => {
 function saved(r: Awaited<ReturnType<typeof draftAsClaude>>) {
   const diff = r.word_count - r.previous_word_count;
   return text(
-    `${r.started ? "Started" : "Updated"} Claude's draft of “${r.title}”: draft version ${r.draft_version} ` +
+    `${r.started ? "Started" : "Updated"} the AI draft of “${r.title}”: draft version ${r.draft_version} ` +
       `(${r.word_count.toLocaleString("en-US")} words, ${diff >= 0 ? "+" : ""}${diff.toLocaleString("en-US")}). ` +
       "The chapter itself is unchanged until the author accepts the draft in Lantern; tell them it's waiting. " +
       `Use base_version ${r.draft_version} for any further edit to this chapter.`,
   );
 }
 
-/** Tool errors Claude should read and act on, rather than a generic failure. */
+/** Tool errors clients should read and act on, rather than a generic failure. */
 async function guarded<T>(fn: () => Promise<T>) {
   try {
     return await fn();
@@ -225,7 +225,7 @@ const baseVersion = z
   .number()
   .int()
   .min(0)
-  .describe("The chapter's version from read_chapter or, once Claude's draft of it exists, the draft version from read_draft or your last edit");
+  .describe("The chapter's version from read_chapter or, once an AI draft exists, the draft version from read_draft or your last edit");
 
 export function registerWriteTools(server: McpServer, env: Env) {
   server.registerTool(
@@ -270,7 +270,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
     {
       title: "Edit a chapter",
       description:
-        "Replace exact passages in a chapter's text. The change goes into Claude's draft of the chapter, which " +
+        "Replace exact passages in a chapter's text. The change goes into an AI draft of the chapter, which " +
         "the author accepts or discards in Lantern; the chapter itself doesn't change. The first edit starts the " +
         "draft from the chapter; later edits change the draft, so copy old_text from read_draft. Each old_text " +
         "must be copied exactly (same quotes, dashes and line breaks) and appear exactly once; new_text replaces " +
@@ -305,7 +305,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
       title: "Add to the end of a chapter",
       description:
         "Add text to the end of a chapter, after a blank line. Start the text with *** on its own line to " +
-        "begin a new scene. Like edit_chapter, it goes into Claude's draft of the chapter for the author to accept.",
+        "begin a new scene. Like edit_chapter, it goes into an AI draft of the chapter for the author to accept.",
       inputSchema: { chapter_id: z.string(), base_version: baseVersion, text: z.string().min(1) },
       annotations: ADDS,
     },
@@ -328,7 +328,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
       title: "Add a chapter",
       description:
         "Add a chapter at the end of a novel, optionally with its synopsis and opening text. The opening text " +
-        "goes into Claude's draft of the new chapter, for the author to accept.",
+        "goes into an AI draft of the new chapter, for the author to accept.",
       inputSchema: {
         novel_id: z.string(),
         title: z.string().min(1).max(200),
@@ -358,7 +358,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
           chapter_id: chapter.id, title: chapter.title, position: chapter.position + 1, version: chapter.version,
           ...(draft ? {
             draft_version: draft.draft_version, draft_word_count: draft.word_count,
-            note: "The opening text is in Claude's draft of the chapter, waiting for the author to accept it.",
+            note: "The opening text is in an AI draft of the chapter, waiting for the author to accept it.",
           } : {}),
         });
       }),
@@ -542,7 +542,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
           const from = snapshots.find((c) => c.chapter.id === from_chapter_id);
           if (!from) throw new HttpError(404, "Chapter not found");
           if (await draftRow(env, from_chapter_id) || (to_chapter_id && await draftRow(env, to_chapter_id))) {
-            throw new EditError("This chapter has a draft by Claude waiting for the author. Ask them to accept or discard it first.");
+            throw new EditError("This chapter has an AI draft waiting for the author. Ask them to accept or discard it first.");
           }
           if (from.chapter.version !== base_versions.from || from.textVersion !== base_versions.from) {
             throw conflict(from.chapter.version);

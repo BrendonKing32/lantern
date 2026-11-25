@@ -22,7 +22,7 @@ function render(chapterText: string, chapterChanged: boolean, blockedBy: string 
 describe("Claude's draft review", () => {
   it("shows failed quotes and the number of applicable edits", () => {
     const html = render("old text and later writing", true);
-    expect(html).toContain("since Claude started this draft");
+    expect(html).toContain("since the AI draft began");
     expect(html).toContain("No longer in the chapter");
     expect(html).toContain("<q>gone</q>");
     expect(html).toContain("Accept 1 of 2 edits");
@@ -30,7 +30,7 @@ describe("Claude's draft review", () => {
 
   it("only offers discard when nothing applies", () => {
     const html = render("unrelated writing", true);
-    expect(html).toContain("None of Claude&#x27;s edits fit");
+    expect(html).toContain("None of the AI edits fit");
     expect(html).toContain("Discard draft");
     expect(html).not.toContain("Accept 0 of 2 edits");
   });

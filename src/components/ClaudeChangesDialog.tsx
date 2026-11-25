@@ -110,14 +110,14 @@ export function ClaudeChangesDialog({
       <div className="share-dialog-body">
         <header className="share-head">
           <div>
-            <h2 id="claude-changes-title">Changes by Claude</h2>
+            <h2 id="claude-changes-title">AI changes</h2>
             <p>
-              What Claude changed in this novel through the connector. Changes to a chapter's text wait in
-              Claude's draft of that chapter until you accept them; open the chapter to review it. When you accept
+              What AI clients changed in this novel through the connector. Changes to a chapter's text wait in
+              an AI draft of that chapter until you accept them; open the chapter to review it. When you accept
               a draft, the previous text is kept in the chapter's History, where you can restore it.
             </p>
           </div>
-          <button className="icon-btn" aria-label="Close changes by Claude" onClick={onClose}>
+          <button className="icon-btn" aria-label="Close AI changes" onClick={onClose}>
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
           </button>
         </header>
@@ -126,7 +126,7 @@ export function ClaudeChangesDialog({
         {!error && changes === null && <p className="share-note">Loading…</p>}
         {changes?.length === 0 && (
           <p className="share-note">
-            Claude hasn't changed anything in this novel yet. To let it, connect Lantern in claude.ai and choose
+            No AI client has changed this novel yet. To let one, connect Lantern in your MCP client and choose
             Read and edit.
           </p>
         )}

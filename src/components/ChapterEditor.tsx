@@ -94,7 +94,7 @@ function locate(doc: string, quote: string): [number, number] | null {
   return head ? [head.index, head.index + head[0].length] : null;
 }
 
-/** How often an open chapter checks for changes saved elsewhere (another device) and for Claude's draft. */
+/** How often an open chapter checks for changes saved elsewhere (another device) and for an AI draft. */
 const REFRESH_INTERVAL = 30_000;
 
 const SAVE_DELAY = 1200;
@@ -595,7 +595,7 @@ export function ChapterEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapterId, schedule]);
 
-  // Claude's draft of this chapter, if the connector has made one. It sits
+  // The AI draft of this chapter, if the connector has made one. It sits
   // beside the chapter and never changes the text on screen by itself.
   const refreshDraft = async () => {
     try {
@@ -754,12 +754,12 @@ export function ChapterEditor({
   };
 
   const draftFailed = (e: unknown, action: string) => {
-    if (isNetworkError(e)) setDraftError(`${action} Claude's draft needs a connection. Your chapter hasn't changed.`);
+    if (isNetworkError(e)) setDraftError(`${action} the AI draft needs a connection. Your chapter hasn't changed.`);
     else setDraftError(describeError(e));
     if (e instanceof ApiError && (e.status === 404 || e.data?.code === "draft_changed")) void refreshDraft();
   };
 
-  // Put Claude's draft in the chapter. Unsaved writing is saved first, so the
+  // Put the AI draft in the chapter. Unsaved writing is saved first, so the
   // server can keep it in History before the draft replaces it.
   const acceptDraft = async (mode: "as-drafted" | "replayed", expectedText: string) => {
     const d = claudeDraft;
@@ -809,7 +809,7 @@ export function ChapterEditor({
       void drafts.clearOwned(chapterId, draftGeneration.current);
       setInitialDoc(res.content);
       setEditorKey((k) => k + 1);
-      // Claude's words aren't this session's writing.
+      // AI words aren't this session's writing.
       window.clearTimeout(wordCountTimer.current);
       wordCountTimer.current = undefined;
       const words = countWords(res.content);
@@ -895,7 +895,7 @@ export function ChapterEditor({
       {conflict && (
         <div className="conflict" role="alert">
           <p>
-            <strong>This chapter was saved somewhere else</strong> (on another device, or by Claude) while
+            <strong>This chapter was saved somewhere else</strong> (on another device, or through an AI connection) while
             you were writing here.
             The other version has {countWords(conflict.content).toLocaleString()} words.
           </p>
@@ -912,7 +912,7 @@ export function ChapterEditor({
       {claudeDraft && !draftOpen && (
         <div className="claude-draft-notice" role="status">
           <p>
-            <strong>Claude's draft</strong> of this chapter is waiting
+            <strong>AI draft</strong> of this chapter is waiting
             ({claudeDraft.word_count.toLocaleString()} words). It isn't part of your chapter until you accept it.
           </p>
           <button className="btn" onClick={openDraft}>

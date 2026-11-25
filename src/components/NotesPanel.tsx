@@ -101,7 +101,7 @@ export function NotesPanel({ chapterId, title, open: isOpen, text, notes, onNote
   const resolved = notes.filter((n) => n.resolved_at);
   const renderNote = (note: MarginNote, foundPassage: boolean) => (
     <li key={note.id} ref={selected === note.id ? selectedRef : undefined} className={`margin-note${selected === note.id ? " is-selected" : ""}`}>
-      {note.author === "claude" && <span className="history-meta">Claude</span>}
+      {note.author === "claude" && <span className="history-meta">AI</span>}
       <blockquote>{note.quote}</blockquote>
       {editing === note.id ? (
         <form onSubmit={(e) => { e.preventDefault(); save(); }}>

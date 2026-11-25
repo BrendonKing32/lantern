@@ -88,7 +88,7 @@ export async function writeChapter(
     if (current.version !== baseVersion) throw new HttpError(409, "conflict", { version: current.version });
     if (options.draftVersion !== undefined) {
       const draft = await env.DB.prepare("SELECT version FROM claude_drafts WHERE chapter_id = ?").bind(row.id).first<{ version: number }>();
-      if (draft?.version !== options.draftVersion) throw new HttpError(409, "Claude changed this draft while you were reviewing it. Look it over again, then accept it.", { code: "draft_changed" });
+      if (draft?.version !== options.draftVersion) throw new HttpError(409, "An AI client changed this draft while you were reviewing it. Look it over again, then accept it.", { code: "draft_changed" });
     }
     throw new HttpError(409, "Chapter or scene list is out of date; reload and try again");
   }

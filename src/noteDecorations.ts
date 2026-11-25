@@ -16,7 +16,7 @@ class NoteMarker extends GutterMarker {
       button.type = "button";
       button.className = "cm-note-marker";
       button.textContent = "●";
-      button.setAttribute("aria-label", `Open ${note.author === "claude" ? "Claude's note" : "note"}`);
+      button.setAttribute("aria-label", `Open ${note.author === "claude" ? "AI note" : "note"}`);
       button.addEventListener("click", () => this.open(note.id));
       wrap.append(button);
     }
