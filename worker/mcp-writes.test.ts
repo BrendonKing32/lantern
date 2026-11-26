@@ -5,6 +5,7 @@ import worker, { type Env } from "./index";
 import { createMcpServer } from "./mcp/server";
 import { applyEdits, EditError } from "./mcp/writes";
 import { createChapterNote } from "./handlers/notes";
+import { READ_LIMIT } from "./mcp/tools";
 import { memoryR2, sqliteD1 } from "./testing/d1";
 
 // The write tools against real SQLite with Lantern's migrations applied.
@@ -150,6 +151,18 @@ describe("milestone connector", () => {
       ]);
       const copied = await client.callTool({ name: "read_milestone", arguments: { milestone_id: "new", chapter_id: CH } });
       expect(textOf(copied)).toBe("The earlier text.\r\n");
+      const milestoneKey = `projects/${NOVEL}/milestones/new/${CH}.md`;
+      const savedText = bucket.objects.get(milestoneKey)!;
+      bucket.objects.set(milestoneKey, "x".repeat(READ_LIMIT + 1));
+      const firstSlice = await client.callTool({
+        name: "read_milestone", arguments: { milestone_id: "new", chapter_id: CH },
+      });
+      expect(textOf(firstSlice)).toContain(`continue with offset ${READ_LIMIT}`);
+      const finalSlice = await client.callTool({
+        name: "read_milestone", arguments: { milestone_id: "new", chapter_id: CH, offset: READ_LIMIT },
+      });
+      expect(textOf(finalSlice).endsWith("x")).toBe(true);
+      bucket.objects.set(milestoneKey, savedText);
       expect(textOf(await client.callTool({ name: "read_milestone", arguments: { milestone_id: "new", chapter_id: "deleted" } })))
         .toBe("A deleted chapter.");
       for (const args of [
@@ -200,8 +213,16 @@ describe("margin note connector", () => {
     const tools = await readOnly.listTools();
     expect(tools.tools.find((t) => t.name === "list_margin_notes")?.annotations?.readOnlyHint).toBe(true);
     const listed = JSON.parse(textOf(await readOnly.callTool({ name: "list_margin_notes", arguments: { chapter_id: CH } })));
-    expect(listed).toEqual([expect.objectContaining({ id: note.id, author: "writer", body: "Open", resolved: false, passage_found: true })]);
-    const all = JSON.parse(textOf(await readOnly.callTool({ name: "list_margin_notes", arguments: { novel_id: NOVEL, include_resolved: true } })));
+    expect(listed.notes).toEqual([expect.objectContaining({ id: note.id, author: "writer", body: "Open", resolved: false, passage_found: true })]);
+    const firstPage = JSON.parse(textOf(await readOnly.callTool({
+      name: "list_margin_notes", arguments: { novel_id: NOVEL, include_resolved: true, limit: 1 },
+    })));
+    expect(firstPage.notes).toHaveLength(1);
+    expect(firstPage.next_offset).toBe(1);
+    const secondPage = JSON.parse(textOf(await readOnly.callTool({
+      name: "list_margin_notes", arguments: { novel_id: NOVEL, include_resolved: true, limit: 1, offset: firstPage.next_offset },
+    })));
+    const all = [...firstPage.notes, ...secondPage.notes];
     expect(all).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: note.id, passage_found: true }),
       expect.objectContaining({ id: orphan.id, author: "claude", resolved: true, passage_found: false }),
@@ -212,7 +233,9 @@ describe("margin note connector", () => {
     db.raw.prepare("INSERT INTO projects (id, title, created_at, updated_at) VALUES ('other', 'Other', '', '')").run();
     expect((await readOnly.callTool({ name: "list_margin_notes", arguments: { novel_id: "other", chapter_id: CH } })).isError).toBe(true);
     db.raw.prepare("UPDATE chapters SET deleted_at = ? WHERE id = ?").run("2026-11-02", CH);
-    expect(JSON.parse(textOf(await readOnly.callTool({ name: "list_margin_notes", arguments: { novel_id: NOVEL } })))).toEqual([]);
+    expect(JSON.parse(textOf(await readOnly.callTool({ name: "list_margin_notes", arguments: { novel_id: NOVEL } })))).toMatchObject({
+      notes: [], next_offset: null,
+    });
     expect((await readOnly.callTool({ name: "list_margin_notes", arguments: { chapter_id: CH } })).isError).toBe(true);
   });
 
@@ -225,12 +248,12 @@ describe("margin note connector", () => {
     const second = await createChapterNote(env, CH, { quote: "tower waited", prefix: "", suffix: "", body: "Second" }, "writer");
     const third = await createChapterNote(env, "ch-2", { quote: "tower waited", prefix: "", suffix: "", body: "Third" }, "claude");
     const listed = JSON.parse(textOf(await (await connect(false)).callTool({ name: "list_margin_notes", arguments: { novel_id: NOVEL } })));
-    expect(listed).toEqual(expect.arrayContaining([
+    expect(listed.notes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: first.id, passage_found: true }),
       expect.objectContaining({ id: second.id, passage_found: true }),
       expect.objectContaining({ id: third.id, passage_found: true }),
     ]));
-    expect(listed).toHaveLength(3);
+    expect(listed.notes).toHaveLength(3);
   });
 
   it("refuses a move-locked chapter and an intervening move token", async () => {
@@ -683,13 +706,52 @@ describe("append_to_chapter", () => {
 
 describe("create_chapter", () => {
   it("adds a chapter at the end with its synopsis, and its text as Claude's draft", async () => {
-    const r = await call("create_chapter", { novel_id: NOVEL, title: "The Storm", synopsis: "The light fails.", text: "Rain." });
+    const r = await call("create_chapter", {
+      novel_id: NOVEL, operation_id: "00000000-0000-4000-8000-000000000001",
+      title: "The Storm", synopsis: "The light fails.", text: "Rain.",
+    });
     const made = JSON.parse(textOf(r));
     expect(made).toMatchObject({ title: "The Storm", position: 2, version: 0, draft_version: 1, draft_word_count: 1 });
+    const operation = db.raw.prepare("SELECT input_hash FROM mcp_chapter_creations WHERE operation_id = ?")
+      .get("00000000-0000-4000-8000-000000000001") as { input_hash: string };
+    expect(operation.input_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(operation.input_hash).not.toContain("Rain.");
     expect(bucket.objects.get(`projects/${NOVEL}/chapters/${made.chapter_id}.md`)).toBe("");
     expect(bucket.objects.get(`projects/${NOVEL}/chapters/${made.chapter_id}/claude-draft.md`)).toBe("Rain.\n");
     const row = db.raw.prepare("SELECT synopsis, position FROM chapters WHERE id = ?").get(made.chapter_id);
     expect(row).toEqual({ synopsis: "The light fails.", position: 1 });
+  });
+
+  it("returns the same chapter on retry and rejects reusing an operation ID for different input", async () => {
+    const args = {
+      novel_id: NOVEL, operation_id: "00000000-0000-4000-8000-000000000002",
+      title: "The Storm", synopsis: "Rain.", text: "It rained.",
+    };
+    const first = await call("create_chapter", args);
+    const repeated = await call("create_chapter", args);
+    expect(JSON.parse(textOf(repeated))).toEqual(JSON.parse(textOf(first)));
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM chapters WHERE project_id = ?").get(NOVEL)).toEqual({ n: 2 });
+    const conflict = await call("create_chapter", { ...args, title: "Another chapter" });
+    expect(conflict.isError).toBe(true);
+    expect(textOf(conflict)).toContain("already used with different chapter details");
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM chapters WHERE project_id = ?").get(NOVEL)).toEqual({ n: 2 });
+  });
+
+  it("resumes a pending creation after the opening draft write fails", async () => {
+    const args = {
+      novel_id: NOVEL, operation_id: "00000000-0000-4000-8000-000000000003",
+      title: "The Storm", synopsis: "Rain.", text: "It rained.",
+    };
+    bucket.failPuts = /claude-draft/;
+    const failed = await call("create_chapter", args);
+    expect(failed.isError).toBe(true);
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM chapters WHERE project_id = ?").get(NOVEL)).toEqual({ n: 2 });
+    bucket.failPuts = null;
+    const retried = await call("create_chapter", args);
+    expect(retried.isError).toBeFalsy();
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM chapters WHERE project_id = ?").get(NOVEL)).toEqual({ n: 2 });
+    const chapterId = JSON.parse(textOf(retried)).chapter_id as string;
+    expect(bucket.objects.get(`projects/${NOVEL}/chapters/${chapterId}/claude-draft.md`)).toBe("It rained.\n");
   });
 });
 
@@ -840,7 +902,10 @@ describe("Changes by Claude", () => {
   it("records new chapters, and nothing for refused edits", async () => {
     await call("edit_chapter", { chapter_id: CH, base_version: 1, edits: [{ old_text: "Mara", new_text: "Nell" }] });
     expect(await changes()).toEqual([]);
-    await call("create_chapter", { novel_id: NOVEL, title: "The Storm", synopsis: "Rain.", text: "It rained hard." });
+    await call("create_chapter", {
+      novel_id: NOVEL, operation_id: "00000000-0000-4000-8000-000000000004",
+      title: "The Storm", synopsis: "Rain.", text: "It rained hard.",
+    });
     const [made] = await changes();
     expect(made).toMatchObject({ summary: "Added the chapter “The Storm”", detail: "Chapter 2, 3 words drafted, with a synopsis" });
   });
