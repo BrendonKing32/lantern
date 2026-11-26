@@ -16,7 +16,7 @@
   "author": "",
   "license": "UNLICENSED",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0",
+    "@anthropic-ai/sdk": "^1.14.0",
     "@cloudflare/workers-oauth-provider": "^1.2.4",
     "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/lang-markdown": "^6.5.2",
@@ -30,7 +30,7 @@
     "@lezer/highlight": "^1.2.5",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@uiw/react-codemirror": "^4.25.12",
-    "diff": "^8.0.3",
+    "diff": "^9.0.0",
     "dotenv": "^18.0.10",
     "fflate": "^0.8.3",
     "harper.js": "^3.0.0",
