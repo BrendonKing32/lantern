@@ -88,6 +88,9 @@ export function ProjectList() {
         <h1 className="shelf-name">Lantern</h1>
         <span className="desk-spacer" />
         <ThemePicker />
+        <a className="btn btn-quiet shelf-changelog-link" href="#/changelog">
+          Changelog
+        </a>
         {!offline && (
           <button className="btn btn-quiet" onClick={() => setClaudeOpen(true)}>
             Claude

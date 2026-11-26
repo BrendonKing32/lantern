@@ -33,6 +33,19 @@ async function failure(p: Promise<unknown>): Promise<ApiError> {
 }
 
 describe("request validation", () => {
+  it("validates the private changelog response", async () => {
+    const entry = {
+      number: 62,
+      title: "Improve contrast",
+      merged_at: "2026-11-21T21:52:19Z",
+      url: "https://github.com/BrendonKing32/lantern/pull/62",
+    };
+    fetchMock.mockResolvedValueOnce(json([entry])).mockResolvedValueOnce(json([{ ...entry, merged_at: null }]));
+    await expect(api.changelog()).resolves.toEqual([entry]);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/changelog");
+    expect((await failure(api.changelog())).data?.detail).toContain("merged_at");
+  });
+
   it("requests and validates notes and their mutations", async () => {
     const note = { id: "n", project_id: "p", chapter_id: "c", quote: "words", prefix: "", suffix: "",
       body: "Private", author: "claude", resolved_at: null, created_at: "now", updated_at: "now" };

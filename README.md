@@ -86,6 +86,21 @@ The values in `wrangler.toml` (database ID, Access team domain, and AUD tag) are
 identifiers, not secrets, so they're fine to commit. Real secrets go in
 GitHub secrets or `wrangler secret put`, never in the repo.
 
+## Changelog
+
+The shelf's **Changelog** lists pull requests merged into `main`, newest first,
+directly from GitHub. It needs a connection, and opening a pull request requires
+GitHub access to this private repository.
+
+1. Create a fine-grained GitHub personal access token limited to this repository
+   with **Pull requests: Read-only** permission.
+2. Run `npx wrangler secret put GITHUB_CHANGELOG_TOKEN` and paste the token.
+   For local development, put it in the ignored `.dev.vars` file instead.
+
+The Worker keeps the token server-side and serves the PR history only through
+the Access-protected private API. Without the secret, the page explains that
+the changelog needs configuring. Rotate the token when it expires.
+
 ## Backups
 
 Lantern writes a daily backup to a separate, private R2 bucket. Before the first

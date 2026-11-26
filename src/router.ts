@@ -4,11 +4,13 @@ export interface Route {
   projectId?: string;
   chapterId?: string;
   shareToken?: string;
+  changelog?: boolean;
 }
 
-function parse(hash: string): Route {
-  const share = window.location.pathname.match(/^\/share\/([^/]+)\/?$/);
+export function parseRoute(pathname: string, hash: string): Route {
+  const share = pathname.match(/^\/share\/([^/]+)\/?$/);
   if (share) return { shareToken: decodeURIComponent(share[1]) };
+  if (/^#\/changelog\/?$/.test(hash)) return { changelog: true };
   const m = hash.match(/^#\/p\/([^/]+)(?:\/([^/]+))?/);
   return m ? { projectId: m[1], chapterId: m[2] } : {};
 }
@@ -24,9 +26,10 @@ export function navigate(projectId?: string, chapterId?: string, replace = false
 }
 
 export function useRoute(): Route {
-  const [route, setRoute] = useState(() => parse(window.location.hash));
+  const currentRoute = () => parseRoute(window.location.pathname, window.location.hash);
+  const [route, setRoute] = useState(currentRoute);
   useEffect(() => {
-    const onChange = () => setRoute(parse(window.location.hash));
+    const onChange = () => setRoute(currentRoute());
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
