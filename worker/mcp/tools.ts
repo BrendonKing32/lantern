@@ -10,19 +10,21 @@ import type { Env } from "../env";
 import { listActs } from "../handlers/acts";
 import { BIBLE_COLS, toEntry, type BibleRow } from "../handlers/bible";
 import { draftRow, readClaudeDraft } from "../handlers/claudeDrafts";
-import { listChapterNotes } from "../handlers/notes";
 import { sceneListing } from "../handlers/scenes";
 import { HttpError } from "../http";
+import { DATA_OUTPUT_SCHEMA, dataResult, registerConnectorTool } from "./telemetry";
 
-/** Longest slice of a chapter returned by one read_chapter call. */
+/** Longest text slice returned by one chapter or history read. */
 export const READ_LIMIT = 100_000;
 const SEARCH_LIMIT = 50;
+const SEARCH_CHAPTER_LIMIT = 20;
+const SEARCH_BYTE_LIMIT = 20 * 1024 * 1024;
 const PREVIEW = 300;
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
-const data = (value: unknown) => text(JSON.stringify(value, null, 1));
+const data = dataResult;
 
 async function chapters(env: Env, projectId: string): Promise<ChapterMeta[]> {
   const { results } = await env.DB.prepare(
@@ -93,12 +95,14 @@ export function findMatches(
 }
 
 export function registerTools(server: McpServer, env: Env) {
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "list_milestones",
     {
       title: "List milestones",
       description: "List a novel's completed, read-only milestones, newest first.",
       inputSchema: { novel_id: z.string().describe("From list_novels") },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: READ_ONLY,
     },
     async ({ novel_id }) => {
@@ -111,18 +115,22 @@ export function registerTools(server: McpServer, env: Env) {
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "read_milestone",
     {
       title: "Read a milestone",
-      description: "List the chapters in a completed milestone, or read one chapter's copied text. Compare it with read_chapter to see what changed.",
+      description:
+        "List the chapters in a completed milestone, or read one chapter's copied text. Compare it with read_chapter " +
+        "to see what changed. Long text comes back in slices; pass the offset the reply gives to read on.",
       inputSchema: {
         milestone_id: z.string().describe("From list_milestones"),
         chapter_id: z.string().optional().describe("From the milestone's chapter list"),
+        offset: z.number().int().min(0).optional().describe("Character offset to start from (default 0)"),
       },
       annotations: READ_ONLY,
     },
-    async ({ milestone_id, chapter_id }) => {
+    async ({ milestone_id, chapter_id, offset = 0 }) => {
       const milestone = await env.DB.prepare(
         `SELECT project_id FROM milestones WHERE id = ? AND complete = 1
          AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)`,
@@ -141,47 +149,77 @@ export function registerTools(server: McpServer, env: Env) {
       if (!chapter) throw new HttpError(404, "Chapter not found in this milestone");
       const object = await env.BUCKET.get(milestoneKey(milestone.project_id, milestone_id, chapter_id));
       if (!object) throw new HttpError(404, "The milestone chapter's text is missing");
-      return text(await object.text());
+      const { slice, range } = sliced(await object.text(), offset);
+      return text(range ? `${range}\n\n${slice}` : slice);
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "list_margin_notes",
     {
       title: "List margin notes",
-      description: "Private margin notes on the saved chapter text, including whether each passage is still found.",
+      description:
+        "Private margin notes on the saved chapter text, including whether each passage is still found. " +
+        "Returns up to 50 notes by default (100 maximum); continue from next_offset.",
       inputSchema: {
         novel_id: z.string().optional().describe("From list_novels"),
         chapter_id: z.string().optional().describe("From get_outline"),
         include_resolved: z.boolean().optional().describe("Include resolved notes (default false)"),
+        limit: z.number().int().min(1).max(100).optional().describe("Notes per page (default 50, maximum 100)"),
+        offset: z.number().int().min(0).max(1000000).optional().describe("Number of notes to skip (default 0)"),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: READ_ONLY,
     },
-    async ({ novel_id, chapter_id, include_resolved = false }) => {
+    async ({ novel_id, chapter_id, include_resolved = false, limit = 50, offset = 0 }) => {
       if (!novel_id && !chapter_id) throw new HttpError(400, "Give novel_id or chapter_id.");
-      if (novel_id) await requireProject(env, novel_id);
-      const selected = chapter_id ? [await getChapterRow(env, chapter_id)] : await chapters(env, novel_id!);
-      if (novel_id && selected.some((chapter) => chapter.project_id !== novel_id)) {
+      const projectId = novel_id ? (await requireProject(env, novel_id)).id : undefined;
+      const chapter = chapter_id ? await getChapterRow(env, chapter_id) : undefined;
+      if (projectId && chapter && chapter.project_id !== projectId) {
         throw new HttpError(400, "That chapter isn't in that novel.");
       }
-      const notes = await Promise.all(selected.map(async (chapter) => {
-        const [content, open, resolved] = await Promise.all([
-          chapterText(env, chapter),
-          listChapterNotes(env, chapter.id, false),
-          include_resolved ? listChapterNotes(env, chapter.id, true) : Promise.resolve([]),
-        ]);
+      const { results } = await env.DB.prepare(
+        `SELECT n.id, n.project_id, n.chapter_id, n.quote, n.prefix, n.suffix, n.body, n.author,
+                n.resolved_at, n.created_at, n.updated_at
+           FROM margin_notes n JOIN chapters c ON c.id = n.chapter_id
+          WHERE c.deleted_at IS NULL AND c.project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)
+            ${chapter_id ? "AND n.chapter_id = ?" : "AND n.project_id = ?"}
+            ${include_resolved ? "" : "AND n.resolved_at IS NULL"}
+          ORDER BY n.created_at, n.id LIMIT ? OFFSET ?`,
+      ).bind(chapter_id ?? projectId, limit + 1, offset).all<{
+        id: string; project_id: string; chapter_id: string; quote: string; prefix: string; suffix: string;
+        body: string; author: string; resolved_at: string | null; created_at: string; updated_at: string;
+      }>();
+      const hasMore = results.length > limit;
+      const page = results.slice(0, limit);
+      const chaptersById = new Map<string, typeof page>();
+      for (const note of page) {
+        const group = chaptersById.get(note.chapter_id) ?? [];
+        group.push(note);
+        chaptersById.set(note.chapter_id, group);
+      }
+      const passageFound = new Map<string, boolean>();
+      for (const [id, notes] of chaptersById) {
+        const content = await chapterText(env, await getChapterRow(env, id));
         const findAnchor = createAnchorMatcher(content);
-        return [...open, ...resolved].map((note) => ({
+        for (const note of notes) passageFound.set(note.id, findAnchor(note) !== null);
+      }
+      return data({
+        notes: page.map((note) => ({
           ...note,
           resolved: note.resolved_at !== null,
-          passage_found: findAnchor(note) !== null,
-        }));
-      }));
-      return data(notes.flat());
+          passage_found: passageFound.get(note.id) ?? false,
+        })),
+        limit,
+        offset,
+        next_offset: hasMore ? offset + limit : null,
+      });
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "list_novels",
     {
       title: "List novels",
@@ -189,6 +227,7 @@ export function registerTools(server: McpServer, env: Env) {
         "List the novels on the Lantern shelf with their ids, chapter counts and word counts. " +
         "Start here to find a novel_id.",
       inputSchema: {},
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: READ_ONLY,
     },
     async () => {
@@ -204,7 +243,8 @@ export function registerTools(server: McpServer, env: Env) {
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "get_outline",
     {
       title: "Get a novel's outline",
@@ -215,6 +255,7 @@ export function registerTools(server: McpServer, env: Env) {
         "chapter (unassigned_scenes), " +
         "plus the novel's target length and English dialect.",
       inputSchema: { novel_id: z.string().describe("From list_novels") },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: READ_ONLY,
     },
     async ({ novel_id }) => {
@@ -261,7 +302,8 @@ export function registerTools(server: McpServer, env: Env) {
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "read_chapter",
     {
       title: "Read a chapter",
@@ -324,7 +366,8 @@ export function registerTools(server: McpServer, env: Env) {
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "read_draft",
     {
       title: "Read the AI draft of a chapter",
@@ -361,31 +404,65 @@ export function registerTools(server: McpServer, env: Env) {
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "search_book",
     {
       title: "Search a novel",
       description:
-        `Find a literal word or phrase across every chapter of a novel (up to ${SEARCH_LIMIT} matches, ` +
-        "with the line and surrounding text). Searches saved text only.",
+        `Find a literal word or phrase across up to ${SEARCH_CHAPTER_LIMIT} chapters per call (up to ${SEARCH_LIMIT} ` +
+        "matches, with the line and surrounding text). Searches saved text only. If next_offset is returned, " +
+        "continue with chapter_offset to search the next page; total counts matches in the scanned chapters.",
       inputSchema: {
         novel_id: z.string(),
         query: z.string().min(1).max(200),
         match_case: z.boolean().optional(),
+        chapter_offset: z.number().int().min(0).optional().describe("Chapter offset from get_outline (default 0)"),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: READ_ONLY,
     },
-    async ({ novel_id, query, match_case = false }) => {
+    async ({ novel_id, query, match_case = false, chapter_offset = 0 }) => {
       await requireProject(env, novel_id);
-      const list = await chapters(env, novel_id);
-      const books = await Promise.all(
-        list.map(async (chapter, i) => ({ chapter, number: i + 1, content: await chapterText(env, chapter) })),
-      );
-      return data(findMatches(books, query, match_case));
+      const allChapters = await chapters(env, novel_id);
+      const list = allChapters.slice(chapter_offset, chapter_offset + SEARCH_CHAPTER_LIMIT);
+      const matches: ReturnType<typeof findMatches>["matches"] = [];
+      let total = 0;
+      let bytesScanned = 0;
+      let chaptersScanned = 0;
+      for (let i = 0; i < list.length; i++) {
+        const chapter = list[i];
+        const object = await env.BUCKET.get(chapterKey(chapter.project_id, chapter.id));
+        const estimatedBytes = object?.size ?? 0;
+        if (chaptersScanned > 0 &&
+            (bytesScanned >= SEARCH_BYTE_LIMIT ||
+              (estimatedBytes > 0 && bytesScanned + estimatedBytes > SEARCH_BYTE_LIMIT))) break;
+        const content = object ? await object.text() : "";
+        const contentBytes = estimatedBytes || new TextEncoder().encode(content).length;
+        const result = findMatches(
+          [{ chapter, number: chapter_offset + i + 1, content }],
+          query,
+          match_case,
+          Math.max(0, SEARCH_LIMIT - matches.length),
+        );
+        total += result.total;
+        matches.push(...result.matches);
+        bytesScanned += contentBytes;
+        chaptersScanned++;
+      }
+      return data({
+        total,
+        matches,
+        chapter_offset,
+        chapters_scanned: chaptersScanned,
+        bytes_scanned: bytesScanned,
+        next_offset: chapter_offset + chaptersScanned < allChapters.length ? chapter_offset + chaptersScanned : null,
+      });
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "get_story_guide",
     {
       title: "Get the story guide",
@@ -396,6 +473,7 @@ export function registerTools(server: McpServer, env: Env) {
         novel_id: z.string(),
         kind: z.enum(BIBLE_KINDS as [string, ...string[]]).optional(),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: READ_ONLY,
     },
     async ({ novel_id, kind }) => {
@@ -419,7 +497,8 @@ export function registerTools(server: McpServer, env: Env) {
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "get_story_entry",
     {
       title: "Read a story guide entry",
@@ -428,6 +507,7 @@ export function registerTools(server: McpServer, env: Env) {
         novel_id: z.string(),
         entry: z.string().describe("The entry's id, name or alias"),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: READ_ONLY,
     },
     async ({ novel_id, entry }) => {
@@ -447,7 +527,8 @@ export function registerTools(server: McpServer, env: Env) {
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "list_history",
     {
       title: "List a chapter's saved versions",
@@ -455,6 +536,7 @@ export function registerTools(server: McpServer, env: Env) {
         "Earlier versions of a chapter kept in History, newest first (Lantern keeps one at most every " +
         "10 minutes while writing, and one before every restore or replacement).",
       inputSchema: { chapter_id: z.string() },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: READ_ONLY,
     },
     async ({ chapter_id }) => {
@@ -469,15 +551,22 @@ export function registerTools(server: McpServer, env: Env) {
     },
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "read_version",
     {
       title: "Read an earlier version",
-      description: `The text of one version from list_history (up to ${READ_LIMIT.toLocaleString("en-US")} characters).`,
-      inputSchema: { chapter_id: z.string(), version_id: z.string().describe("An id from list_history") },
+      description:
+        `The text of one version from list_history. Long versions come back in slices of ${READ_LIMIT.toLocaleString("en-US")} ` +
+        "characters; pass the offset the reply gives to read on.",
+      inputSchema: {
+        chapter_id: z.string(),
+        version_id: z.string().describe("An id from list_history"),
+        offset: z.number().int().min(0).optional().describe("Character offset to start from (default 0)"),
+      },
       annotations: READ_ONLY,
     },
-    async ({ chapter_id, version_id }) => {
+    async ({ chapter_id, version_id, offset = 0 }) => {
       const row = await getChapterRow(env, chapter_id);
       const snap = await env.DB.prepare(
         "SELECT id, version, word_count, reason, created_at FROM chapter_snapshots WHERE id = ? AND chapter_id = ?",
@@ -487,9 +576,10 @@ export function registerTools(server: McpServer, env: Env) {
       if (!snap) throw new HttpError(404, "That version isn't in this chapter's history");
       const obj = await env.BUCKET.get(snapshotKey(row.project_id, row.id, snap.id));
       const content = obj ? await obj.text() : "";
+      const { slice, range } = sliced(content, offset);
       return text(
-        `# ${row.title} (version from ${snap.created_at}, ${snap.word_count} words, ${snap.reason})\n\n---\n\n` +
-          content.slice(0, READ_LIMIT),
+        `# ${row.title} (version from ${snap.created_at}, ${snap.word_count} words, ${snap.reason})` +
+          `${range ? ` · ${range}` : ""}\n\n---\n\n${slice || (content ? "(nothing past this offset)" : "(this version is empty)")}`,
       );
     },
   );

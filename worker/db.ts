@@ -101,7 +101,12 @@ export async function requireProject(env: Env, id: string): Promise<ProjectInfo>
   return row;
 }
 
-export async function insertChapter(env: Env, projectId: string, title: string): Promise<ChapterMeta> {
+export async function insertChapter(
+  env: Env,
+  projectId: string,
+  title: string,
+  operation?: { id: string; inputHash: string; leaseUntil: string },
+): Promise<ChapterMeta> {
   const max = await env.DB.prepare(
     "SELECT COALESCE(MAX(position), -1) AS m FROM chapters WHERE project_id = ? AND deleted_at IS NULL",
   )
@@ -113,12 +118,20 @@ export async function insertChapter(env: Env, projectId: string, title: string):
   // A new chapter goes at the end of the book, so into the last act.
   const actId = await lastActId(env, projectId);
   await chapterPut(env, { project_id: projectId, id }, "", 0);
-  await env.DB.batch([
+  const statements = [
     env.DB.prepare(
       "INSERT INTO chapters (id, project_id, title, position, act_id, created_at, updated_at, scenes_version) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
     ).bind(id, projectId, title, position, actId, ts, ts),
     env.DB.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").bind(ts, projectId),
-  ]);
+  ];
+  if (operation) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO mcp_chapter_creations
+        (project_id, operation_id, input_hash, chapter_id, status, result_json, lease_until, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', NULL, ?, ?, ?)`,
+    ).bind(projectId, operation.id, operation.inputHash, id, operation.leaseUntil, ts, ts));
+  }
+  await env.DB.batch(statements);
   return {
     id, project_id: projectId, title, synopsis: "", revision_status: "drafting", position,
     word_count: 0, version: 0, updated_at: ts, act_id: actId,
