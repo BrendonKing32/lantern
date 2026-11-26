@@ -97,6 +97,27 @@ function fakeDatabase() {
 }
 
 describe("scheduled backups", () => {
+  it("restores milestone links and feedback with foreign keys enabled", async () => {
+    const db = sqliteD1();
+    db.raw.exec("PRAGMA foreign_keys = ON");
+    db.raw.exec(`
+      INSERT INTO projects (id, title, created_at, updated_at) VALUES ('p', 'Book', '2026', '2026');
+      INSERT INTO chapters (id, project_id, title, position, created_at, updated_at) VALUES ('c', 'p', 'Chapter', 0, '2026', '2026');
+      INSERT INTO milestones (id, project_id, name, created_at, complete) VALUES ('m', 'p', 'Draft', '2026', 1);
+      INSERT INTO project_shares (id, project_id, owner_email, token_hash, created_at, milestone_id) VALUES ('s', 'p', 'writer', 'hash', '2026', 'm');
+      INSERT INTO share_comments (id, share_id, chapter_id, body, created_at) VALUES ('f', 's', 'c', 'Note', '2026');
+    `);
+    const backups = fakeBucket();
+    await createBackup({ DB: db as unknown as D1Database, BUCKET: fakeBucket(), BACKUPS: backups });
+    const entry = [...backups.contents.entries()].find(([key]) => key.endsWith("/database.sql"));
+    expect(entry).toBeDefined();
+    db.raw.exec(entry![1].value as string);
+    expect(db.raw.prepare("SELECT milestone_id FROM project_shares WHERE id = 's'").get()).toEqual({ milestone_id: "m" });
+    expect(db.raw.prepare("SELECT body FROM share_comments WHERE id = 'f'").get()).toEqual({ body: "Note" });
+    expect(db.raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    db.raw.close();
+  });
+
   it("writes a restorable D1 export, copies manuscript objects, then marks the run complete", async () => {
     const manuscriptKey = "projects/p1/chapters/c1.md";
     const draftKey = "projects/p1/chapters/c1/claude-draft.md";

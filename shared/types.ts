@@ -254,10 +254,22 @@ export interface SnapshotWithContent extends Snapshot {
   content: string;
 }
 
+export interface ShareLink {
+  id: string;
+  label: string;
+  milestone_id: string | null;
+  milestone_name: string | null;
+  track_progress: number;
+  created_at: string;
+  feedback_count: number;
+}
+
 export interface ShareComment {
   id: string;
   chapter_id: string;
   chapter_title: string;
+  share_id: string;
+  share_label: string;
   display_name: string;
   body: string;
   created_at: string;
@@ -265,6 +277,7 @@ export interface ShareComment {
 
 export interface SharedProject {
   project: { title: string };
+  label: string;
   chapters: Pick<ChapterMeta, "id" | "title" | "word_count">[];
 }
 

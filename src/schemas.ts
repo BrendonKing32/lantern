@@ -27,6 +27,7 @@ import {
   type SceneMeta,
   type SceneListing,
   type ShareComment,
+  type ShareLink,
   type SharedProject,
   type Snapshot,
   type SnapshotWithContent,
@@ -294,9 +295,12 @@ export const snapshot: Check<Snapshot> = object(snapshotFields);
 
 export const snapshotWithContent: Check<SnapshotWithContent> = object({ ...snapshotFields, content: string });
 
-export const shareStatus = object({ active: boolean, created_at: nullable(string) });
-
-export const shareCreated = object({ active: literal(true), token: string, created_at: string });
+const shareLinkFields = {
+  id: string, label: string, milestone_id: nullable(string), milestone_name: nullable(string),
+  track_progress: number, created_at: string, feedback_count: number,
+};
+export const shareLink: Check<ShareLink> = object(shareLinkFields);
+export const shareCreated = object({ ...shareLinkFields, token: string });
 
 export const claudeChange: Check<ClaudeChange> = object({
   id: string,
@@ -328,6 +332,8 @@ export const shareComment: Check<ShareComment> = object({
   id: string,
   chapter_id: string,
   chapter_title: string,
+  share_id: string,
+  share_label: string,
   display_name: string,
   body: string,
   created_at: string,
@@ -335,6 +341,7 @@ export const shareComment: Check<ShareComment> = object({
 
 export const sharedProject: Check<SharedProject> = object({
   project: object({ title: string }),
+  label: string,
   chapters: array(object({ id: string, title: string, word_count: number })),
 });
 

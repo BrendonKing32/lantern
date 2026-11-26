@@ -47,6 +47,7 @@ describe("public manuscript review links", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       project: { title: "Shared novel" },
+      label: "",
       chapters: [{ id: "chapter-1", title: "Chapter 1", word_count: 21 }],
     });
   });

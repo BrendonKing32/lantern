@@ -387,10 +387,12 @@ app and private API protected.
   in the chapter editor. Search shows up to 500 matches at a time. **Replace across the book**
   previews chapter counts first, includes this device's unsaved drafts, checks for version conflicts,
   and saves a restorable copy of each changed chapter in History before replacing.
-- **Review links:** **Share** creates an unlisted read-only link that stays active until revoked.
-  Anyone with the link can read the manuscript and leave chapter-level feedback; feedback
-  is private to the author and is never shown to other reviewers. The author can review or delete
-  comments in Share, and can revoke or replace the link at any time. Review links need a connection.
+- **Review links:** **Share** creates up to 20 unlisted links, each labelled for a reader or round.
+  Choose current chapters or a saved milestone; milestone links always show its copied text. Readers
+  can send private chapter feedback, which only the writer sees in **Share**, with a filter by link.
+  Copy a link on the device where it was created, rename it or revoke it at any time. Deleting a
+  milestone revokes links to it. Review links need a connection. The progress setting is saved for
+  a future update; Lantern does not yet record reading progress.
 - **Story guide:** the **Story Guide** view keeps the novel's characters, places, things and notes,
   each with a name, other names it goes by, and free-form notes that save as you type.
   Link to an entry from a chapter with `[[Name]]`, or `[[Name|shown text]]` to show different
