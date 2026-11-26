@@ -3,6 +3,7 @@
 import { AiError } from "./ai";
 import { authorize } from "./auth";
 import { createBackup } from "./backups";
+import { ChangelogError } from "./changelog";
 import type { Env } from "./env";
 import { HttpError, json, type Handler, type Params } from "./http";
 import {
@@ -26,6 +27,7 @@ import {
   saveChapter,
   updateChapter,
 } from "./handlers/chapters";
+import { getChangelog } from "./handlers/changelog";
 import { getSnapshot, listHistory } from "./handlers/history";
 import { cleanupIncompleteMilestones, createMilestone, deleteMilestone, getMilestoneChapter, listMilestoneChapters, listMilestones, updateMilestone } from "./handlers/milestones";
 import { createNote, deleteNote, listNotes, updateNote } from "./handlers/notes";
@@ -60,6 +62,7 @@ export type { Env } from "./env";
 
 const routes: Array<[string, string, Handler]> = [
   ["GET", "/api/projects", listProjects],
+  ["GET", "/api/changelog", getChangelog],
   ["GET", "/api/projects/:id/milestones", listMilestones],
   ["POST", "/api/projects/:id/milestones", createMilestone],
   ["GET", "/api/milestones/:id/chapters", listMilestoneChapters],
@@ -176,6 +179,7 @@ export default {
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message, ...e.extra }, e.status);
       if (e instanceof AiError) return json({ error: e.message, code: e.code }, e.status);
+      if (e instanceof ChangelogError) return json({ error: e.message }, 502);
       console.error(e);
       return json({ error: "Server error" }, 500);
     }

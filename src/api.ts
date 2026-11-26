@@ -71,6 +71,7 @@ async function request<T>(
 
 export const api = {
   listProjects: () => request(array(schema.projectSummary), "GET", "/api/projects"),
+  changelog: () => request(array(schema.changelogEntry), "GET", "/api/changelog"),
   createProject: (title: string) => request(schema.projectRef, "POST", "/api/projects", { title }),
   getProject: (id: string) => request(schema.projectDetail, "GET", `/api/projects/${id}`),
   milestones: (id: string) => request(array(schema.milestone), "GET", `/api/projects/${id}/milestones`),

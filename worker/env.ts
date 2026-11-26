@@ -6,6 +6,7 @@ export interface Env extends AiEnv, BackupEnv {
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUD: string;
   DEV_BYPASS?: string;
+  GITHUB_CHANGELOG_TOKEN?: string;
   /** MCP connector OAuth state. Absent on Previews, which then refuse /mcp. */
   OAUTH_KV?: KVNamespace;
   /** Comma-separated HTTPS callback hosts (default claude.ai,claude.com,chatgpt.com). */

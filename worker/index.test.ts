@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "./index";
 
 type Project = {
@@ -406,6 +406,62 @@ async function tokenHash(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+
+describe("Worker changelog route", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("requires Access before calling GitHub", async () => {
+    const { env } = makeEnv();
+    env.DEV_BYPASS = undefined;
+    env.ACCESS_TEAM_DOMAIN = "access.example.com";
+    env.ACCESS_AUD = "audience";
+    env.GITHUB_CHANGELOG_TOKEN = "test-token";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const response = await worker.fetch(request("GET", "/api/changelog"), env);
+
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("explains missing configuration and serves only the private PR fields", async () => {
+    const { env } = makeEnv();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([{
+      number: 62,
+      title: "Improve contrast",
+      merged_at: "2026-11-21T21:52:19Z",
+      body: "private details",
+    }])));
+
+    const missing = await worker.fetch(request("GET", "/api/changelog"), env);
+    expect(missing.status).toBe(503);
+    expect(await missing.json()).toMatchObject({ error: expect.stringContaining("GITHUB_CHANGELOG_TOKEN") });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    env.GITHUB_CHANGELOG_TOKEN = "test-token";
+    const response = await worker.fetch(request("GET", "/api/changelog"), env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual([{
+      number: 62,
+      title: "Improve contrast",
+      merged_at: "2026-11-21T21:52:19Z",
+      url: "https://github.com/BrendonKing32/lantern/pull/62",
+    }]);
+  });
+
+  it("returns a useful error when GitHub refuses the token", async () => {
+    const { env } = makeEnv();
+    env.GITHUB_CHANGELOG_TOKEN = "test-token";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("test-token", { status: 403 }));
+
+    const response = await worker.fetch(request("GET", "/api/changelog"), env);
+    const data = await response.json() as { error: string };
+    expect(response.status).toBe(502);
+    expect(data.error).toContain("GitHub returned 403");
+    expect(data.error).not.toContain("test-token");
+  });
+});
 
 describe("Worker project and chapter routes", () => {
   it("creates a project with an initial chapter and supports reading and updating them", async () => {
