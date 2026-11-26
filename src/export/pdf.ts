@@ -1,9 +1,21 @@
 import * as pdfMake from "pdfmake/build/pdfmake";
-import vfs from "pdfmake/build/vfs_fonts";
 import type { Content, TDocumentDefinitions } from "pdfmake/interfaces";
 import type { Block, Book, Run } from "./model";
 
-pdfMake.addVirtualFileSystem(vfs);
+// The embedded fonts are as large as pdfmake itself, so they load as a chunk
+// of their own to keep each under Vite's chunk-size warning. Both are only
+// fetched when someone exports a PDF; a failed font load is retried next time.
+let fontsReady: Promise<void> | undefined;
+function loadFonts(): Promise<void> {
+  fontsReady ??= import("pdfmake/build/vfs_fonts").then(
+    ({ default: vfs }) => pdfMake.addVirtualFileSystem(vfs),
+    (err) => {
+      fontsReady = undefined;
+      throw err;
+    },
+  );
+  return fontsReady;
+}
 
 function run(r: Run): Content {
   return {
@@ -90,5 +102,6 @@ function definition(book: Book): TDocumentDefinitions {
 }
 
 export async function buildPdf(book: Book): Promise<Blob> {
+  await loadFonts();
   return pdfMake.createPdf(definition(book)).getBlob();
 }
