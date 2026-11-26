@@ -17,6 +17,7 @@ import { authorize as accessUser } from "../auth";
 import type { Env } from "../env";
 import { HttpError } from "../http";
 import { mcpApiHandler, READ_SCOPE, WRITE_SCOPE, type McpProps } from "./server";
+import { recordOAuthMetric } from "./telemetry";
 
 export const MCP_PATH = "/mcp";
 export const AUTHORIZE_PATH = "/authorize";
@@ -286,5 +287,41 @@ export async function handleOAuth(req: Request, env: Env, ctx: ExecutionContext)
     if (req.method !== "GET" && req.method !== "HEAD") return new Response("Use https", { status: 400 });
     return Response.redirect(`${origin}${url.pathname}${url.search}`, 301);
   }
-  return providerFor(origin).fetch(req, env, ctx);
+  const operation = url.pathname === TOKEN_PATH
+    ? "token"
+    : url.pathname === AUTHORIZE_PATH
+      ? "authorize"
+      : "oauth_endpoint";
+  const started = performance.now();
+  let grantType = "";
+  if (operation === "token" && req.method === "POST") {
+    try {
+      const value = (await req.clone().formData()).get("grant_type");
+      if (value === "authorization_code" || value === "refresh_token") grantType = value;
+      else if (typeof value === "string") grantType = "other";
+    } catch {
+      grantType = "unparseable";
+    }
+  }
+  try {
+    const response = await providerFor(origin).fetch(req, env, ctx);
+    const responseBytes = (await response.clone().arrayBuffer()).byteLength;
+    recordOAuthMetric({
+      operation: grantType ? `${operation}:${grantType}` : operation,
+      outcome: response.ok ? "ok" : "error",
+      status: response.status,
+      duration_ms: Math.round(performance.now() - started),
+      response_bytes: responseBytes,
+    });
+    return response;
+  } catch (error) {
+    recordOAuthMetric({
+      operation: grantType ? `${operation}:${grantType}` : operation,
+      outcome: "error",
+      status: 0,
+      duration_ms: Math.round(performance.now() - started),
+      response_bytes: 0,
+    });
+    throw error;
+  }
 }

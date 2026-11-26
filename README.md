@@ -178,13 +178,19 @@ When you connect, you choose what it may do:
 - **Read only:** list novels, read outlines, chapters, scene cards, the story guide,
   **History**, **Milestones** and margin notes, and search the text. The client can read a
   milestone's saved chapters and compare them with your current chapters. Milestones
-  cannot be changed through the connector.
+  cannot be changed through the connector. Margin notes come in pages of 50 by default;
+  the client can continue from the `next_offset` value. Long chapter, History and milestone
+  reads are sliced; continue from the offset in the reply. Searches cover at most 20 chapters
+  and 50 matches per call; the client continues from `next_offset` when it appears.
 - **Read and edit:** also draft changes to chapter text (exact passages, or adding to the
   end), add chapters, rename chapters and change synopses, and add or change story guide
   and scene cards, and add margin notes to passages in the saved chapter. The client can also
   use `move_scene` to move in-text scenes with their passages, keeping a copy in
   **History**. It can't resolve or delete margin notes, and nothing can be deleted
   through the connector.
+
+If adding a chapter reports that its creation is still in progress, retry with the same
+`operation_id`; using a different one starts a separate chapter creation.
 
 Connector calls use your AI client's plan or billing, not Lantern's Anthropic API key
 or the limits above. The built-in **Claude** panel and **Continuity check** still use
@@ -246,6 +252,10 @@ desktop clients; they don't allow wildcards, credentials or fragments.
 Tokens last an hour and clients refresh them; a connection
 unused for 30 days has to be approved again. Grants and tokens are kept in the
 `OAUTH_KV` namespace, hashed or encrypted.
+
+Worker logs include connector tool names, outcomes, durations and response sizes, plus
+OAuth operation types and outcomes. They do not include tool arguments, manuscript text
+or token values.
 
 ### Setup
 

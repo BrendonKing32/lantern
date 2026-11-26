@@ -16,21 +16,22 @@ import { countWords } from "../../shared/wordcount";
 import type { BibleEntry, ChapterMeta, DraftOp, SceneMeta } from "../../shared/types";
 import { BIBLE_KINDS } from "../../shared/types";
 import { replayDraft } from "../../shared/draftReplay";
-import { assertChapterUnlocked, chapterKey, chapterTextVersion, claudeDraftKey, getChapterRow, MARKDOWN, MAX_CHAPTER_BYTES, reconcileChapter } from "../db";
+import { assertChapterUnlocked, chapterKey, chapterTextVersion, claudeDraftKey, getChapterRow, insertChapter, MARKDOWN, MAX_CHAPTER_BYTES, reconcileChapter, requireProject } from "../db";
 import type { Env } from "../env";
 import { createEntry, updateEntry } from "../handlers/bible";
 import { logClaudeChange } from "../handlers/claudeChanges";
-import { createChapter, updateChapter } from "../handlers/chapters";
+import { updateChapter } from "../handlers/chapters";
 import { draftRow } from "../handlers/claudeDrafts";
 import { captureNoteChapter, createChapterNote } from "../handlers/notes";
 import { arrangeScenes, createProjectScene, moveScene, sceneListing, updateScene } from "../handlers/scenes";
-import { HttpError, now, type Handler, type Params } from "../http";
+import { cleanTitle, HttpError, now, type Handler, type Params } from "../http";
+import { DATA_OUTPUT_SCHEMA, dataResult, registerConnectorTool } from "./telemetry";
 
 const EDITS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } as const;
 const ADDS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
-const data = (value: unknown) => text(JSON.stringify(value, null, 1));
+const data = dataResult;
 
 /** Run one of the app's handlers with a JSON body, as if the app had called it. */
 async function viaApp<T>(handler: Handler, params: Params, method: string, payload: unknown, env: Env): Promise<T> {
@@ -227,8 +228,133 @@ const baseVersion = z
   .min(0)
   .describe("The chapter's version from read_chapter or, once an AI draft exists, the draft version from read_draft or your last edit");
 
+async function createChapterWithOperation(
+  env: Env,
+  input: { novel_id: string; operation_id: string; title: string; synopsis?: string; opening?: string },
+) {
+  const { novel_id, operation_id, title, synopsis, opening } = input;
+  if (opening && new TextEncoder().encode(opening).length > MAX_CHAPTER_BYTES) {
+    throw new EditError("That opening text is larger than 5 MB, so no chapter was created.");
+  }
+  await requireProject(env, novel_id);
+  const inputJson = JSON.stringify({ title, synopsis: synopsis ?? null, text: opening ?? null });
+  const inputHash = Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(inputJson))),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const leaseUntil = new Date(Date.now() + 60_000).toISOString();
+  const readOperation = () => env.DB.prepare(
+    `SELECT input_hash, chapter_id, status, result_json, lease_until
+       FROM mcp_chapter_creations WHERE project_id = ? AND operation_id = ?`,
+  ).bind(novel_id, operation_id).first<{
+    input_hash: string;
+    chapter_id: string;
+    status: "pending" | "complete";
+    result_json: string | null;
+    lease_until: string;
+  }>();
+  let operation = await readOperation();
+  let chapterId: string;
+  if (operation) {
+    if (operation.input_hash !== inputHash) {
+      throw new EditError("That operation_id was already used with different chapter details. Use a new ID.");
+    }
+    if (operation.status === "complete") return JSON.parse(operation.result_json!);
+    if (operation.lease_until > now()) {
+      throw new EditError("Chapter creation is still in progress. Retry with the same operation_id in up to a minute.");
+    }
+    const claimed = await env.DB.prepare(
+      `UPDATE mcp_chapter_creations SET lease_until = ?, updated_at = ?
+        WHERE project_id = ? AND operation_id = ? AND status = 'pending' AND lease_until <= ?`,
+    ).bind(leaseUntil, now(), novel_id, operation_id, now()).run();
+    if (!claimed.meta.changes) {
+      throw new EditError("Chapter creation is still in progress. Retry with the same operation_id in up to a minute.");
+    }
+    chapterId = operation.chapter_id;
+  } else {
+    try {
+      const chapter = await insertChapter(env, novel_id, cleanTitle(title, "Untitled chapter"), {
+        id: operation_id,
+        inputHash,
+        leaseUntil,
+      });
+      chapterId = chapter.id;
+    } catch (error) {
+      operation = await readOperation();
+      if (!operation) throw error;
+      if (operation.input_hash !== inputHash) {
+        throw new EditError("That operation_id was already used with different chapter details. Use a new ID.");
+      }
+      if (operation.status === "complete") return JSON.parse(operation.result_json!);
+      throw new EditError("Chapter creation is still in progress. Retry with the same operation_id in up to a minute.");
+    }
+  }
+
+  try {
+    let chapter = await getChapterRow(env, chapterId);
+    if (synopsis !== undefined) {
+      await viaApp(updateChapter, { id: chapter.id }, "PATCH", { synopsis }, env);
+      chapter = await getChapterRow(env, chapter.id);
+    }
+    let draft: { draft_version: number; word_count: number } | null = null;
+    if (opening?.trim()) {
+      const expected = opening.endsWith("\n") ? opening : `${opening}\n`;
+      const existing = await draftRow(env, chapter.id);
+      if (existing) {
+        const object = await env.BUCKET.get(claudeDraftKey(chapter.project_id, chapter.id));
+        if (!object || await object.text() !== expected) {
+          throw new EditError("This operation's chapter already has a different AI draft. Review it in Lantern before retrying.");
+        }
+        draft = { draft_version: existing.version, word_count: existing.word_count };
+      } else {
+        const created = await draftAsClaude(env, chapter.id, chapter.version, () => expected,
+          [{ kind: "set", text: expected }]);
+        draft = { draft_version: created.draft_version, word_count: created.word_count };
+      }
+    }
+    const result = {
+      operation_id,
+      chapter_id: chapter.id,
+      title: chapter.title,
+      position: chapter.position + 1,
+      version: chapter.version,
+      ...(draft ? {
+        draft_version: draft.draft_version,
+        draft_word_count: draft.word_count,
+        note: "The opening text is in an AI draft of the new chapter, waiting for the author to accept it.",
+      } : {}),
+    };
+    const completed = await env.DB.prepare(
+      `UPDATE mcp_chapter_creations SET status = 'complete', result_json = ?, lease_until = '', updated_at = ?
+        WHERE project_id = ? AND operation_id = ? AND chapter_id = ? AND status = 'pending'`,
+    ).bind(JSON.stringify(result), now(), novel_id, operation_id, chapter.id).run();
+    if (!completed.meta.changes) {
+      const latest = await readOperation();
+      if (latest?.status === "complete") return JSON.parse(latest.result_json!);
+      throw new EditError("The operation lease expired before it could finish. Retry with the same operation_id.");
+    }
+    await logClaudeChange(env, {
+      project_id: chapter.project_id, action: "create_chapter", target_kind: "chapter", target_id: chapter.id,
+      chapter_id: chapter.id, summary: `Added the chapter “${chapter.title}”`,
+      detail: listed([
+        `chapter ${chapter.position + 1}`,
+        ...(draft ? [`${plural(draft.word_count, "word")} drafted`] : []),
+        ...(synopsis ? ["with a synopsis"] : []),
+      ]),
+    });
+    return result;
+  } catch (error) {
+    await env.DB.prepare(
+      `UPDATE mcp_chapter_creations SET lease_until = '', updated_at = ?
+        WHERE project_id = ? AND operation_id = ? AND status = 'pending'`,
+    ).bind(now(), novel_id, operation_id).run();
+    throw error;
+  }
+}
+
 export function registerWriteTools(server: McpServer, env: Env) {
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "add_margin_note",
     {
       title: "Add a margin note",
@@ -238,6 +364,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
         quote: z.string().min(1).max(2000),
         body: z.string().max(4000),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: ADDS,
     },
     async ({ chapter_id, quote, body }) =>
@@ -265,7 +392,8 @@ export function registerWriteTools(server: McpServer, env: Env) {
       }),
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "edit_chapter",
     {
       title: "Edit a chapter",
@@ -299,7 +427,8 @@ export function registerWriteTools(server: McpServer, env: Env) {
       }),
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "append_to_chapter",
     {
       title: "Add to the end of a chapter",
@@ -322,7 +451,8 @@ export function registerWriteTools(server: McpServer, env: Env) {
       }),
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "create_chapter",
     {
       title: "Add a chapter",
@@ -331,40 +461,28 @@ export function registerWriteTools(server: McpServer, env: Env) {
         "goes into an AI draft of the new chapter, for the author to accept.",
       inputSchema: {
         novel_id: z.string(),
+        operation_id: z.string().uuid().describe("Stable unique ID for this creation; reuse it if the call needs to be retried"),
         title: z.string().min(1).max(200),
         synopsis: z.string().max(2000).optional(),
-        text: z.string().optional(),
+        text: z.string().max(5 * 1024 * 1024).optional(),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: ADDS,
     },
-    async ({ novel_id, title, synopsis, text: opening }) =>
+    async ({ novel_id, operation_id, title, synopsis, text: opening }) =>
       guarded(async () => {
-        const chapter = await viaApp<ChapterMeta>(createChapter, { id: novel_id }, "POST", { title }, env);
-        if (synopsis) await viaApp(updateChapter, { id: chapter.id }, "PATCH", { synopsis }, env);
-        const draft = opening?.trim()
-          ? await draftAsClaude(env, chapter.id, chapter.version, () => (opening.endsWith("\n") ? opening : `${opening}\n`),
-            [{ kind: "set", text: opening.endsWith("\n") ? opening : `${opening}\n` }])
-          : null;
-        await logClaudeChange(env, {
-          project_id: chapter.project_id, action: "create_chapter", target_kind: "chapter", target_id: chapter.id,
-          chapter_id: chapter.id, summary: `Added the chapter “${chapter.title}”`,
-          detail: listed([
-            `chapter ${chapter.position + 1}`,
-            ...(draft ? [`${plural(draft.word_count, "word")} drafted`] : []),
-            ...(synopsis ? ["with a synopsis"] : []),
-          ]),
-        });
-        return data({
-          chapter_id: chapter.id, title: chapter.title, position: chapter.position + 1, version: chapter.version,
-          ...(draft ? {
-            draft_version: draft.draft_version, draft_word_count: draft.word_count,
-            note: "The opening text is in an AI draft of the chapter, waiting for the author to accept it.",
-          } : {}),
-        });
+        return data(await createChapterWithOperation(env, {
+          novel_id,
+          operation_id,
+          title,
+          synopsis,
+          opening,
+        }));
       }),
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "update_chapter_details",
     {
       title: "Change chapter details",
@@ -375,6 +493,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
         synopsis: z.string().max(2000).optional(),
         revision_status: z.enum(["drafting", "revising", "done"]).optional(),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: EDITS,
     },
     async ({ chapter_id, title, synopsis, revision_status }) =>
@@ -390,7 +509,8 @@ export function registerWriteTools(server: McpServer, env: Env) {
       }),
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "create_story_entry",
     {
       title: "Add a story guide entry",
@@ -404,6 +524,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
         aliases: z.array(z.string()).max(30).optional().describe("Other names it goes by"),
         notes: z.string().optional().describe("Markdown notes"),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: ADDS,
     },
     async ({ novel_id, kind, name, aliases, notes }) =>
@@ -418,7 +539,8 @@ export function registerWriteTools(server: McpServer, env: Env) {
       }),
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "update_story_entry",
     {
       title: "Change a story guide entry",
@@ -433,6 +555,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
         notes: z.string().optional(),
         add_to_notes: z.string().optional(),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: EDITS,
     },
     async ({ entry_id, kind, name, aliases, notes, add_to_notes }) =>
@@ -472,7 +595,8 @@ export function registerWriteTools(server: McpServer, env: Env) {
     status: z.enum(["planned", "drafted", "revising", "done"]).optional(),
   };
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "create_scene",
     {
       title: "Add a scene card",
@@ -485,6 +609,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
         chapter_id: z.string().optional().describe("From get_outline. Leave out for an unassigned scene"),
         ...sceneFields,
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: ADDS,
     },
     async ({ novel_id, chapter_id, ...fields }) =>
@@ -507,7 +632,8 @@ export function registerWriteTools(server: McpServer, env: Env) {
       }),
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "move_scene",
     {
       title: "Move a scene",
@@ -523,6 +649,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
         before_passage_index: z.number().int().min(0).nullable().optional().describe("Destination passage index, or null for the end"),
         base_versions: z.object({ from: baseVersion, to: baseVersion.optional() }),
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: EDITS,
     },
     async ({ scene_id, from_chapter_id, from_passage_index, to_chapter_id, before_passage_index, base_versions }) =>
@@ -594,7 +721,8 @@ export function registerWriteTools(server: McpServer, env: Env) {
       }),
   );
 
-  server.registerTool(
+  registerConnectorTool(
+    server,
     "update_scene",
     {
       title: "Change a scene card",
@@ -607,6 +735,7 @@ export function registerWriteTools(server: McpServer, env: Env) {
           .describe("Move the scene to the end of this chapter's scenes, or null to unassign it"),
         ...sceneFields,
       },
+      outputSchema: DATA_OUTPUT_SCHEMA,
       annotations: EDITS,
     },
     async ({ scene_id, ...fields }) =>

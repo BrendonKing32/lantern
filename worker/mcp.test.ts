@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "./index";
 import { findMatches, READ_LIMIT } from "./mcp/tools";
 import { isOAuthPath, pageCsp, publicOrigin, redirectAllowed } from "./mcp/oauth";
@@ -268,11 +268,14 @@ describe("connector tools", () => {
       "search_book",
     ]);
     expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
+    expect(tools.find((t) => t.name === "list_novels")?.outputSchema).toBeDefined();
   });
 
   it("lists novels and outlines one", async () => {
     const client = await connect(env());
-    const novels = jsonOf(await client.callTool({ name: "list_novels", arguments: {} }));
+    const novelsResult = await client.callTool({ name: "list_novels", arguments: {} });
+    const novels = jsonOf(novelsResult);
+    expect(novelsResult.structuredContent).toEqual({ result: novels });
     expect(novels).toEqual([expect.objectContaining({ id: "novel-1", title: "The Lamplighter", archived: false, chapter_count: 2 })]);
 
     const outline = jsonOf(await client.callTool({ name: "get_outline", arguments: { novel_id: "novel-1" } }));
@@ -325,6 +328,34 @@ describe("connector tools", () => {
     expect(r.matches.map((m: { chapter: number }) => m.chapter)).toEqual([1, 2]);
   });
 
+  it("pages novel search over a bounded number of chapters", async () => {
+    const originalLength = chapterRows.length;
+    const keys: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      const id = `search-${i}`;
+      chapterRows.push({ ...chapterRows[0], id, title: id, position: originalLength + i });
+      const key = `projects/novel-1/chapters/${id}.md`;
+      texts[key] = "lamp";
+      keys.push(key);
+    }
+    try {
+      const client = await connect(env());
+      const first = jsonOf(await client.callTool({
+        name: "search_book", arguments: { novel_id: "novel-1", query: "lamp" },
+      }));
+      expect(first.chapters_scanned).toBe(20);
+      expect(first.next_offset).toBe(20);
+      const second = jsonOf(await client.callTool({
+        name: "search_book", arguments: { novel_id: "novel-1", query: "lamp", chapter_offset: first.next_offset },
+      }));
+      expect(second.chapters_scanned).toBe(2);
+      expect(second.next_offset).toBeNull();
+    } finally {
+      chapterRows.splice(originalLength);
+      for (const key of keys) delete texts[key];
+    }
+  });
+
   it("previews the story guide and finds an entry by alias", async () => {
     const client = await connect(env());
     const guide = jsonOf(await client.callTool({ name: "get_story_guide", arguments: { novel_id: "novel-1" } }));
@@ -346,6 +377,42 @@ describe("connector tools", () => {
     expect(v).toContain("An earlier opening.");
     const wrong = await client.callTool({ name: "read_version", arguments: { chapter_id: "ch-2", version_id: "snap-1" } });
     expect(wrong.isError).toBe(true);
+  });
+
+  it("reads long history versions in resumable slices", async () => {
+    const key = "projects/novel-1/chapters/ch-1/history/snap-1.md";
+    const original = texts[key];
+    texts[key] = "v".repeat(READ_LIMIT + 8);
+    try {
+      const client = await connect(env());
+      const first = textOf(await client.callTool({
+        name: "read_version", arguments: { chapter_id: "ch-1", version_id: "snap-1" },
+      }));
+      expect(first).toContain(`continue with offset ${READ_LIMIT}`);
+      const rest = textOf(await client.callTool({
+        name: "read_version", arguments: { chapter_id: "ch-1", version_id: "snap-1", offset: READ_LIMIT },
+      }));
+      expect(rest.endsWith("v".repeat(8))).toBe(true);
+      expect(rest).not.toContain("continue with");
+    } finally {
+      texts[key] = original;
+    }
+  });
+
+  it("logs tool latency and response size without logging tool arguments or content", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const client = await connect(env());
+      await client.callTool({ name: "search_book", arguments: { novel_id: "novel-1", query: "private phrase" } });
+      const event = log.mock.calls.map(([line]) => JSON.parse(String(line))).find((entry) => entry.event === "mcp_tool");
+      expect(event).toMatchObject({ tool: "search_book", outcome: "ok" });
+      expect(event.duration_ms).toEqual(expect.any(Number));
+      expect(event.response_bytes).toBeGreaterThan(0);
+      expect(log.mock.calls.flat().join(" ")).not.toContain("private phrase");
+      expect(log.mock.calls.flat().join(" ")).not.toContain("Mara stepped off the boat.");
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 
@@ -490,6 +557,33 @@ describe("connector sign-in", () => {
     expect(await resource.json()).toMatchObject({ resource: `${ORIGIN}/mcp`, authorization_servers: [ORIGIN] });
     const server = await (await send(e, "/.well-known/oauth-authorization-server")).json();
     expect(server).toMatchObject({ authorization_endpoint: `${ORIGIN}/authorize`, token_endpoint: `${ORIGIN}/oauth/token` });
+  });
+
+  it("logs OAuth refresh metrics without access or refresh tokens", async () => {
+    const e = env();
+    const { clientId, token } = await signIn(e);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const refreshed = await send(e, "/oauth/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: token.refresh_token!,
+          client_id: clientId,
+          resource: `${ORIGIN}/mcp`,
+        }),
+      });
+      expect(refreshed.status).toBe(200);
+      const lines = log.mock.calls.map(([line]) => String(line));
+      const event = lines.map((line) => JSON.parse(line)).find((entry) => entry.event === "mcp_oauth");
+      expect(event).toMatchObject({ operation: "token:refresh_token", outcome: "ok", status: 200 });
+      expect(event.response_bytes).toBeGreaterThan(0);
+      expect(lines.join("\n")).not.toContain(token.access_token);
+      expect(lines.join("\n")).not.toContain(token.refresh_token);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("challenges /mcp without a token", async () => {
