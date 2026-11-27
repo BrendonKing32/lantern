@@ -63,6 +63,20 @@ values, so it shows the app but its private API refuses every request. To keep P
 links private too, open the Worker in the Cloudflare dashboard, go to
 **Settings → Domains & Routes**, and select **Enable Cloudflare Access** for Preview URLs.
 
+To share a Preview with someone who can't sign in to Access, leave Access on for
+Previews and add a **Bypass** application for just that Preview's hostname:
+**Zero Trust → Access → Applications → Add an application → Self-hosted**, set the domain
+to the exact Preview host (for example `pr-42-lantern.<your-subdomain>.workers.dev`, as
+shown on the pull request), and add a policy with action **Bypass** and Include
+**Everyone**. Access prefers an exact hostname over the `*-lantern…` wildcard, so only that
+Preview opens without sign-in. Use the branch or pull request alias, not a version URL,
+so the link keeps working as you push. Delete the Bypass application when you're done
+sharing. This exposes nothing private: a Preview has no bindings, so it holds no
+manuscripts, and its private API refuses every request. To let people in without
+opening the Preview to everyone, add an **Allow** policy with their emails to the
+Preview Access application instead, and turn on the **One-time PIN** login method so
+they can sign in with a code sent to their email.
+
 Workers Builds creates those Previews. Set its deploy command for non-production branches
 (**Settings → Builds**) to `npm run preview`. That runs `wrangler preview` and retries it up to
 three times when Cloudflare's API fails on its side, such as
