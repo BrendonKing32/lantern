@@ -73,8 +73,13 @@ export function MilestonesDialog({ milestones, loadError, onCreate, onChanged, o
               setEditing(milestone.id); setEditName(milestone.name); setEditNote(milestone.note);
             }}>Rename</button>{" "}
             <button type="button" className="btn" disabled={busy} onClick={() => {
-              if (!confirm(`Delete the milestone “${milestone.name}”? Your chapters aren't affected.`)) return;
-              void run(async () => { await api.deleteMilestone(milestone.id); await onChanged(); });
+              void run(async () => {
+                if (!navigator.onLine) throw new Error("Deleting a milestone needs a connection. Go online and try again.");
+                const links = (await api.shares(milestone.project_id)).filter((link) => link.milestone_id === milestone.id);
+                const affected = links.length ? ` The review links ${links.map((link) => `“${link.label || "Review link"}”`).join(", ")} that read it will stop working.` : "";
+                if (!confirm(`Delete the milestone “${milestone.name}”?${affected} Your chapters aren't affected.`)) return;
+                await api.deleteMilestone(milestone.id, links.map((link) => link.id)); await onChanged();
+              });
             }}>Delete</button>
           </>}
         </li>)}

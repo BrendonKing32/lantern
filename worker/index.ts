@@ -49,9 +49,10 @@ import {
   deleteShareComment,
   getSharedChapter,
   getSharedProject,
-  getShareStatus,
+  listShares,
   listShareComments,
   revokeShare,
+  updateShare,
 } from "./handlers/sharing";
 import { getStats, setGoal, setStreakRevision } from "./handlers/stats";
 import { handleOAuth, isOAuthPath } from "./mcp/oauth";
@@ -119,10 +120,11 @@ const routes: Array<[string, string, Handler]> = [
   ["POST", "/api/chapters/:id/notes", createNote],
   ["PATCH", "/api/notes/:id", updateNote],
   ["DELETE", "/api/notes/:id", deleteNote],
-  ["GET", "/api/projects/:id/share", getShareStatus],
-  ["POST", "/api/projects/:id/share", createShare],
-  ["DELETE", "/api/projects/:id/share", revokeShare],
-  ["GET", "/api/projects/:id/share/comments", listShareComments],
+  ["GET", "/api/projects/:id/shares", listShares],
+  ["POST", "/api/projects/:id/shares", createShare],
+  ["PATCH", "/api/shares/:id", updateShare],
+  ["DELETE", "/api/shares/:id", revokeShare],
+  ["GET", "/api/projects/:id/feedback", listShareComments],
   ["DELETE", "/api/projects/:id/share/comments/:commentId", deleteShareComment],
 ];
 

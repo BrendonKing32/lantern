@@ -82,7 +82,7 @@ export const api = {
     request(schema.milestone, "POST", `/api/projects/${id}/milestones`, { name, note }),
   updateMilestone: (id: string, patch: { name?: string; note?: string }) =>
     request(schema.milestone, "PATCH", `/api/milestones/${id}`, patch),
-  deleteMilestone: (id: string) => request(schema.ok, "DELETE", `/api/milestones/${id}`),
+  deleteMilestone: (id: string, confirmedLinks?: string[]) => request(schema.ok, "DELETE", `/api/milestones/${id}${confirmedLinks ? `?confirmedLinks=${encodeURIComponent(JSON.stringify(confirmedLinks))}` : ""}`),
   renameProject: (id: string, title: string) => request(schema.projectRef, "PATCH", `/api/projects/${id}`, { title }),
   setArchived: (id: string, archived: boolean) =>
     request(schema.projectArchived, "PATCH", `/api/projects/${id}`, { archived }),
@@ -197,11 +197,14 @@ export const api = {
   discardClaudeDraft: (chapterId: string) => request(schema.ok, "DELETE", `/api/chapters/${chapterId}/claude-draft`),
   claudeChanges: (projectId: string) =>
     request(array(schema.claudeChange), "GET", `/api/projects/${projectId}/claude-changes`),
-  shareStatus: (projectId: string) => request(schema.shareStatus, "GET", `/api/projects/${projectId}/share`),
-  createShare: (projectId: string) => request(schema.shareCreated, "POST", `/api/projects/${projectId}/share`),
-  revokeShare: (projectId: string) => request(schema.ok, "DELETE", `/api/projects/${projectId}/share`),
-  shareComments: (projectId: string) =>
-    request(array(schema.shareComment), "GET", `/api/projects/${projectId}/share/comments`),
+  shares: (projectId: string) => request(array(schema.shareLink), "GET", `/api/projects/${projectId}/shares`),
+  createShare: (projectId: string, input: { label: string; milestoneId?: string; trackProgress: boolean }) =>
+    request(schema.shareCreated, "POST", `/api/projects/${projectId}/shares`, input),
+  updateShare: (id: string, patch: { label?: string; trackProgress?: boolean }) =>
+    request(schema.shareLink, "PATCH", `/api/shares/${id}`, patch),
+  revokeShare: (id: string) => request(schema.ok, "DELETE", `/api/shares/${id}`),
+  shareComments: (projectId: string, shareId?: string) =>
+    request(array(schema.shareComment), "GET", `/api/projects/${projectId}/feedback${shareId ? `?shareId=${encodeURIComponent(shareId)}` : ""}`),
   deleteShareComment: (projectId: string, commentId: string) =>
     request(schema.ok, "DELETE", `/api/projects/${projectId}/share/comments/${commentId}`),
   getSharedProject: (token: string) =>

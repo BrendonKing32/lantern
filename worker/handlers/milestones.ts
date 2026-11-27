@@ -21,7 +21,20 @@ function noteValue(value: unknown): string {
   return value;
 }
 
-async function removeMilestone(env: Pick<Env, "DB" | "BUCKET">, projectId: string, id: string) {
+async function removeMilestone(env: Pick<Env, "DB" | "BUCKET">, projectId: string, id: string, confirmedLinks?: string[]) {
+  const check = confirmedLinks === undefined ? "" : ` AND NOT EXISTS (
+    SELECT 1 FROM project_shares WHERE milestone_id = ? AND revoked_at IS NULL
+      AND id NOT IN (SELECT value FROM json_each(?)))`;
+  const results = await env.DB.batch([
+    env.DB.prepare(`UPDATE milestones SET complete = -1 WHERE id = ?${check}`)
+      .bind(id, ...(confirmedLinks === undefined ? [] : [id, JSON.stringify(confirmedLinks)])),
+    env.DB.prepare(`UPDATE project_shares SET revoked_at = COALESCE(revoked_at, ?), milestone_id = NULL
+      WHERE milestone_id = ? AND EXISTS (SELECT 1 FROM milestones WHERE id = ? AND complete = -1)`)
+      .bind(now(), id, id),
+  ]);
+  if (confirmedLinks !== undefined && !results[0].meta.changes) {
+    throw new HttpError(409, "Review links changed. Check them and try deleting the milestone again.");
+  }
   const prefix = `projects/${projectId}/milestones/${id}/`;
   let cursor: string | undefined;
   do {
@@ -31,14 +44,14 @@ async function removeMilestone(env: Pick<Env, "DB" | "BUCKET">, projectId: strin
   } while (cursor);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM milestone_chapters WHERE milestone_id = ?").bind(id),
-    env.DB.prepare("DELETE FROM milestones WHERE id = ?").bind(id),
+    env.DB.prepare("DELETE FROM milestones WHERE id = ? AND complete = -1").bind(id),
   ]);
 }
 
 export async function cleanupIncompleteMilestones(env: Pick<Env, "DB" | "BUCKET">) {
   const cutoff = new Date(Date.now() - 3_600_000).toISOString();
   const { results } = await env.DB.prepare(
-    "SELECT id, project_id FROM milestones WHERE complete = 0 AND created_at < ?",
+    "SELECT id, project_id FROM milestones WHERE (complete = 0 OR complete = -1) AND created_at < ?",
   ).bind(cutoff).all<{ id: string; project_id: string }>();
   for (const row of results) await removeMilestone(env, row.project_id, row.id);
 }
@@ -141,8 +154,27 @@ export const updateMilestone: Handler = async (req, env, p) => {
   return json({ ...row, name, note });
 };
 
-export const deleteMilestone: Handler = async (_req, env, p) => {
-  const row = await getMilestone(env, p.id);
-  await removeMilestone(env, row.project_id, row.id);
+export const deleteMilestone: Handler = async (req, env, p) => {
+  const row = await env.DB.prepare(
+    `SELECT id, project_id FROM milestones WHERE id = ? AND complete IN (1, -1)
+     AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)`,
+  ).bind(p.id).first<{ id: string; project_id: string }>();
+  if (!row) throw new HttpError(404, "Milestone not found");
+  const confirmed = new URL(req.url).searchParams.get("confirmedLinks");
+  let links: string[] | undefined;
+  if (confirmed !== null) {
+    try {
+      const value: unknown = JSON.parse(confirmed);
+      if (!Array.isArray(value) || !value.every((id) => typeof id === "string")) throw new Error();
+      links = value;
+    } catch { throw new HttpError(400, "Review link confirmation is invalid."); }
+  }
+  try {
+    await removeMilestone(env, row.project_id, row.id, links);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    console.error("milestone deletion failed", error);
+    throw new HttpError(500, "Couldn't finish deleting the milestone. Its review links may have stopped working. Try again.");
+  }
   return json({ ok: true });
 };
