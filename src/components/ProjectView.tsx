@@ -27,6 +27,7 @@ import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEdi
 import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
 import { sceneLabelsEnabled, setSceneLabelsEnabled } from "../sceneLabels";
+import { focusRemembered, isFocusShortcut, keepAwake, rememberFocus, setTypewriterEnabled, typewriterEnabled } from "../focusMode";
 import { DIALECTS } from "../../shared/types";
 import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Milestone, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { arrangeChapters } from "../../shared/acts";
@@ -559,6 +560,105 @@ export function ProjectView({ projectId, chapterId }: Props) {
     setView("search");
   };
 
+  // Focus mode: the page alone, for long sessions. Everything but the chapter
+  // is put away, and a quiet bar at the foot comes back when the mouse moves.
+  const [focus, setFocus] = useState(() => view === "write" && focusRemembered());
+  const [typewriterOn, setTypewriterOn] = useState(typewriterEnabled);
+  useEffect(() => setTypewriterEnabled(typewriterOn), [typewriterOn]);
+  useEffect(() => rememberFocus(focus), [focus]);
+  // Whether the browser went full screen for focus mode (so leaving it leaves focus mode too).
+  const focusFullscreen = useRef(false);
+  const enterFocus = () => {
+    if (!selected) return;
+    if (view !== "write") setView("write");
+    closeMoreMenu();
+    if (drawerOpen) setDrawerOpen(false);
+    setHistoryOpen(false);
+    setNotesOpen(false);
+    setCheckOpen(false);
+    setPeek(null);
+    setScenePeek(null);
+    setEditingChapter(selected.id); // on a phone, open the chapter for writing
+    setFocus(true);
+    const root = document.documentElement;
+    if (!document.fullscreenElement && root.requestFullscreen) {
+      root.requestFullscreen({ navigationUI: "hide" }).then(
+        () => { focusFullscreen.current = true; },
+        () => {}, // Not allowed here (iOS Safari, an embedded frame): focus mode works in the window.
+      );
+    }
+  };
+  const leaveFocus = useCallback(() => {
+    setFocus(false);
+    if (focusFullscreen.current && document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    focusFullscreen.current = false;
+  }, []);
+  useEffect(() => {
+    if (!focus) return;
+    // Escape in full screen is taken by the browser, so follow it out of full screen.
+    const onFullscreen = () => {
+      if (!document.fullscreenElement && focusFullscreen.current) {
+        focusFullscreen.current = false;
+        setFocus(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", onFullscreen);
+    const release = keepAwake();
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreen);
+      release();
+    };
+  }, [focus]);
+  // Only the chapter editor has a focus mode.
+  useEffect(() => {
+    if (focus && (view !== "write" || (detail && !selected))) leaveFocus();
+  }, [focus, view, detail, selected, leaveFocus]);
+  const enterFocusRef = useRef(enterFocus);
+  enterFocusRef.current = enterFocus;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isFocusShortcut(e)) {
+        e.preventDefault();
+        if (focus) leaveFocus();
+        else enterFocusRef.current();
+        return;
+      }
+      // Leave on Escape, unless something on the page (a menu, a link peek) used it first.
+      if (focus && e.key === "Escape" && !e.defaultPrevented && peek === null && scenePeek === null) leaveFocus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus, leaveFocus, peek, scenePeek]);
+  // The foot bar shows while the mouse moves and fades once writing resumes.
+  const [stirred, setStirred] = useState(false);
+  useEffect(() => {
+    if (!focus) return;
+    let timer = 0;
+    let shown = false;
+    const show = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse" && e.type === "pointermove") return;
+      window.clearTimeout(timer);
+      if (!shown) { shown = true; setStirred(true); }
+      timer = window.setTimeout(() => { shown = false; setStirred(false); }, 2500);
+    };
+    const hide = (e: KeyboardEvent) => {
+      if (!shown || e.metaKey || e.ctrlKey || e.altKey || e.key === "Tab" || e.key === "Shift") return;
+      window.clearTimeout(timer);
+      shown = false;
+      setStirred(false);
+    };
+    window.addEventListener("pointermove", show);
+    window.addEventListener("pointerdown", show);
+    window.addEventListener("keydown", hide);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointermove", show);
+      window.removeEventListener("pointerdown", show);
+      window.removeEventListener("keydown", hide);
+      setStirred(false);
+    };
+  }, [focus]);
+
   const addChapter = async () => {
     try {
       const ch = await api.createChapter(projectId, `Chapter ${chapters.length + 1}`);
@@ -946,8 +1046,16 @@ export function ProjectView({ projectId, chapterId }: Props) {
     </button>
   );
 
+  const focusButton = view === "write" && selected && (
+    <button className="btn btn-quiet" title="Hide everything but the page (Ctrl+Alt+F)" onClick={enterFocus}>
+      Focus
+    </button>
+  );
+  // A save problem keeps the foot bar in view: focus mode must never hide that writing isn't safe.
+  const saveTrouble = save.state === "error" || save.state === "conflict" || save.state === "offline" || save.state === "signedout";
+
   return (
-    <div className={`workspace${drawerOpen ? " drawer-open" : ""}`}>
+    <div className={`workspace${drawerOpen ? " drawer-open" : ""}${focus ? " focus-mode" : ""}${focus && typewriterOn ? " typewriter" : ""}${focus && !stirred ? " focus-calm" : ""}`}>
       <aside id="novel-sidebar" ref={sidebarRef} className="sidebar" aria-label="Novel" role={drawerOpen ? "dialog" : undefined} aria-modal={drawerOpen || undefined}>
         <div className="sidebar-head">
           <button className="home-link" onClick={() => navigate()}>
@@ -1080,6 +1188,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
           <span className="desk-spacer" />
           <div className="desk-actions">
             {!phone && searchButton}
+            {!phone && focusButton}
             <details className="desk-more" ref={moreMenuRef}>
               <summary className={`btn btn-quiet${historyOpen || checkOpen || grammarOn ? " is-on" : ""}${unseenChanges > 0 ? " has-news" : ""}`}>
                 More
@@ -1090,6 +1199,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
                   <>
                     <div role="group" aria-label="View">{viewButtons}</div>
                     {searchButton}
+                    {focusButton}
                     <ThemePicker />
                     <span className="desk-more-divider" />
                   </>
@@ -1338,7 +1448,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
             }}
             grammarOn={grammarOn}
             dialect={dialect}
-            readOnly={readOnly}
+            readOnly={readOnly && !focus}
+            typewriter={focus && typewriterOn}
             controls={editorControls}
           />
         )}
@@ -1495,6 +1606,31 @@ export function ProjectView({ projectId, chapterId }: Props) {
             projectTitle={detail.project.title}
             onClose={() => setShareOpen(false)}
           />
+        )}
+
+        {focus && selected && (
+          <footer className={`focus-bar${stirred || saveTrouble ? " is-shown" : ""}`} aria-label="Focus mode">
+            <span className={`save-state save-${save.state}`} title={save.detail} aria-live="polite">
+              {save.state === "error" && save.detail ? `Not saved: ${save.detail}` : STATUS_TEXT[save.state]}
+            </span>
+            <span className="focus-count">
+              {wordsFor(selected).toLocaleString()} words
+              {sessionWords > 0 && <span className="session"> · +{sessionWords.toLocaleString()} this session</span>}
+              {today?.goal && <> · {Math.max(0, today.words).toLocaleString()} / {today.goal.toLocaleString()} today</>}
+            </span>
+            <span className="desk-spacer" />
+            <button
+              className={`btn btn-quiet${typewriterOn ? " is-on" : ""}`}
+              aria-pressed={typewriterOn}
+              title="Keep the line you're writing in the middle of the screen"
+              onClick={() => setTypewriterOn((on) => !on)}
+            >
+              Typewriter
+            </button>
+            <button className="btn btn-quiet" title="Leave focus mode (Esc)" onClick={leaveFocus}>
+              Leave focus
+            </button>
+          </footer>
         )}
 
         <footer className="desk-status" aria-live="polite">
