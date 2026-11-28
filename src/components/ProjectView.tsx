@@ -1438,7 +1438,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             onOpenLink={openLink}
             scenes={labelSnapshot?.chapterId === selected.id ? labelSnapshot.scenes : null}
             sceneBaseline={labelSnapshot?.chapterId === selected.id ? labelSnapshot.baseline : null}
-            sceneLabelsOn={sceneLabelsOn}
+            sceneLabelsOn={sceneLabelsOn && !focus}
             onOpenScene={(scene) => {
               setHistoryOpen(false);
               setNotesOpen(false);
