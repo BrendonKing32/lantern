@@ -1132,6 +1132,13 @@ select {
 .focus-calm .page-title {
   opacity: 0.3;
 }
+/* Paragraph dimming: the paragraph being written stays lit. */
+.cm-editor .cm-line {
+  transition: opacity 0.35s ease;
+}
+.cm-editor .cm-line.cm-dimmed {
+  opacity: 0.32;
+}
 .focus-bar {
   position: fixed;
   inset: auto 0 0 0;
@@ -1161,7 +1168,8 @@ select {
 }
 @media (prefers-reduced-motion: reduce) {
   .focus-bar,
-  .focus-mode .page-title {
+  .focus-mode .page-title,
+  .cm-editor .cm-line {
     transition: none;
   }
 }

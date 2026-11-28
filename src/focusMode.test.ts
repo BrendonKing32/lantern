@@ -1,7 +1,7 @@
-import { EditorSelection, EditorState, type TransactionSpec } from "@codemirror/state";
+import { EditorSelection, EditorState, Text, type TransactionSpec } from "@codemirror/state";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  focusRemembered, isFocusShortcut, recentres, rememberFocus, setTypewriterEnabled, typewriterEnabled, typewriterScrolling,
+  activeParagraph, dimmingEnabled, focusRemembered, isFocusShortcut, setDimmingEnabled, recentres, rememberFocus, setTypewriterEnabled, typewriterEnabled, typewriterScrolling,
 } from "./focusMode";
 
 const key = (over: Partial<KeyboardEvent>) =>
@@ -57,6 +57,32 @@ describe("typewriter scrolling", () => {
   });
 });
 
+describe("paragraph dimming", () => {
+  // Lines: 1 "First para," 2 "still first." 3 "" 4 "Second." 5 "" 6 "" 7 "Third."
+  const doc = Text.of(["First para,", "still first.", "", "Second.", "", "", "Third."]);
+  const at = (line: number, offset = 0) => doc.line(line).from + offset;
+
+  it("lights the run of lines between blank lines", () => {
+    expect(activeParagraph(doc, at(1, 3), at(1, 3))).toEqual({ first: 1, last: 2 });
+    expect(activeParagraph(doc, at(2), at(2))).toEqual({ first: 1, last: 2 });
+    expect(activeParagraph(doc, at(4, 2), at(4, 2))).toEqual({ first: 4, last: 4 });
+    expect(activeParagraph(doc, at(7), at(7))).toEqual({ first: 7, last: 7 });
+  });
+
+  it("lights only the blank line the cursor is on", () => {
+    expect(activeParagraph(doc, at(5), at(5))).toEqual({ first: 5, last: 5 });
+  });
+
+  it("lights every paragraph a selection touches", () => {
+    expect(activeParagraph(doc, at(2, 1), at(4, 3))).toEqual({ first: 1, last: 4 });
+  });
+
+  it("treats a line of spaces as a gap", () => {
+    const spaced = Text.of(["One.", "   ", "Two."]);
+    expect(activeParagraph(spaced, 0, 0)).toEqual({ first: 1, last: 1 });
+  });
+});
+
 describe("focus settings", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -67,6 +93,13 @@ describe("focus settings", () => {
     expect(typewriterEnabled()).toBe(false);
     setTypewriterEnabled(true);
     expect(typewriterEnabled()).toBe(true);
+  });
+
+  it("keeps paragraph dimming on by default and remembers turning it off", () => {
+    vi.stubGlobal("localStorage", storage());
+    expect(dimmingEnabled()).toBe(true);
+    setDimmingEnabled(false);
+    expect(dimmingEnabled()).toBe(false);
   });
 
   it("remembers focus mode for the tab only", () => {

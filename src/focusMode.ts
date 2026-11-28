@@ -1,5 +1,5 @@
-import { EditorState, type Extension, type Transaction } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorState, RangeSetBuilder, type Extension, type Text, type Transaction } from "@codemirror/state";
+import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 
 /**
  * Focus mode: the page alone, for long writing sessions. The workspace hides
@@ -8,6 +8,7 @@ import { EditorView } from "@codemirror/view";
  */
 
 const TYPEWRITER_KEY = "lantern:focus:typewriter";
+const DIM_KEY = "lantern:focus:dim";
 const FOCUS_KEY = "lantern:focus";
 
 /** Typewriter scrolling is on unless the writer turned it off on this device. */
@@ -24,6 +25,23 @@ export function setTypewriterEnabled(on: boolean): void {
     localStorage.setItem(TYPEWRITER_KEY, on ? "on" : "off");
   } catch {
     // Storage can be unavailable (private windows); the setting just isn't kept.
+  }
+}
+
+/** Paragraph dimming is on unless the writer turned it off on this device. */
+export function dimmingEnabled(): boolean {
+  try {
+    return localStorage.getItem(DIM_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function setDimmingEnabled(on: boolean): void {
+  try {
+    localStorage.setItem(DIM_KEY, on ? "on" : "off");
+  } catch {
+    // Not kept beyond this page.
   }
 }
 
@@ -106,4 +124,53 @@ export function keepAwake(): () => void {
     void lock?.release().catch(() => {});
     lock = null;
   };
+}
+
+const isBlank = (doc: Text, line: number) => doc.line(line).text.trim() === "";
+
+/**
+ * The lines of the paragraph (or paragraphs) the selection touches: the run
+ * of non-blank lines around it, bounded by blank lines. On a blank line,
+ * just that line, so the page around a fresh gap stays dim.
+ */
+export function activeParagraph(doc: Text, from: number, to: number): { first: number; last: number } {
+  let first = doc.lineAt(from).number;
+  let last = doc.lineAt(to).number;
+  if (first === last && isBlank(doc, first)) return { first, last };
+  while (first > 1 && !isBlank(doc, first - 1)) first--;
+  while (last < doc.lines && !isBlank(doc, last + 1)) last++;
+  return { first, last };
+}
+
+const dimmed = Decoration.line({ class: "cm-dimmed" });
+
+function dimDecorations(view: EditorView): DecorationSet {
+  const { doc, selection } = view.state;
+  const { first, last } = activeParagraph(doc, selection.main.from, selection.main.to);
+  const builder = new RangeSetBuilder<Decoration>();
+  // Only the lines on screen are decorated, so long chapters stay quick.
+  for (const { from, to } of view.visibleRanges) {
+    for (let pos = from; pos <= to; ) {
+      const line = doc.lineAt(pos);
+      if (line.number < first || line.number > last) builder.add(line.from, line.from, dimmed);
+      pos = line.to + 1;
+    }
+  }
+  return builder.finish();
+}
+
+/** Dims every paragraph but the one being written. */
+export function paragraphDimming(): Extension {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = dimDecorations(view);
+      }
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.selectionSet || update.viewportChanged) this.decorations = dimDecorations(update.view);
+      }
+    },
+    { decorations: (plugin) => plugin.decorations },
+  );
 }

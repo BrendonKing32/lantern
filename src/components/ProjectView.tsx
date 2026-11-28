@@ -27,7 +27,7 @@ import { ChapterEditor, type EditorControls, type SaveState } from "./ChapterEdi
 import { CheckPanel, type CheckTab } from "./CheckPanel";
 import { grammarEnabled, setGrammarEnabled } from "../grammar";
 import { sceneLabelsEnabled, setSceneLabelsEnabled } from "../sceneLabels";
-import { focusRemembered, isFocusShortcut, keepAwake, rememberFocus, setTypewriterEnabled, typewriterEnabled } from "../focusMode";
+import { dimmingEnabled, focusRemembered, isFocusShortcut, keepAwake, rememberFocus, setDimmingEnabled, setTypewriterEnabled, typewriterEnabled } from "../focusMode";
 import { DIALECTS } from "../../shared/types";
 import type { Act, BibleEntry, BibleKind, ChapterMeta, DeletedChapter, Dialect, Milestone, Outline, ProjectDetail, SaveResult, SceneMeta, ScenePlaceholder } from "../../shared/types";
 import { arrangeChapters } from "../../shared/acts";
@@ -565,6 +565,8 @@ export function ProjectView({ projectId, chapterId }: Props) {
   const [focus, setFocus] = useState(() => view === "write" && focusRemembered());
   const [typewriterOn, setTypewriterOn] = useState(typewriterEnabled);
   useEffect(() => setTypewriterEnabled(typewriterOn), [typewriterOn]);
+  const [dimmingOn, setDimmingOn] = useState(dimmingEnabled);
+  useEffect(() => setDimmingEnabled(dimmingOn), [dimmingOn]);
   useEffect(() => rememberFocus(focus), [focus]);
   // Whether the browser went full screen for focus mode (so leaving it leaves focus mode too).
   const focusFullscreen = useRef(false);
@@ -1450,6 +1452,7 @@ export function ProjectView({ projectId, chapterId }: Props) {
             dialect={dialect}
             readOnly={readOnly && !focus}
             typewriter={focus && typewriterOn}
+            dimming={focus && dimmingOn}
             controls={editorControls}
           />
         )}
@@ -1619,6 +1622,14 @@ export function ProjectView({ projectId, chapterId }: Props) {
               {today?.goal && <> · {Math.max(0, today.words).toLocaleString()} / {today.goal.toLocaleString()} today</>}
             </span>
             <span className="desk-spacer" />
+            <button
+              className={`btn btn-quiet${dimmingOn ? " is-on" : ""}`}
+              aria-pressed={dimmingOn}
+              title="Dim every paragraph but the one you're writing"
+              onClick={() => setDimmingOn((on) => !on)}
+            >
+              Dim
+            </button>
             <button
               className={`btn btn-quiet${typewriterOn ? " is-on" : ""}`}
               aria-pressed={typewriterOn}
