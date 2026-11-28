@@ -1102,6 +1102,78 @@ select {
   }
 }
 
+/* ---------- focus mode: the page alone ---------- */
+
+.workspace.focus-mode {
+  grid-template-columns: 1fr;
+}
+.focus-mode .sidebar,
+.focus-mode .scrim,
+.focus-mode .desk-bar,
+.focus-mode .desk-status {
+  display: none;
+}
+.focus-mode .page {
+  padding-top: 14vh;
+  padding-bottom: 6rem;
+}
+/* Room below the last line, so typewriter scrolling can centre it too. */
+.typewriter .page {
+  padding-bottom: 50vh;
+}
+.focus-mode .page-title {
+  opacity: 0.55;
+  transition: opacity 0.6s;
+}
+/* While writing, the pointer and title step back. */
+.focus-calm .desk {
+  cursor: none;
+}
+.focus-calm .page-title {
+  opacity: 0.3;
+}
+/* Paragraph dimming: the paragraph being written stays lit. */
+.cm-editor .cm-line {
+  transition: opacity 0.35s ease;
+}
+.cm-editor .cm-line.cm-dimmed {
+  opacity: 0.32;
+}
+.focus-bar {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1.1rem;
+  padding: 0.6rem 1.1rem;
+  padding-bottom: max(0.6rem, env(safe-area-inset-bottom));
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(to top, var(--night) 60%, transparent);
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+.focus-bar.is-shown,
+.focus-bar:hover,
+.focus-bar:focus-within {
+  opacity: 1;
+  transition-duration: 0.2s;
+}
+.focus-bar .btn.is-on {
+  color: var(--lamp);
+  border-color: var(--lamp);
+}
+@media (prefers-reduced-motion: reduce) {
+  .focus-bar,
+  .focus-mode .page-title,
+  .cm-editor .cm-line {
+    transition: none;
+  }
+}
+
 /* ---------- version history ---------- */
 
 .history-toggle.is-on {

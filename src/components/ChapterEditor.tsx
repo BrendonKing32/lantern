@@ -21,6 +21,7 @@ import { NoteLoadGate } from "../noteLoad";
 import { NotesPanel } from "./NotesPanel";
 import { revisedWords } from "../revisedWords";
 import { waitForChapterActivity } from "../chapterActivity";
+import { paragraphDimming, typewriterScrolling } from "../focusMode";
 import type { BibleEntry, ChapterWithContent, Dialect, MarginNote, SaveResult, SceneMeta } from "../../shared/types";
 import type { ClaudeDraft } from "../../shared/types";
 
@@ -62,6 +63,10 @@ interface Props {
   /** The English the novel is written in. */
   dialect: Dialect;
   readOnly: boolean;
+  /** Keep the line being written at the middle of the screen (focus mode). */
+  typewriter?: boolean;
+  /** Dim every paragraph but the one being written (focus mode). */
+  dimming?: boolean;
   onCloseHistory: () => void;
   /** Filled in by the editor so other panels can read the text and point into it. */
   controls?: { current: EditorControls | null };
@@ -123,6 +128,8 @@ export function ChapterEditor({
   grammarOn,
   dialect,
   readOnly,
+  typewriter = false,
+  dimming = false,
   controls,
 }: Props) {
   const [initialDoc, setInitialDoc] = useState<string | null>(null);
@@ -236,6 +243,14 @@ export function ChapterEditor({
     on
       ? [grammarExt.current, EditorView.contentAttributes.of({ spellcheck: "false" })]
       : EditorView.contentAttributes.of({ spellcheck: "true" });
+  const typewriterSlot = useRef(new Compartment());
+  const typewriterRef = useRef(typewriter);
+  typewriterRef.current = typewriter;
+  const typewriterExt = (on: boolean) => (on ? typewriterScrolling() : []);
+  const dimSlot = useRef(new Compartment());
+  const dimmingRef = useRef(dimming);
+  dimmingRef.current = dimming;
+  const dimExt = (on: boolean) => (on ? paragraphDimming() : []);
   const [extensions] = useState(() => [
     ...proseExtensions,
     wikilinks({ entries: () => linkHost.current.entries, open: (n) => linkHost.current.onOpenLink(n) }),
@@ -249,6 +264,8 @@ export function ChapterEditor({
     sceneSlot.current.of([]),
     grammarSlot.current.of(proofing(grammarOnRef.current)),
     readingSlot.current.of(readingMode(readOnlyRef.current)),
+    typewriterSlot.current.of(typewriterExt(typewriterRef.current)),
+    dimSlot.current.of(dimExt(dimmingRef.current)),
   ]);
   useEffect(() => {
     view.current?.dispatch({ effects: notesChanged.of(notes) });
@@ -283,6 +300,18 @@ export function ChapterEditor({
   useEffect(() => {
     view.current?.dispatch({ effects: sceneSlot.current.reconfigure(labelExtensions()) });
   }, [scenes, sceneBaseline, sceneLabelsOn, title]);
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
+    editor.dispatch({ effects: [
+      typewriterSlot.current.reconfigure(typewriterExt(typewriter)),
+      // Bring the cursor to the middle straight away rather than on the next keystroke.
+      ...(typewriter ? [EditorView.scrollIntoView(editor.state.selection.main.head, { y: "center" })] : []),
+    ] });
+  }, [typewriter]);
+  useEffect(() => {
+    view.current?.dispatch({ effects: dimSlot.current.reconfigure(dimExt(dimming)) });
+  }, [dimming]);
   useEffect(() => {
     view.current?.dispatch({ effects: grammarSlot.current.reconfigure(proofing(grammarOn)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -937,6 +966,8 @@ export function ChapterEditor({
               grammarSlot.current.reconfigure(proofing(grammarOnRef.current)),
               readingSlot.current.reconfigure(readingMode(readOnlyRef.current)),
               sceneSlot.current.reconfigure(labelExtensions()),
+              typewriterSlot.current.reconfigure(typewriterExt(typewriterRef.current)),
+              dimSlot.current.reconfigure(dimExt(dimmingRef.current)),
             ] });
           }}
           basicSetup={basicSetup}
